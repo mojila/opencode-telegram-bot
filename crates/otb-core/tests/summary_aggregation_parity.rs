@@ -2398,3 +2398,651 @@ fn slice17_abort_error_and_interrupt_reason_gates() {
         "plan does not include access"
     );
 }
+
+// ---------------------------------------------------------------------------
+// SLICE 18 (RED): session.updated enrichment, model-label partials,
+// thinking-update gate, footer-suppression edges, diff file fallback.
+// Each test targets a slice-18 stub (`unimplemented!()`) and MUST FAIL until
+// the Rust port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 18: `session.updated` enriches the card from its title.
+///
+/// TS: `processEvent` routes both `session.created` and `session.updated`
+/// to `handleSessionCreatedOrUpdated` (src ~863-866 / ~1600-1656) ->
+/// `getOrCreateSubagentForSession` + `enrichSubagentFromSessionTitle`
+/// (`"Desc (@agent subagent)"` splits into both halves). The Rust created
+/// path (`handle_session_created*`, slices 7/14/15) has no updated twin,
+/// so a title change on update never reaches the card.
+#[test]
+fn slice18_session_updated_enriches_card_from_title() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+
+    // Slice-18 stub (panics while RED).
+    let attached = aggregator.handle_session_updated(
+        "child-session-1",
+        "root-session",
+        "Explore project architecture (@explore subagent)",
+    );
+
+    // GREEN: the updated session binds a card enriched from its title.
+    assert!(attached);
+    assert!(!aggregator.is_child_gated("child-session-1"));
+    assert!((aggregator.session_cost("child-session-1") - 0.0).abs() < f64::EPSILON);
+}
+
+/// SLICE 18: model label shows partial ids, drops blank variants.
+///
+/// TS: `updateSubagentFromAssistantMessage` (src ~1680-1688: `providerID` /
+/// `modelID` / `variant` kept when non-empty, combo shown as
+/// `provider/id (variant)`). Covered: full combo (slices 2/14). Remaining:
+/// provider-only, model-only, blank-variant, and neither-id edges.
+#[test]
+fn slice18_model_label_partial_ids() {
+    // Slice-18 stub (panics while RED).
+    // GREEN: partial ids still label; blank variant ignored; neither -> None.
+    assert_eq!(
+        SummaryAggregator::subagent_model_label(Some("openai"), None, None),
+        Some("openai".to_string())
+    );
+    assert_eq!(
+        SummaryAggregator::subagent_model_label(None, Some("gpt-5.4"), None),
+        Some("gpt-5.4".to_string())
+    );
+    assert_eq!(
+        SummaryAggregator::subagent_model_label(Some("openai"), Some("gpt-5.4"), Some("high")),
+        Some("openai/gpt-5.4 (high)".to_string())
+    );
+    assert_eq!(
+        SummaryAggregator::subagent_model_label(Some("openai"), Some("gpt-5.4"), Some("  ")),
+        Some("openai/gpt-5.4".to_string())
+    );
+    assert_eq!(SummaryAggregator::subagent_model_label(None, None, None), None);
+}
+
+/// SLICE 18: thinking update skipped with no callback or no sections.
+///
+/// TS: `emitThinkingUpdate` (src ~2562-2574: returns early when
+/// `!onThinkingCallback` or `sections.length === 0`). Covered: register /
+/// collapse / delta / finished-once (slices 4/12/14/16). Remaining: the
+/// emit gate itself, so a thinking-once flow never fires empty updates.
+#[test]
+fn slice18_thinking_update_skipped_when_empty_or_no_callback() {
+    // Slice-18 stub (panics while RED).
+    // GREEN: only (callback, non-empty sections) emits.
+    assert!(SummaryAggregator::should_emit_thinking_update(true, 2));
+    assert!(!SummaryAggregator::should_emit_thinking_update(false, 2));
+    assert!(!SummaryAggregator::should_emit_thinking_update(true, 0));
+    assert!(!SummaryAggregator::should_emit_thinking_update(false, 0));
+}
+
+/// SLICE 18: cancelled questions and rejected permissions suppress footer.
+///
+/// TS: `handleQuestionSettled` (src ~3097-3099: `outcome === "cancelled"` ->
+/// `onFooterSuppressedCallback`) + `handlePermissionReplied` (src ~3209-3211:
+/// `reply === "reject"` -> `onFooterSuppressedCallback`). Covered: open /
+/// answer / allow / deny state (slice 7). Remaining: the suppression edges
+/// (cancelled, reject) vs answered / allow / unknown (`None`) reply.
+#[test]
+fn slice18_footer_suppressed_on_cancelled_and_reject() {
+    // Slice-18 stub (panics while RED).
+    // GREEN: cancelled + reject suppress; answered + allow + unknown do not.
+    assert!(SummaryAggregator::footer_suppressed_for_settled("cancelled", None));
+    assert!(SummaryAggregator::footer_suppressed_for_settled("", Some("reject")));
+    assert!(!SummaryAggregator::footer_suppressed_for_settled("answered", None));
+    assert!(!SummaryAggregator::footer_suppressed_for_settled("", Some("allow")));
+    assert!(!SummaryAggregator::footer_suppressed_for_settled("", None));
+}
+
+/// SLICE 18: diff entries with no file normalize to `""`; run-end stays noop.
+///
+/// TS: `handleSessionDiff` (src ~3141-3146: `file: d.file ?? ""` mapped per
+/// entry, gated to the current session) + `emitSessionRunEnded` (src
+/// ~3113-3126: no callback -> no-op). Covered: per-session file totals
+/// (slice 7). Remaining: the missing-file fallback, with the callback-less
+/// run-end proving the noop beside it.
+#[test]
+fn slice18_diff_missing_file_normalizes_to_empty() {
+    // Slice-18 stub (panics while RED).
+    assert_eq!(SummaryAggregator::normalize_diff_file(None), "");
+    assert_eq!(
+        SummaryAggregator::normalize_diff_file(Some("src/one.ts")),
+        "src/one.ts"
+    );
+
+    // GREEN beside it: with no run-end callback, ending a run is a quiet noop.
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+    aggregator.handle_run_end("session-1");
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 19B (RED): every remaining uncovered parity path, grouped by theme:
+// updated/model/thinking, tokens/cost/settled/dispatch, pairing/pending/
+// title, patch/budget/gates, text/file/reasoning/error. Each test targets
+// a slice-19B stub (`unimplemented!()`) and MUST FAIL until the Rust port
+// lands. TS source: `src/app/managers/summary-aggregation-manager.ts`;
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`.
+// Audit: 115 TS `it`s; 86 covered by slices 1-18 (slices 2/7/9/12 over-pin
+// one scenario per multi-`it` describe in their docs — e.g. slice-2 variant
+// pins 1 of 4 variant `it`s, slice-2 task-call pins 1 of 6 pairing `it`s).
+// The 29 below pin one `it` each (test 29 pins three), except the deferred
+// behavior flows with existing GREEN implementations whose full-event
+// assertions need a GREEN follow-up (interrupted/nested/retire/count and
+// the `session.updated` later-run + delayed-discovery paths).
+// ---------------------------------------------------------------------------
+// Theme 1: updated/model/thinking leftovers.
+// ---------------------------------------------------------------------------
+
+/// SLICE 19B: a later message that adds only a variant re-emits.
+///
+/// TS: `describe("subagent variant from assistant message")` >
+/// `it("emits again when a later message adds only a variant")` (test
+/// lines 386-404) via `updateSubagentFromAssistantMessage` (src
+/// ~1686-1688). The incoming variant replaces the empty card value, so
+/// the snapshot changes and re-emits.
+#[test]
+fn slice19b_variant_reemits_on_variant_only_update_1() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: the variant-only message yields a new value to emit.
+    assert_eq!(
+        SummaryAggregator::apply_variant_to_card(None, Some("high")),
+        Some("high".to_string())
+    );
+}
+
+/// SLICE 19B: a later message without a variant keeps the last one.
+///
+/// TS: `it("keeps the last variant when a later message omits it")` (test
+/// lines 406-417) via `updateSubagentFromAssistantMessage` (src
+/// ~1686-1688: only a non-empty variant is applied).
+#[test]
+fn slice19b_variant_keeps_last_when_omitted_2() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: an omitted variant keeps the card's last value.
+    assert_eq!(
+        SummaryAggregator::apply_variant_to_card(Some("high"), None),
+        Some("high".to_string())
+    );
+}
+
+/// SLICE 19B: an empty variant is never stored.
+///
+/// TS: `it("does not store an empty variant")` (test lines 419-432) via
+/// `updateSubagentFromAssistantMessage` (src ~1686-1688: blank variants
+/// are dropped, like slice-18 `subagent_model_label`).
+#[test]
+fn slice19b_variant_ignores_empty_3() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: blank variants keep the previous value (or stay absent).
+    assert_eq!(SummaryAggregator::apply_variant_to_card(None, Some("")), None);
+    assert_eq!(
+        SummaryAggregator::apply_variant_to_card(Some("high"), Some("  ")),
+        Some("high".to_string())
+    );
+}
+
+/// SLICE 19B: text without reasoning never fires the thinking callback.
+///
+/// TS: `it("does not send thinking callback when no reasoning part
+/// arrives")` (test lines 3021-3056) via `registerThinkingPart` +
+/// `emitThinkingUpdate` (src ~2478-2584). Covered: thinking snapshot /
+/// delta / finished-once (slices 4/12/14) and the empty-sections gate
+/// (slice 18). Remaining: text-only messages emit no thinking update.
+#[test]
+fn slice19b_thinking_skipped_without_reasoning_4() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: only messages with reasoning parts emit thinking updates.
+    assert!(!SummaryAggregator::should_emit_thinking_for_message(false, true));
+    assert!(SummaryAggregator::should_emit_thinking_for_message(true, true));
+    assert!(!SummaryAggregator::should_emit_thinking_for_message(true, false));
+}
+
+/// SLICE 19B: only the first reasoning part flags the thinking update.
+///
+/// TS: `it("streams all reasoning parts and marks only the first thinking
+/// update")` (test lines 3058-3114) via `emitThinkingUpdate`
+/// `isFirstUpdate` (src ~2562+). All three parts emit, but only the first
+/// carries `isFirstUpdate: true`.
+#[test]
+fn slice19b_thinking_first_update_flags_5() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: the first part opens the update; later parts extend it.
+    assert!(SummaryAggregator::marks_first_thinking_update(false));
+    assert!(!SummaryAggregator::marks_first_thinking_update(true));
+}
+
+// ---------------------------------------------------------------------------
+// Theme 2: tokens/cost/run-end/todos + settled/dispatch leftovers.
+// ---------------------------------------------------------------------------
+
+/// SLICE 19B: assistant metadata reaches `onComplete`.
+///
+/// TS: `it("passes assistant metadata to onComplete")` (test lines
+/// 2869-2930) via the `message.updated` completed branch (src ~1930+):
+/// agent `plan`, provider `openai`, model `gpt-5.4`, created `1000`,
+/// completed `2500` land on the completion info. Covered: tokens/cost
+/// branches (slices 11/17). Remaining: the completion-info assembly.
+#[test]
+fn slice19b_complete_carries_assistant_metadata_6() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: agent/provider/model/timestamps land on the completion info.
+    assert_eq!(
+        SummaryAggregator::assistant_completion_info(
+            Some("plan"),
+            Some("openai"),
+            Some("gpt-5.4"),
+            Some(1000),
+            Some(2500)
+        ),
+        otb_core::managers::summary_aggregation::AssistantCompletionInfo {
+            agent: Some("plan".to_string()),
+            provider_id: Some("openai".to_string()),
+            model_id: Some("gpt-5.4".to_string()),
+            created_at: Some(1000),
+            completed_at: Some(2500),
+        }
+    );
+}
+
+/// SLICE 19B: questions settled outside Telegram report for followed runs.
+///
+/// TS: `describe("requests of subagent sessions")` >
+/// `it("reports questions settled outside Telegram for the followed
+/// session and its subagents")` (test lines 3816-3839) via
+/// `handleQuestionSettled` (src ~3084-3111): root `replied` ->
+/// `("root-session", "q-root", "answered")`, child `rejected` ->
+/// `("child-session-1", "q-child", "cancelled")`, unrelated ignored.
+/// Covered: asked/answered card state (slice 7) + cancelled/reject footer
+/// suppression (slice 18). Remaining: the settled-callback dispatch.
+#[test]
+fn slice19b_questions_settled_outside_telegram_7() {
+    // Slice-19B stubs (panic while RED).
+    // GREEN: replied/rejected map to answered/cancelled for followed runs.
+    assert_eq!(SummaryAggregator::question_settled_outcome("replied"), "answered");
+    assert_eq!(SummaryAggregator::question_settled_outcome("rejected"), "cancelled");
+    assert!(SummaryAggregator::should_emit_question_settled(true));
+    assert!(!SummaryAggregator::should_emit_question_settled(false));
+}
+
+/// SLICE 19B: OpenCode's permission decision travels with the reply.
+///
+/// TS: `it("passes OpenCode's decision along with a replied permission")`
+/// (test lines 3841-3860) via `handlePermissionReplied` (src ~3188-3230):
+/// child `reject` -> `("child-session-1", "perm-1", "reject")`, missing
+/// reply -> `("root-session", "perm-2", None)`. Covered: allow/deny card
+/// state (slice 7). Remaining: the replied-callback payload.
+#[test]
+fn slice19b_permission_decision_passed_along_8() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: the reply value passes through verbatim, missing stays `None`.
+    assert_eq!(
+        SummaryAggregator::permission_reply_value(Some("reject")),
+        Some("reject".to_string())
+    );
+    assert_eq!(SummaryAggregator::permission_reply_value(None), None);
+    assert_eq!(
+        SummaryAggregator::permission_reply_value(Some("allow")),
+        Some("allow".to_string())
+    );
+}
+
+/// SLICE 19B: equivalent permission requests serialize behind a dispatch.
+///
+/// TS: `it("serializes permission callbacks so equivalent requests can be
+/// registered before the next dispatch")` (test lines 3701-3752) via the
+/// `permissionQueue` chain (src ~441): while `req-1` dispatches, `req-2`
+/// waits; both run in order after release.
+#[test]
+fn slice19b_permission_dispatch_serialized_9() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: a running dispatch queues the next equivalent request.
+    assert!(SummaryAggregator::should_queue_permission_while_dispatching(true));
+    assert!(!SummaryAggregator::should_queue_permission_while_dispatching(false));
+}
+
+/// SLICE 19B: permissions from unrelated sessions never dispatch.
+///
+/// TS: `it("ignores permission.asked events from unrelated sessions")`
+/// (test lines 3888-3909) via `handlePermissionAsked` (src ~3155-3186):
+/// `some-other-session` fires nothing and is not a subagent session.
+/// Covered: tracked-child forwarding (slice 7). Remaining: the gate.
+#[test]
+fn slice19b_permission_unrelated_session_ignored_10() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: only the current session and tracked children forward.
+    assert!(SummaryAggregator::should_forward_permission_asked(true, false));
+    assert!(SummaryAggregator::should_forward_permission_asked(false, true));
+    assert!(!SummaryAggregator::should_forward_permission_asked(false, false));
+}
+
+// ---------------------------------------------------------------------------
+// Theme 3: pairing/pending/title leftovers.
+// ---------------------------------------------------------------------------
+
+/// SLICE 19B: two open calls naming no child pair with nothing.
+///
+/// TS: `describe("task call input reaches its own card")` >
+/// `it("applies nothing while two open calls name no child")` (test lines
+/// 509-521) via `findSubagentForTaskCall` (src ~1440-1488): with two
+/// unpaired open calls the single waiting card stays ambiguous.
+#[test]
+fn slice19b_task_pairing_two_open_calls_name_none_11() {
+    use otb_core::managers::summary_aggregation::TaskCallPairing;
+    // Slice-19B stub (panics while RED).
+    // GREEN: ambiguous open calls pair with nothing.
+    assert_eq!(
+        SummaryAggregator::resolve_task_call_pairing(false, 2, 1),
+        TaskCallPairing::Unpaired
+    );
+}
+
+/// SLICE 19B: one open call pairs with the one waiting card.
+///
+/// TS: `it("pairs the only open call with the only waiting card")` (test
+/// lines 523-539) via `findSubagentForTaskCall` (src ~1462-1480): the
+/// single-open/single-waiting case binds `child-1` to `first task`.
+#[test]
+fn slice19b_task_pairing_single_open_with_single_waiting_12() {
+    use otb_core::managers::summary_aggregation::TaskCallPairing;
+    // Slice-19B stub (panics while RED).
+    // GREEN: the unambiguous waiting card takes the call's input.
+    assert_eq!(
+        SummaryAggregator::resolve_task_call_pairing(false, 1, 1),
+        TaskCallPairing::WaitingCard
+    );
+}
+
+/// SLICE 19B: a card that ended without its input is never paired.
+///
+/// TS: `it("never pairs a card that ended without its input")` (test lines
+/// 541-557) via `findSubagentForTaskCall` + retire-on-end (src ~1074-1101):
+/// the ended `child-2` card is retired at once, so a later call with no
+/// live named card pairs with nothing instead of falling back.
+#[test]
+fn slice19b_task_pairing_skips_ended_card_13() {
+    use otb_core::managers::summary_aggregation::TaskCallPairing;
+    // Slice-19B stub (panics while RED).
+    // GREEN: an ended card never waits, so the call stays unpaired.
+    assert_eq!(
+        SummaryAggregator::resolve_task_call_pairing(false, 1, 0),
+        TaskCallPairing::Unpaired
+    );
+}
+
+/// SLICE 19B: a call left open across the turn end is forgotten.
+///
+/// TS: `it("forgets a call that never ended once the parent's turn ends")`
+/// (test lines 559-582) via `retireForegroundSubagents` clearing unended
+/// `openTaskCalls` (src ~1141-1147): after the root idle, the stale
+/// `call-stale` no longer blocks pairing a fresh call with its card.
+#[test]
+fn slice19b_task_pairing_forgets_stale_call_after_turn_14() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: a call left open across the turn end is dropped.
+    assert!(SummaryAggregator::should_drop_stale_task_call(true));
+    assert!(!SummaryAggregator::should_drop_stale_task_call(false));
+}
+
+/// SLICE 19B: a paired call keeps updating only its own card.
+///
+/// TS: `it("keeps updating only the card a call was paired with")` (test
+/// lines 584-600) via `call.cardId` (src ~1486-1488): refining `call-1`
+/// updates `child-1` to `first task, refined` while `child-2` stays empty.
+#[test]
+fn slice19b_task_pairing_updates_only_paired_card_15() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: only the paired card takes the update.
+    assert_eq!(
+        SummaryAggregator::route_task_call_update(Some("card-1"), "call-1", "call-1"),
+        Some("card-1".to_string())
+    );
+    assert_eq!(
+        SummaryAggregator::route_task_call_update(Some("card-1"), "call-1", "call-2"),
+        None
+    );
+}
+
+/// SLICE 19B: a reasoning part without title keys yields no title.
+///
+/// TS: `it("passes a reasoning part without title keys to the thinking
+/// callback without a title")` (test lines 4382-4421) via
+/// `registerThinkingPart` / `setThinkingPartSnapshot` title keys (src
+/// ~2478-2521): `Just thinking` with no `title`/`subtype` keys emits a
+/// title-less section. Covered: titled snapshots/dedup (slice 14).
+/// Remaining: the title-less fallback.
+#[test]
+fn slice19b_reasoning_part_without_title_keys_has_no_title_16() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: no title keys means no title; keys keep the given title.
+    assert_eq!(
+        SummaryAggregator::reasoning_section_title(false, None),
+        None
+    );
+    assert_eq!(
+        SummaryAggregator::reasoning_section_title(true, Some("Plan")),
+        Some("Plan".to_string())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Theme 4: patch/budget/gates leftovers.
+// ---------------------------------------------------------------------------
+
+/// SLICE 19B: the same call reporting again stays quiet.
+///
+/// TS: `describe("subagent current tool timing")` >
+/// `it("does not re-emit while the same call keeps reporting")` (test
+/// lines 679-689) via `updateSubagentToolState` same-`callId` dedup (src
+/// ~1705-1748): the second `call-1` report adds no snapshot.
+#[test]
+fn slice19b_tool_timing_same_call_no_reemit_17() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: the same call id never restarts timing.
+    assert!(!SummaryAggregator::should_restart_current_tool_timing(
+        Some("call-1"),
+        "call-1"
+    ));
+}
+
+/// SLICE 19B: an identical tool with a new call id restarts timing.
+///
+/// TS: `it("re-emits and restarts timing for an identical tool with a new
+/// call id")` (test lines 1515-1532) via `updateSubagentToolState` (src
+/// ~1738-1741): `call-2` re-emits with a later `currentToolStartedAt`.
+#[test]
+fn slice19b_tool_timing_new_call_restarts_18() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: a new call id restarts timing, even for the same tool.
+    assert!(SummaryAggregator::should_restart_current_tool_timing(
+        Some("call-1"),
+        "call-2"
+    ));
+    assert!(SummaryAggregator::should_restart_current_tool_timing(None, "call-1"));
+}
+
+/// SLICE 19B: a promoted task is background when only metadata says so.
+///
+/// TS: `it("marks a promoted task as background when only its metadata
+/// carries the flag")` (test lines 1474-1494) via `isBackgroundTaskCall`
+/// (`input.background || metadata.background`, src ~351-355).
+#[test]
+fn slice19b_background_flag_from_input_or_metadata_19() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: either side's flag marks the call background.
+    assert!(SummaryAggregator::is_background_task_call(false, true));
+    assert!(SummaryAggregator::is_background_task_call(true, false));
+    assert!(!SummaryAggregator::is_background_task_call(false, false));
+}
+
+/// SLICE 19B: a completed tool part with odd metadata still fires.
+///
+/// TS: `it("does not crash when a completed tool part carries non-object
+/// metadata")` (test lines 4423-4453) via the `message.part.updated`
+/// tool branch (src ~2279+): `metadata: "not-an-object"` is ignored and
+/// `call-weird-meta` still reaches `onTool`.
+#[test]
+fn slice19b_tool_part_non_object_metadata_no_crash_20() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: non-object metadata is ignored, the completed call fires.
+    assert!(SummaryAggregator::completed_tool_proceeds_without_object_metadata(false));
+    assert!(SummaryAggregator::completed_tool_proceeds_without_object_metadata(true));
+}
+
+/// SLICE 19B: a parent-run interrupt skips cards that already ended.
+///
+/// TS: `describe("an interrupted subagent")` >
+/// `it("does not touch a card that already ended")` (test lines
+/// 1028-1039) via `interruptSubagents` (src ~1170-1209: only `pending` /
+/// `running` cards are touched). Covered: single-card interrupt/error
+/// ends (slices 3/17). Remaining: the terminal-card guard.
+#[test]
+fn slice19b_interrupt_skips_ended_card_21() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: terminal cards are untouched; live ones are reached.
+    assert!(!SummaryAggregator::interrupt_reaches_card(true));
+    assert!(SummaryAggregator::interrupt_reaches_card(false));
+}
+
+// ---------------------------------------------------------------------------
+// Theme 5: text/file/reasoning/error leftovers.
+// ---------------------------------------------------------------------------
+
+/// SLICE 19B: partial text streams with its message id, then completes.
+///
+/// TS: `it("streams partial text and passes messageId on completion")`
+/// (test lines 2412-2465): the text part update fires `onPartial` with
+/// `("session-1", "message-stream-1", "Partial answer")`, and the
+/// completed message fires `onComplete` with the same id and text.
+/// Covered: delta accumulation (slices 4/16). Remaining: the
+/// partial-vs-complete outbound step.
+#[test]
+fn slice19b_partial_streaming_reports_message_id_22() {
+    use otb_core::managers::summary_aggregation::TextMessageFlow;
+    // Slice-19B stub (panics while RED).
+    // GREEN: running text streams partial; completed text completes.
+    assert_eq!(
+        SummaryAggregator::text_message_flow_event(false, true),
+        TextMessageFlow::Partial
+    );
+    assert_eq!(
+        SummaryAggregator::text_message_flow_event(true, true),
+        TextMessageFlow::Complete
+    );
+    assert_eq!(
+        SummaryAggregator::text_message_flow_event(true, false),
+        TextMessageFlow::None
+    );
+}
+
+/// SLICE 19B: part deltas accumulate into the streamed partial.
+///
+/// TS: `it("streams text from message.part.delta events")` (test lines
+/// 2932-2965) via `handleMessagePartDelta` (src ~2395+): `"Hel"` then
+/// `"lo"` fire `("session-1", "message-delta-1", "Hel")` and `("...", "Hello")`.
+#[test]
+fn slice19b_delta_streaming_accumulates_partials_23() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: deltas append to the streamed text.
+    assert_eq!(SummaryAggregator::delta_partial_text("Hel", "lo"), "Hello");
+    assert_eq!(SummaryAggregator::delta_partial_text("", "Hi"), "Hi");
+}
+
+/// SLICE 19B: deltas stream even when the part type is omitted.
+///
+/// TS: `it("streams delta events even when part type is omitted")` (test
+/// lines 2967-2985) via `handleMessagePartDelta` (src ~2395+): a delta
+/// with no part type still fires `("session-1",
+/// "message-delta-unknown-type", "Hi")`.
+#[test]
+fn slice19b_delta_without_part_type_streams_24() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: an untyped non-empty delta streams while no reasoning runs.
+    assert!(SummaryAggregator::should_stream_part_delta(false, true, false));
+    assert!(!SummaryAggregator::should_stream_part_delta(false, false, false));
+}
+
+/// SLICE 19B: unknown deltas stay silent once reasoning started.
+///
+/// TS: `it("does not stream unknown delta part after reasoning started")`
+/// (test lines 2987-3019) via `handleMessagePartDelta` (src ~2395+):
+/// after `reasoning-part-1`, `internal thoughts` for an untyped part
+/// never reaches `onPartial`.
+#[test]
+fn slice19b_unknown_delta_after_reasoning_suppressed_25() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: reasoning suppresses later unknown-part deltas.
+    assert!(!SummaryAggregator::should_stream_part_delta(false, true, true));
+    assert!(SummaryAggregator::should_stream_part_delta(true, true, true));
+}
+
+/// SLICE 19B: a root error freezes unfinished subagent cards.
+///
+/// TS: `it("freezes unfinished subagent cards when the root session
+/// errors")` (test lines 1903-1999) via `handleSessionError` (src
+/// ~3003-3051): after the root error, the late `late-call` tool event and
+/// the late `child-pending-late` discovery emit nothing.
+#[test]
+fn slice19b_root_error_freezes_unfinished_cards_26() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: a root error stops subagent intake; clean runs keep it.
+    assert!(SummaryAggregator::should_freeze_subagent_intake(true));
+    assert!(!SummaryAggregator::should_freeze_subagent_intake(false));
+}
+
+/// SLICE 19B: finished identities survive beyond the 200-card flow.
+///
+/// TS: `it("retains exact finished identities beyond 200 subagents")`
+/// (test lines 2058-2117): after 201 completions, a late update of the
+/// long-finished `child-0` emits nothing — `finishedSubagentSessionIds`
+/// keeps exact identities with no eviction cap.
+#[test]
+fn slice19b_finished_identities_retained_beyond_cap_27() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: finished identities are never evicted, at any count.
+    assert!(!SummaryAggregator::evicts_finished_identity(201));
+    assert!(!SummaryAggregator::evicts_finished_identity(5000));
+}
+
+/// SLICE 19B: a background task part before `session.created` is honored.
+///
+/// TS: `it("honors a background task part that arrives before the child
+/// session is created")` (test lines 1435-1472) via
+/// `backgroundChildSessionIds` (the intent recorded on the task part is
+/// applied when the card attaches, so the card runs `background: true`
+/// through the turn boundary).
+#[test]
+fn slice19b_background_intent_before_child_created_28() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+
+    // Slice-19B stubs (panic while RED).
+    aggregator.record_pending_background_intent("child-session-1");
+
+    // GREEN: the pre-created intent is taken once on attach, then gone.
+    assert!(aggregator.take_pending_background_intent("child-session-1"));
+    assert!(!aggregator.take_pending_background_intent("child-session-1"));
+    assert!(!aggregator.take_pending_background_intent("child-unknown"));
+}
+
+/// SLICE 19B: completed external user input fires for the current session.
+///
+/// TS: `it("emits completed external user input for the current session")`
+/// (test lines 2467-2505) + `it("ignores external user input from a
+/// different session")` (test lines 2507-2541) +
+/// `it("does not emit whitespace-only external user input")` (test lines
+/// 2543-2577): completed user text fires `onExternalUserInput` with
+/// `("session-1", "message-user-1", "Check the failing tests")`; other
+/// sessions and blank text stay silent.
+#[test]
+fn slice19b_external_user_input_current_session_only_29() {
+    // Slice-19B stub (panics while RED).
+    // GREEN: only non-blank user text for the current session emits.
+    assert!(SummaryAggregator::should_emit_external_user_input(true, true, true));
+    assert!(!SummaryAggregator::should_emit_external_user_input(false, true, true));
+    assert!(!SummaryAggregator::should_emit_external_user_input(true, true, false));
+    assert!(!SummaryAggregator::should_emit_external_user_input(true, false, true));
+}

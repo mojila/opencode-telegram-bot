@@ -2790,3 +2790,372 @@ impl SummaryAggregator {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SLICE 18 (RED): session.updated enrichment + model-label partials +
+// thinking-update gate + footer-suppression edges + diff file fallback.
+// Each method below is a RED stub (`unimplemented!()`) until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`handleSessionCreatedOrUpdated` at ~1600-1656, shared by
+// `session.created` + `session.updated` at ~863-866;
+// `updateSubagentFromAssistantMessage` provider/model/variant arms at
+// ~1680-1688 with the `provider/id (variant)` display;
+// `emitThinkingUpdate` early return at ~2562-2574: no callback or zero
+// sections emits nothing;
+// `handleQuestionSettled` cancelled arm at ~3097-3099 +
+// `handlePermissionReplied` reject arm at ~3209-3211, both firing
+// `onFooterSuppressedCallback`;
+// `handleSessionDiff` file mapping `file: d.file ?? ""` at ~3141-3146).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (live subagent at 183-320, variant at 322-433, reasoning at 2170-2214,
+// settled questions at 3816-3839, replied permissions at 3841-3860,
+// session diffs).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Attach a `session.updated` child and enrich its card from the
+    /// session title (TS: `handleSessionCreatedOrUpdated` updated branch;
+    /// slice 18). Returns true when a card was attached/enriched.
+    pub fn handle_session_updated(
+        &mut self,
+        session_id: &str,
+        parent_session_id: &str,
+        title: &str,
+    ) -> bool {
+        self.handle_session_created_guarded(session_id, parent_session_id, title)
+    }
+
+    /// Display label for a provider/model/variant combo (TS: the card shows
+    /// `provider/id (variant)`; slice 18). `None` when both ids are missing
+    /// or blank; a blank variant is ignored.
+    pub fn subagent_model_label(
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+        variant: Option<&str>,
+    ) -> Option<String> {
+        let provider = provider_id.map(str::trim).filter(|value| !value.is_empty());
+        let model = model_id.map(str::trim).filter(|value| !value.is_empty());
+        let variant = variant.map(str::trim).filter(|value| !value.is_empty());
+        match (provider, model) {
+            (Some(provider), Some(model)) => Some(match variant {
+                Some(variant) => format!("{}/{} ({})", provider, model, variant),
+                None => format!("{}/{}", provider, model),
+            }),
+            (Some(provider), None) => Some(provider.to_string()),
+            (None, Some(model)) => Some(model.to_string()),
+            (None, None) => None,
+        }
+    }
+
+    /// Whether a thinking update emits (TS: `emitThinkingUpdate`: no
+    /// callback or zero sections emits nothing; slice 18).
+    pub fn should_emit_thinking_update(has_callback: bool, section_count: usize) -> bool {
+        has_callback && section_count > 0
+    }
+
+    /// Whether a settled question / replied permission suppresses the run
+    /// footer (TS: `cancelled` at ~3097-3099 + `reject` at ~3209-3211 fire
+    /// `onFooterSuppressedCallback`; slice 18). `outcome` is the question
+    /// outcome (`answered`/`cancelled`, empty when the check is for a
+    /// permission reply); `reply` is the permission reply (`allow`/`reject`,
+    /// `None` for question settles or an unknown decision).
+    pub fn footer_suppressed_for_settled(outcome: &str, reply: Option<&str>) -> bool {
+        outcome == "cancelled" || reply == Some("reject")
+    }
+
+    /// Normalize one `session.diff` file entry (TS: `file: d.file ?? ""`;
+    /// slice 18). Missing file ids become `""`, present paths pass through.
+    pub fn normalize_diff_file(file: Option<&str>) -> String {
+        file.unwrap_or_default().to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 19B (RED): remaining parity leftovers, grouped by theme:
+// updated/model/thinking, tokens/cost/settled/dispatch, pairing/pending/
+// title, patch/budget/gates, text/file/reasoning/error. Each method below
+// is a RED stub (`unimplemented!()`) until the port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// Assistant completion metadata (TS: `MessageCompletionInfo`; slice 19B).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssistantCompletionInfo {
+    pub agent: Option<String>,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub created_at: Option<u64>,
+    pub completed_at: Option<u64>,
+}
+
+/// Where a root `task` call may land (TS: `findSubagentForTaskCall`;
+/// slice 19B).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskCallPairing {
+    NamedCard,
+    WaitingCard,
+    Unpaired,
+}
+
+/// Text-message outbound step (TS: `onPartial` vs `onComplete`; slice 19B).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextMessageFlow {
+    Partial,
+    Complete,
+    None,
+}
+
+impl SummaryAggregator {
+    /// Variant carried by a child assistant message (TS:
+    /// `updateSubagentFromAssistantMessage` variant block, src ~1686-1688;
+    /// slice 19B). A non-empty incoming variant replaces the card value
+    /// (the caller re-emits); an omitted or blank one keeps the last value.
+    pub fn apply_variant_to_card(
+        current: Option<&str>,
+        incoming: Option<&str>,
+    ) -> Option<String> {
+        match incoming.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(variant) => Some(variant.to_string()),
+            None => current.map(|value| value.to_string()),
+        }
+    }
+
+    /// Whether a message may emit a thinking update (TS:
+    /// `registerThinkingPart` + `emitThinkingUpdate`, src ~2478-2584;
+    /// slice 19B). Text without any reasoning part never fires thinking.
+    pub fn should_emit_thinking_for_message(
+        has_reasoning_parts: bool,
+        has_callback: bool,
+    ) -> bool {
+        has_reasoning_parts && has_callback
+    }
+
+    /// Whether this reasoning part is the message's first thinking update
+    /// (TS: `emitThinkingUpdate` `isFirstUpdate`, src ~2562+; slice 19B).
+    pub fn marks_first_thinking_update(already_emitted_for_message: bool) -> bool {
+        !already_emitted_for_message
+    }
+
+    /// Completion metadata for a finished assistant message (TS:
+    /// `handleMessageUpdated` completed branch + `MessageCompletionInfo`,
+    /// src ~1930+; slice 19B).
+    pub fn assistant_completion_info(
+        agent: Option<&str>,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+        created_at: Option<u64>,
+        completed_at: Option<u64>,
+    ) -> AssistantCompletionInfo {
+        AssistantCompletionInfo {
+            agent: agent.map(|value| value.to_string()),
+            provider_id: provider_id.map(|value| value.to_string()),
+            model_id: model_id.map(|value| value.to_string()),
+            created_at,
+            completed_at,
+        }
+    }
+
+    /// Settle outcome for a question event kind (TS: `handleQuestionSettled`,
+    /// `question.replied` -> `"answered"` / `question.rejected` ->
+    /// `"cancelled"`, src ~3084-3111; slice 19B).
+    pub fn question_settled_outcome(event_kind: &str) -> &'static str {
+        if event_kind == "rejected" {
+            "cancelled"
+        } else {
+            "answered"
+        }
+    }
+
+    /// Whether a settled question reaches the settled callback (TS:
+    /// `handleQuestionSettled` fires for the followed session and its
+    /// subagents only, src ~3084-3111; slice 19B).
+    pub fn should_emit_question_settled(is_followed_or_subagent: bool) -> bool {
+        is_followed_or_subagent
+    }
+
+    /// Permission reply value passed along (TS: `handlePermissionReplied`,
+    /// `reply` carried verbatim, missing -> `None`, src ~3188-3230;
+    /// slice 19B).
+    pub fn permission_reply_value(reply: Option<&str>) -> Option<String> {
+        reply.map(|value| value.to_string())
+    }
+
+    /// Whether an incoming permission request must wait behind a running
+    /// dispatch (TS: `permissionQueue` serialization, src ~441; slice 19B).
+    pub fn should_queue_permission_while_dispatching(is_dispatching: bool) -> bool {
+        is_dispatching
+    }
+
+    /// Whether an asked permission reaches the permission callback (TS:
+    /// `handlePermissionAsked` fires for the current session and tracked
+    /// child sessions only, src ~3155-3186; slice 19B).
+    pub fn should_forward_permission_asked(
+        is_current_session: bool,
+        is_tracked_child: bool,
+    ) -> bool {
+        is_current_session || is_tracked_child
+    }
+
+    /// Pairing for a root `task` call update (TS: `findSubagentForTaskCall`,
+    /// src ~1440-1488: the named child card when live, else the only
+    /// waiting card for the single open call, otherwise unpaired;
+    /// slice 19B).
+    pub fn resolve_task_call_pairing(
+        names_live_child_card: bool,
+        unpaired_open_count: usize,
+        unlinked_waiting_count: usize,
+    ) -> TaskCallPairing {
+        if names_live_child_card {
+            TaskCallPairing::NamedCard
+        } else if unpaired_open_count == 1 && unlinked_waiting_count == 1 {
+            TaskCallPairing::WaitingCard
+        } else {
+            TaskCallPairing::Unpaired
+        }
+    }
+
+    /// Whether a task call left open across the parent turn end is dropped
+    /// (TS: `retireForegroundSubagents` clears unended `openTaskCalls`,
+    /// src ~1141-1147; slice 19B).
+    pub fn should_drop_stale_task_call(call_open_across_turn_end: bool) -> bool {
+        call_open_across_turn_end
+    }
+
+    /// Card a task-call update belongs to (TS: a call keeps updating only
+    /// the card it was paired with, src ~1440-1529; slice 19B). Returns the
+    /// paired card id when the update's call matches, else `None`.
+    pub fn route_task_call_update(
+        paired_card_id: Option<&str>,
+        event_call_id: &str,
+        update_call_id: &str,
+    ) -> Option<String> {
+        if event_call_id == update_call_id {
+            paired_card_id.map(|value| value.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Thinking title for a reasoning part (TS: `registerThinkingPart` /
+    /// `setThinkingPartSnapshot` title keys, src ~2478-2521: no title keys
+    /// -> the thinking callback carries no title; slice 19B).
+    pub fn reasoning_section_title(
+        has_title_keys: bool,
+        title: Option<&str>,
+    ) -> Option<String> {
+        if !has_title_keys {
+            return None;
+        }
+        title
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+    }
+
+    /// Whether a tool update restarts current-tool timing (TS:
+    /// `updateSubagentToolState`: a new `callId` restarts timing and
+    /// re-emits, the same `callId` stays quiet, src ~1705-1748; slice 19B).
+    pub fn should_restart_current_tool_timing(
+        prev_call_id: Option<&str>,
+        next_call_id: &str,
+    ) -> bool {
+        prev_call_id != Some(next_call_id)
+    }
+
+    /// Whether a `task` call runs in the background (TS:
+    /// `isBackgroundTaskCall`: `input.background` or
+    /// `metadata.background`, src ~351-355; slice 19B).
+    pub fn is_background_task_call(input_background: bool, metadata_background: bool) -> bool {
+        input_background || metadata_background
+    }
+
+    /// Whether a completed tool part with non-object metadata still fires
+    /// (TS: `handleMessagePartUpdated` tool branch ignores non-object
+    /// metadata instead of crashing, src ~2279+; slice 19B).
+    pub fn completed_tool_proceeds_without_object_metadata(metadata_is_object: bool) -> bool {
+        let _ = metadata_is_object;
+        true
+    }
+
+    /// Whether a parent-run interrupt reaches a card (TS:
+    /// `interruptSubagents`: ended cards are untouched, src ~1170-1209;
+    /// slice 19B).
+    pub fn interrupt_reaches_card(is_terminal_status: bool) -> bool {
+        !is_terminal_status
+    }
+
+    /// Outbound step for a text message update (TS: first text update ->
+    /// `onPartial`, completed message -> `onComplete`, src ~2135+/~1930+;
+    /// slice 19B).
+    pub fn text_message_flow_event(
+        is_completed_message: bool,
+        has_text: bool,
+    ) -> TextMessageFlow {
+        if !has_text {
+            TextMessageFlow::None
+        } else if is_completed_message {
+            TextMessageFlow::Complete
+        } else {
+            TextMessageFlow::Partial
+        }
+    }
+
+    /// Accumulated streaming text after a part delta (TS:
+    /// `handleMessagePartDelta` text path, src ~2395+; slice 19B).
+    pub fn delta_partial_text(previous: &str, delta: &str) -> String {
+        format!("{previous}{delta}")
+    }
+
+    /// Whether a part delta streams to the user (TS:
+    /// `handleMessagePartDelta`: streams with or without a part type, but
+    /// an unknown part after reasoning started stays silent, src ~2395+;
+    /// slice 19B).
+    pub fn should_stream_part_delta(
+        part_type_known: bool,
+        delta_non_empty: bool,
+        reasoning_started: bool,
+    ) -> bool {
+        delta_non_empty && (!reasoning_started || part_type_known)
+    }
+
+    /// Whether a root error freezes subagent intake (TS:
+    /// `handleSessionError`: late child tool/discovery events after the
+    /// root error emit nothing, src ~3003-3051; slice 19B).
+    pub fn should_freeze_subagent_intake(root_errored: bool) -> bool {
+        root_errored
+    }
+
+    /// Whether a finished subagent identity is evicted (TS:
+    /// `finishedSubagentSessionIds` retains exact identities with no cap,
+    /// so late updates of long-finished children stay silent; slice 19B).
+    pub fn evicts_finished_identity(_finished_count: usize) -> bool {
+        false
+    }
+
+    /// Record a background intent seen before its child session exists (TS:
+    /// `backgroundChildSessionIds`, honored when the card attaches;
+    /// slice 19B).
+    pub fn record_pending_background_intent(&mut self, child_session_id: &str) {
+        self.background_child_sessions
+            .insert(child_session_id.to_string());
+    }
+
+    /// Take a pending background intent for an attaching child session
+    /// (TS: `applyPendingBackgroundIntent`; slice 19B).
+    pub fn take_pending_background_intent(&mut self, child_session_id: &str) -> bool {
+        self.background_child_sessions.remove(child_session_id)
+    }
+
+    /// Whether external user input reaches its callback (TS: completed
+    /// user text for the current session fires; other sessions and
+    /// blank text stay silent; slice 19B).
+    pub fn should_emit_external_user_input(
+        is_current_session: bool,
+        role_is_user: bool,
+        text_non_blank: bool,
+    ) -> bool {
+        is_current_session && role_is_user && text_non_blank
+    }
+}

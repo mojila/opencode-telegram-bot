@@ -2,4 +2,5 @@
 //!
 //! Mirrors `src/app/formatters/` from the TypeScript source.
 
+pub mod extra_formatters;
 pub mod tool_batcher;
