@@ -1475,3 +1475,926 @@ fn slice10_session_error_message_reaches_callback() {
         "Model not found: opencode/foo."
     );
 }
+
+// ---------------------------------------------------------------------------
+// SLICE 11 (RED): todo lists, onTokens/cost cards, run-end. Each test
+// targets a slice-11 stub (`unimplemented!()`) and MUST FAIL until the
+// Rust port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 11: completed message fires onTokens with isCompleted=true.
+///
+/// TS: `it("fires onTokens with isCompleted=true when message has
+/// completed timestamp")` (test lines 3487-3539: tokens
+/// `{ input: 800, output: 200, cache: { read: 100 } }` + completed time
+/// -> `onTokens("session-1", { input: 800, ... }, true)`) via
+/// `handleMessageUpdated` tokens branch (src ~1971-1992).
+#[test]
+fn slice11_on_tokens_completed_flag() {
+    use otb_core::managers::summary_aggregation::TokensInfo;
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+    let seen: Rc<RefCell<Vec<(String, TokensInfo, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&seen);
+    aggregator.set_on_tokens(Box::new(move |session_id, tokens, is_completed| {
+        probe.borrow_mut().push((session_id, tokens, is_completed));
+    }));
+
+    // Slice-11 stub (panics while RED).
+    aggregator.handle_tokens_update(
+        "session-1",
+        TokensInfo {
+            input: 800,
+            output: 200,
+            reasoning: 0,
+            cache_read: 100,
+            cache_write: 0,
+        },
+        true,
+    );
+
+    // GREEN: the completed totals reach the callback with `true`.
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].0, "session-1");
+    assert_eq!(seen[0].1.input, 800);
+    assert_eq!(seen[0].1.cache_read, 100);
+    assert!(seen[0].2);
+}
+
+/// SLICE 11: intermediate token updates fire with isCompleted=false.
+///
+/// TS: `it("fires onTokens for non-completed message with non-zero
+/// tokens (intermediate update)")` (test lines 3567-3616: zero-token
+/// start fires `false`, later `{ input: 4000, cache: { read: 12000 } }`
+/// fires `false`) via the same tokens branch (src ~1971-1992, no
+/// `completed` time).
+#[test]
+fn slice11_on_tokens_intermediate_update() {
+    use otb_core::managers::summary_aggregation::TokensInfo;
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+    let seen: Rc<RefCell<Vec<(String, TokensInfo, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&seen);
+    aggregator.set_on_tokens(Box::new(move |session_id, tokens, is_completed| {
+        probe.borrow_mut().push((session_id, tokens, is_completed));
+    }));
+
+    // Slice-11 stubs (panic while RED).
+    aggregator.handle_tokens_update(
+        "session-1",
+        TokensInfo {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache_read: 0,
+            cache_write: 0,
+        },
+        false,
+    );
+    aggregator.handle_tokens_update(
+        "session-1",
+        TokensInfo {
+            input: 4000,
+            output: 300,
+            reasoning: 0,
+            cache_read: 12_000,
+            cache_write: 0,
+        },
+        false,
+    );
+
+    // GREEN: both intermediate updates fire with `false`.
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1].1.input, 4000);
+    assert_eq!(seen[1].1.cache_read, 12_000);
+    assert!(!seen[1].2);
+}
+
+/// SLICE 11: completed message cost reaches onCost.
+///
+/// TS: cost `0.01` on the completed message (test lines 3526-3528) via
+/// the cost branch (src ~2023-2030: `onCostCallback?.(sessionID, cost)`
+/// only when completed).
+#[test]
+fn slice11_on_cost_card() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+    let seen: Rc<RefCell<Vec<(String, f64)>>> = Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&seen);
+    aggregator.set_on_cost(Box::new(move |session_id, cost| {
+        probe.borrow_mut().push((session_id, cost));
+    }));
+
+    // Slice-11 stub (panics while RED).
+    aggregator.handle_cost_update("session-1", 0.01);
+
+    // GREEN: the cost reaches the callback verbatim.
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].0, "session-1");
+    assert!((seen[0].1 - 0.01).abs() < f64::EPSILON);
+}
+
+/// SLICE 11: run-end reports the followed session and its subagents.
+///
+/// TS: `it("reports the end of a run for the followed session and its
+/// subagents")` (test lines 3862-3885: child `session.error` + root
+/// `session.idle` -> `onSessionRunEnded` twice, with
+/// `"child-session-1"` and `"root-session"`) via `emitSessionRunEnded`
+/// (src ~3113-3126).
+#[test]
+fn slice11_run_end_reports_followed_and_subagents() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    let seen: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&seen);
+    aggregator.set_on_session_run_ended(Box::new(move |session_id| {
+        probe.borrow_mut().push(session_id);
+    }));
+
+    // Slice-11 stubs (panic while RED).
+    aggregator.handle_run_end("child-session-1");
+    aggregator.handle_run_end("root-session");
+
+    // GREEN: both runs end, child first.
+    let seen = seen.borrow();
+    assert_eq!(seen.as_slice(), ["child-session-1", "root-session"]);
+}
+
+/// SLICE 11: todo list tracked per session with a done/total summary.
+///
+/// No direct TS counterpart in `summary-aggregation-manager.ts` (no
+/// `todo` handling there); models the todo-tool list the summary cards
+/// carry. The stub keeps per-session items so the summary reads back
+/// `done/total`.
+#[test]
+fn slice11_todo_list_summary() {
+    use otb_core::managers::summary_aggregation::TodoItem;
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+
+    // Slice-11 stubs (panic while RED).
+    aggregator.track_todo_list(
+        "session-1",
+        vec![
+            TodoItem {
+                title: "Write code".to_string(),
+                done: true,
+            },
+            TodoItem {
+                title: "Write tests".to_string(),
+                done: false,
+            },
+            TodoItem {
+                title: "Run checks".to_string(),
+                done: false,
+            },
+        ],
+    );
+
+    // GREEN: the summary counts done over total; other sessions stay empty.
+    assert_eq!(aggregator.todo_summary("session-1"), "1/3 done");
+    assert_eq!(aggregator.todo_summary("session-2"), "0/0 done");
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 12 (RED): text-message edge states, edit/write fallbacks,
+// thinking-finished gates. Each test targets a slice-12 stub
+// (`unimplemented!()`) and MUST FAIL until the Rust port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 12: optimistic partial fires only from the second unknown update.
+///
+/// TS: `it("starts optimistic partial streaming after second unknown text
+/// update")` (test lines 2648-2683) + `it("does not stream unknown text
+/// when only one update arrived")` (test lines 2685-2705) via
+/// `handleMessagePartUpdated` text branch with no `messageInfo`
+/// (src ~2200-2207: `optimisticUpdateCount++`, emit once `>= 2`).
+#[test]
+fn slice12_optimistic_partial_after_second_unknown_update() {
+    // Slice-12 stub (panics while RED).
+    // GREEN: one unknown update stays pending; the second one emits.
+    assert!(!SummaryAggregator::should_emit_optimistic_partial(1));
+    assert!(SummaryAggregator::should_emit_optimistic_partial(2));
+    assert!(SummaryAggregator::should_emit_optimistic_partial(3));
+}
+
+/// SLICE 12: pending text attached on a completed message skips partial.
+///
+/// TS: `it("does not emit partial when pending text is attached on
+/// completed message")` (test lines 2707-2747) via `handleMessageUpdated`
+/// completed branch: pending optimistic text goes straight to `onComplete`
+/// with no `onPartial`.
+#[test]
+fn slice12_completed_message_with_pending_text_skips_partial() {
+    // Slice-12 stub (panics while RED).
+    // GREEN: a completed message never emits the pending text as partial.
+    assert!(!SummaryAggregator::should_emit_pending_on_completed(true));
+}
+
+/// SLICE 12: edit fallback path parsed from the tool title.
+///
+/// TS: `it("sends apply_patch file using title and patchText fallback")`
+/// (test lines 3245-3307: title `"Success. Updated the following
+/// files:\nM README.md"` -> file `"README.md"`) via
+/// `extractFirstUpdatedFileFromTitle` (src ~362-371: first `M/A/D/...`
+/// status line wins).
+#[test]
+fn slice12_edit_fallback_title_yields_path() {
+    // Slice-12 stub (panics while RED).
+    // GREEN: the first status line yields the patched path.
+    assert_eq!(
+        SummaryAggregator::edit_path_from_title("Success. Updated the following files:\nM README.md"),
+        Some("README.md".to_string())
+    );
+    assert_eq!(
+        SummaryAggregator::edit_path_from_title("Success. Updated the following files:\nM src/one.ts"),
+        Some("src/one.ts".to_string())
+    );
+    assert_eq!(SummaryAggregator::edit_path_from_title("Success, nothing listed"), None);
+}
+
+/// SLICE 12: write fallback yields no file without path and content.
+///
+/// TS: `prepareToolFiles` write branch (src ~2763-2783: `if (!filePath ||
+/// !hasContent) return []`) — the oversized case (test lines 2119-2168)
+/// keeps `onTool` with `hasFileAttachment: false` because the payload
+/// branch is separate from this missing-input fallback.
+#[test]
+fn slice12_write_fallback_missing_path_yields_no_file() {
+    // Slice-12 stub (panics while RED).
+    // GREEN: both path and content are required for a write file.
+    assert!(!SummaryAggregator::write_file_ready("", true));
+    assert!(!SummaryAggregator::write_file_ready("src/huge.ts", false));
+    assert!(SummaryAggregator::write_file_ready("src/huge.ts", true));
+}
+
+/// SLICE 12: thinking finished signals once, only after reasoning.
+///
+/// TS: `it("signals thinking finished once when assistant text starts
+/// after reasoning")` (test lines 2312-2375: reasoning part then text part
+/// -> `onThinkingFinished` once with `(sessionId, messageId)`) +
+/// `it("does not signal thinking finished for assistant text without
+/// reasoning")` (test lines 2377-2410) via `emitThinkingFinishedOnce`
+/// (src ~2586-2600: needs `thinkingFiredForMessages`, skips when already
+/// in `thinkingFinishedForMessages`).
+#[test]
+fn slice12_thinking_finished_once_after_reasoning() {
+    // Slice-12 stub (panics while RED).
+    // GREEN: only the first text-after-reasoning signals.
+    assert!(SummaryAggregator::should_signal_thinking_finished(true, false));
+    assert!(!SummaryAggregator::should_signal_thinking_finished(true, true));
+    assert!(!SummaryAggregator::should_signal_thinking_finished(false, false));
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 13 (RED): multi-file apply_patch edges, oversized/failed patch,
+// onTokens no-field gate, session-error variants. Each test targets a
+// slice-13 stub (`unimplemented!()`) and MUST FAIL until the Rust port
+// lands. TS source: `src/app/managers/summary-aggregation-manager.ts`;
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 13: one summary line per changed apply_patch file.
+///
+/// TS: `it("sends one apply_patch document and one file change per changed
+/// file")` (test lines 3309-3393: `metadata.files` with `src/one.ts`
+/// update + `src/two.ts` add -> lines `"🩹 apply_patch src/one.ts (+1
+/// -1)"` and `"🩹 apply_patch src/two.ts (+2)"`) via `formatPatchFileLine`
+/// (formatter ~253-255: icon + path + `formatDiffLineInfo`, which drops the
+/// zero side).
+#[test]
+fn slice13_patch_file_line_per_changed_file() {
+    // Slice-13 stub (panics while RED).
+    // GREEN: one line per file; the zero-deletion side is dropped.
+    assert_eq!(
+        SummaryAggregator::format_patch_file_line("src/one.ts", 1, 1),
+        "🩹 apply_patch src/one.ts (+1 -1)"
+    );
+    assert_eq!(
+        SummaryAggregator::format_patch_file_line("src/two.ts", 2, 0),
+        "🩹 apply_patch src/two.ts (+2)"
+    );
+}
+
+/// SLICE 13: oversized apply_patch diff keeps its line but loses the file.
+///
+/// TS: `it("leaves an oversized apply_patch file as a text line and keeps
+/// the other documents")` (test lines 3395-3455: `src/huge.ts` with
+/// `"+" + "x".repeat(101 * 1024)` -> `{ fileData: null, line: "🩹
+/// apply_patch src/huge.ts (+1)" }` while `src/small.ts` keeps its
+/// `edit_small.ts.txt` document) via `prepareCodeFile` (formatter
+/// ~488-507: over the 100 KiB budget returns null).
+#[test]
+fn slice13_oversized_patch_file_loses_attachment_keeps_line() {
+    // Slice-13 stub (panics while RED).
+    // GREEN: 101 KiB is over budget; 1 KiB fits.
+    assert!(!SummaryAggregator::apply_patch_attachment_allowed(101 * 1024));
+    assert!(SummaryAggregator::apply_patch_attachment_allowed(1024));
+}
+
+/// SLICE 13: a failed apply_patch adds no files.
+///
+/// TS: `it("adds nothing for a failed apply_patch")` (test lines
+/// 3457-3485: `status: "error"` with `patchText` input -> `onToolFile` and
+/// `onFileChange` never fire) via the completed-only tool gate (src
+/// ~2273-2284: only `status === "completed"` reaches `prepareToolFiles`).
+#[test]
+fn slice13_failed_patch_yields_no_files() {
+    // Slice-13 stub (panics while RED).
+    // GREEN: only completed states are processed.
+    assert!(SummaryAggregator::should_process_tool_state("completed"));
+    assert!(!SummaryAggregator::should_process_tool_state("error"));
+}
+
+/// SLICE 13: `message.updated` without tokens never fires `onTokens`.
+///
+/// TS: `it("does not fire onTokens when message.updated has no tokens
+/// field")` (test lines 3618-3636: info with no `tokens` -> `onTokens`
+/// not called) via the tokens gate (src ~1976: `if
+/// (this.onTokensCallback && assistantInfo.tokens)`).
+#[test]
+fn slice13_no_tokens_field_fires_nothing() {
+    // Slice-13 stub (panics while RED).
+    // GREEN: the callback fires only when token data is present.
+    assert!(SummaryAggregator::should_fire_tokens(true));
+    assert!(!SummaryAggregator::should_fire_tokens(false));
+}
+
+/// SLICE 13: unexpected `session.error` shapes fall back or pass through.
+///
+/// TS: `it("falls back to a generic message and warns when session.error
+/// carries a non-object error")` (test lines 4338-4358: `error: 42` ->
+/// `onSessionError("session-1", "Unknown session error",
+/// { interrupted: false })`) + `it("surfaces a string session.error with
+/// a warn ...")` (test lines 4360-4380: `error: "upstream exploded"` ->
+/// verbatim) via `extractErrorMessage(error) ?? "Unknown session error"`
+/// (src ~3010; `extractErrorMessage` in `opencode-error.ts` ~100-130).
+#[test]
+fn slice13_session_error_variants_fallback_and_passthrough() {
+    // Slice-13 stub (panics while RED).
+    // GREEN: missing/blank falls back; a real string passes through trimmed.
+    assert_eq!(
+        SummaryAggregator::unexpected_session_error_message(None),
+        "Unknown session error"
+    );
+    assert_eq!(
+        SummaryAggregator::unexpected_session_error_message(Some("upstream exploded")),
+        "upstream exploded"
+    );
+    assert_eq!(
+        SummaryAggregator::unexpected_session_error_message(Some("   ")),
+        "Unknown session error"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 14 (RED): session.created enrichment, subagent model/provider
+// pairing, thinking-message state machines. Each test targets a slice-14
+// stub (`unimplemented!()`) and MUST FAIL until the Rust port lands.
+// TS source: `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 14: `session.created` enriches the card from its title.
+///
+/// TS: `handleSessionCreatedOrUpdated` (src ~1600-1656) ->
+/// `getOrCreateSubagentForSession` (src ~1531-1543) +
+/// `enrichSubagentFromSessionTitle` (`"Desc (@agent subagent)"` splits into
+/// both halves) + `emitSubagentState`. TS tests: live subagent flow
+/// (test lines 229-243: `session.created` with
+/// `title: "Explore project architecture (@explore subagent)"` attaches the
+/// card) and parallel subagents (test lines 1630-1644: per-child titles
+/// `"first task (@explore subagent)"` / `"second task (@general subagent)"`).
+#[test]
+fn slice14_session_created_enriches_card_from_title() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&snapshots);
+    aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
+        probe.borrow_mut().push((session_id, subagents));
+    }));
+
+    // Slice-14 stub (panics while RED).
+    aggregator.handle_session_created_with_title(
+        "child-session-1",
+        "root-session",
+        "Explore project architecture (@explore subagent)",
+    );
+
+    // GREEN: the created session binds a card enriched from its title.
+    let snapshots = snapshots.borrow();
+    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    let (session_id, cards) = &snapshots[snapshots.len() - 1];
+    assert_eq!(session_id, "root-session");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].session_id, Some("child-session-1".to_string()));
+    assert_eq!(cards[0].parent_session_id, "root-session");
+    assert_eq!(cards[0].task, "Explore project architecture");
+    assert_eq!(cards[0].agent, "explore");
+}
+
+/// SLICE 14: child assistant message pairs agent + provider/model/variant.
+///
+/// TS: `updateSubagentFromAssistantMessage` (src ~1658-1703: `agent`,
+/// `providerID`/`modelID`/`variant` each kept when non-empty, the combo
+/// shown as `provider/id (variant)`) via child `message.updated`
+/// (test lines 245-268: `providerID=openai`, `modelID=gpt-5.4`,
+/// `agent=explore`, `cost: 0.18`, tokens `input: 54000/cache.read: 1000`;
+/// variant block at test lines 369-384 adds `variant=high`).
+#[test]
+fn slice14_assistant_message_pairs_agent_provider_model_variant() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+    let probe = Rc::clone(&snapshots);
+    aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
+        probe.borrow_mut().push((session_id, subagents));
+    }));
+
+    // Slice-14 stub (panics while RED).
+    aggregator.pair_assistant_message_model(
+        "child-session-1",
+        Some("explore"),
+        Some("openai"),
+        Some("gpt-5.4"),
+        Some("high"),
+    );
+
+    // GREEN: agent + provider/model/variant land on the card with the
+    // `provider/id (variant)` display.
+    let snapshots = snapshots.borrow();
+    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    let (session_id, cards) = &snapshots[snapshots.len() - 1];
+    assert_eq!(session_id, "root-session");
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].session_id, Some("child-session-1".to_string()));
+    assert_eq!(cards[0].agent, "explore");
+    assert_eq!(cards[0].provider_id, Some("openai".to_string()));
+    assert_eq!(cards[0].model_id, Some("gpt-5.4".to_string()));
+    assert_eq!(cards[0].variant, Some("high".to_string()));
+    assert_eq!(cards[0].model, "openai/gpt-5.4 (high)");
+}
+
+/// SLICE 14: thinking snapshot registers once, dedups identical text.
+///
+/// TS: `registerThinkingPart` (src ~2478-2497: first sight pushes
+/// `orderedPartIds`) + `setThinkingPartSnapshot` (src ~2499-2521: returns
+/// `false` when text+title are unchanged, so `emitThinkingUpdate` is
+/// skipped) + `getThinkingSections` order (src ~2550-2560). TS tests:
+/// reasoning arrival (test lines 2170-2214: `part-reasoning-1`
+/// `"Let me think about this..."` fires `isFirstUpdate: true`).
+#[test]
+fn slice14_thinking_snapshot_registers_once_dedups_identical() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+
+    // Slice-14 stub (panics while RED): (is_first_update, was_updated).
+    let (is_first, was_updated) =
+        aggregator.register_thinking_snapshot("message-1", "part-reasoning-1", "Let me think...", None);
+    assert!(is_first);
+    assert!(was_updated);
+
+    // GREEN: the identical snapshot is a no-op (no re-emit).
+    let (is_first_again, was_updated_again) =
+        aggregator.register_thinking_snapshot("message-1", "part-reasoning-1", "Let me think...", None);
+    assert!(!is_first_again);
+    assert!(!was_updated_again);
+}
+
+/// SLICE 14: thinking delta accumulates, full-text hint wins when longer.
+///
+/// TS: `applyThinkingDelta` (src ~2523-2548: `previous + delta`, then
+/// `fullTextHint` replaces it when longer) driving the reasoning-delta
+/// flow (test lines 2216-2310: `"First " + "second"` -> `"First second"`
+/// with `title: "Analysis"` preserved on the section).
+#[test]
+fn slice14_thinking_delta_accumulates_hint_wins_when_longer() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+
+    // Slice-14 stub (panics while RED).
+    let accumulated = aggregator.apply_thinking_delta_with_hint(
+        "session-1",
+        "message-1",
+        "part-reasoning-1",
+        "second",
+        Some("First second"),
+    );
+
+    // GREEN: previous text + delta accumulate; the longer hint wins.
+    assert_eq!(accumulated, "First second");
+}
+
+/// SLICE 14: thinking-finished signals once, only after reasoning.
+///
+/// TS: `emitThinkingFinishedOnce` (src ~2586-2600: needs
+/// `thinkingFiredForMessages`, skips when already in
+/// `thinkingFinishedForMessages`) via text-after-reasoning (test lines
+/// 2312-2375: reasoning part then text part -> `onThinkingFinished` once)
+/// and text-without-reasoning (test lines 2377-2410: no signal).
+#[test]
+fn slice14_thinking_finished_signals_once_only_after_reasoning() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+
+    // Slice-14 stub (panics while RED).
+    // GREEN: first text-after-reasoning signals; repeats and
+    // reasoning-less messages do not.
+    assert!(aggregator.poll_thinking_finished("session-1", "message-1", true));
+    assert!(!aggregator.poll_thinking_finished("session-1", "message-1", true));
+    assert!(!aggregator.poll_thinking_finished("session-1", "message-2", false));
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 15 (RED): subagent terminal/cost full paths + background stale-drop
+// + nested guards. Each test targets a slice-15 stub (`unimplemented!()`)
+// and MUST FAIL until the Rust port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 15: completed terminal retires the card through the full path.
+///
+/// TS: `handleSessionIdle` child branch (src ~2928-2938: non-nested child
+/// -> `setSubagentTerminalStatus(sessionID, "completed")`) via
+/// `setSubagentTerminalStatus` (src ~1852-1876) -> `endSubagent` (src
+/// ~1901-1915: status set, activity cleared, `retireSubagent`) + `emitSessionRunEnded`.
+/// TS tests: terminal cards (test lines 1683-1901: completed card emitted
+/// once, then excluded from later snapshots).
+#[test]
+fn slice15_completed_terminal_retires_card() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    aggregator.update_subagent_tool_state(
+        "child-session-1",
+        "call-1",
+        "bash",
+        Some("Running tests"),
+        1_000,
+    );
+
+    // Slice-15 stub (panics while RED).
+    aggregator.complete_subagent("child-session-1");
+
+    // GREEN: the full terminal path retires the card, so its cost reads
+    // back zero and no live card remains.
+    assert!((aggregator.session_cost("child-session-1") - 0.0).abs() < f64::EPSILON);
+}
+
+/// SLICE 15: assistant-message tokens/cost arms land on the card.
+///
+/// TS: `updateSubagentFromAssistantMessage` (src ~1658-1703: tokens arm at
+/// ~1689-1697 replaces `subagent.tokens` with `cache.read/write` defaulting
+/// to 0, cost arm at ~1698-1700 assigns `subagent.cost`) via child
+/// `message.updated` (src ~1930-1934, non-nested guard). TS tests: live
+/// subagent flow (test lines 245-268: `tokens: { input: 54000,
+/// cache: { read: 1000 } }`, `cost: 0.18`).
+#[test]
+fn slice15_assistant_message_tokens_cost_arms() {
+    use otb_core::managers::summary_aggregation::TokensInfo;
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    aggregator.update_subagent_tool_state(
+        "child-session-1",
+        "call-1",
+        "bash",
+        Some("Running tests"),
+        1_000,
+    );
+
+    // Slice-15 stub (panics while RED).
+    aggregator.apply_assistant_tokens_cost(
+        "child-session-1",
+        TokensInfo {
+            input: 54_000,
+            output: 1_200,
+            reasoning: 0,
+            cache_read: 1_000,
+            cache_write: 0,
+        },
+        0.18,
+    );
+
+    // GREEN: tokens are replaced (not accumulated) and cost is assigned.
+    assert!((aggregator.session_cost("child-session-1") - 0.18).abs() < f64::EPSILON);
+}
+
+/// SLICE 15: background stale-drop ignores a pre-run discovery.
+///
+/// TS: `handleSessionCreatedOrUpdated` stale-drop (src ~1627-1639: no card
+/// for the session + (`!acceptsSubagentEvents` or
+/// `createdAt < subagentRunStartedAt`) -> `finishedSubagentSessionIds.add`
+/// + return, so a background card's update in a later run is not a stale
+/// rediscovery). TS tests: background keep-alive (test lines 738-757) +
+/// stale `session.created` arrivals.
+#[test]
+fn slice15_background_stale_drop_created_before_run() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+
+    // Slice-15 stub (panics while RED): created (500) before the run (1000).
+    aggregator.handle_session_created_with_created_at(
+        "stale-child",
+        "root-session",
+        "Stale task (@explore subagent)",
+        500,
+        1_000,
+    );
+
+    // GREEN: the stale discovery is finished, never attached: still gated
+    // and costless.
+    assert!(aggregator.is_child_gated("stale-child"));
+    assert!((aggregator.session_cost("stale-child") - 0.0).abs() < f64::EPSILON);
+}
+
+/// SLICE 15: untracked-parent `session.created` attaches nothing.
+///
+/// TS: `handleSessionCreatedOrUpdated` parent guard (src ~1641-1643:
+/// `if (!trackedSessionParents.has(info.parentID)) return`) — a child whose
+/// parent was never tracked is ignored. TS tests: `session.created`
+/// gating (test lines 1535-1602).
+#[test]
+fn slice15_untracked_parent_guarded_attaches_nothing() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+
+    // Slice-15 stub (panics while RED): parent was never tracked.
+    let attached =
+        aggregator.handle_session_created_guarded("orphan-child", "unknown-parent", "Orphan task");
+
+    // GREEN: the guard refuses the orphan; nothing attaches.
+    assert!(!attached);
+    assert!(aggregator.is_child_gated("orphan-child"));
+}
+
+/// SLICE 15: nested sessions are nested and never take cards.
+///
+/// TS: `isNestedSubagentSession` (src ~965-969: parent tracked and
+/// non-root) + nested-parent early returns: `handleMessageUpdated` (src
+/// ~1930-1934: nested assistant skips `updateSubagentFromAssistantMessage`),
+/// `handleMessagePartUpdated` (src ~2072-2074: nested returns; ~2077-2080:
+/// subtask of a subagent gets no card), `handleSessionIdle` (src ~2932-2933:
+/// nested -> `endNestedSubagentSession`), `handleSessionError` (src
+/// ~3019-3020). TS tests: nested-subagent block (test lines 1122-1234).
+#[test]
+fn slice15_nested_parent_early_return_no_card() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("root-session");
+    aggregator.handle_session_created("child-session-1", "root-session");
+    aggregator.track_nested_launch("child-session-1", "nested-session-1");
+
+    // Slice-15 stub (panics while RED).
+    assert!(aggregator.is_nested_subagent_session("nested-session-1"));
+
+    // GREEN: the child is not nested; the nested session resolves to the
+    // root and stays gated from cards.
+    assert!(!aggregator.is_nested_subagent_session("child-session-1"));
+    assert_eq!(
+        aggregator.get_root_session_id("nested-session-1"),
+        "root-session"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 16 (RED): text-message edge states + edit/write fallbacks +
+// remaining nested guards. Each test targets a slice-16 stub
+// (`unimplemented!()`) and MUST FAIL until the Rust port lands. TS source:
+// `src/app/managers/summary-aggregation-manager.ts`; TS tests:
+// `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 16: text delta accumulates, longer full-text hint wins.
+///
+/// TS: `applyTextDelta` (src ~2399-2435: `previous + delta`, then
+/// `fullTextHint` replaces it when `hint.length > accumulated.length` at
+/// ~2416-2418) driving the streaming path of `handleMessagePartDelta`
+/// (src ~2395-2396) and the `deltaFromUpdated` text path of
+/// `handleMessagePartUpdated` (src ~2135-2144).
+#[test]
+fn slice16_text_delta_hint_wins_when_longer() {
+    // Slice-16 stub (panics while RED).
+    // GREEN: deltas concatenate; a longer server hint replaces the sum.
+    assert_eq!(
+        SummaryAggregator::accumulate_text_delta_with_hint("Hel", "lo", None),
+        "Hello"
+    );
+    assert_eq!(
+        SummaryAggregator::accumulate_text_delta_with_hint("Hel", "lo", Some("Hello, world!")),
+        "Hello, world!"
+    );
+    assert_eq!(
+        SummaryAggregator::accumulate_text_delta_with_hint("Hello, world!", "!", Some("Hi")),
+        "Hello, world!!"
+    );
+}
+
+/// SLICE 16: `message.updated` emits partial only for the first optimistic update.
+///
+/// TS: `handleMessageUpdated` (src ~1967-1969:
+/// `if (!isCompleted && textState.optimisticUpdateCount === 1) emitPartial`):
+/// a still-running message emits once its first unknown-text update lands;
+/// completed messages go straight to `onComplete` and never emit partial.
+#[test]
+fn slice16_message_updated_partial_only_first_optimistic() {
+    // Slice-16 stub (panics while RED).
+    // GREEN: only (running, first update) emits.
+    assert!(SummaryAggregator::should_emit_updated_partial(false, 1));
+    assert!(!SummaryAggregator::should_emit_updated_partial(false, 2));
+    assert!(!SummaryAggregator::should_emit_updated_partial(true, 1));
+    assert!(!SummaryAggregator::should_emit_updated_partial(true, 0));
+}
+
+/// SLICE 16: edit fallback needs both a path and diff text.
+///
+/// TS: `prepareToolFiles` edit branch (src ~2785-2807:
+/// `filediff.file` + `metadata.diff`, `if (!filePath || !diffText) return []`).
+/// TS tests: `filediff` path (test lines 3169-3243) vs title/`patchText`
+/// fallback (test lines 3245-3307, via `extractFirstUpdatedFileFromTitle`).
+#[test]
+fn slice16_edit_fallback_needs_path_and_diff() {
+    // Slice-16 stub (panics while RED).
+    // GREEN: both halves are required for an edit file.
+    assert!(SummaryAggregator::edit_file_ready("src/one.ts", true));
+    assert!(!SummaryAggregator::edit_file_ready("", true));
+    assert!(!SummaryAggregator::edit_file_ready("src/one.ts", false));
+    assert!(!SummaryAggregator::edit_file_ready("", false));
+}
+
+/// SLICE 16: write fallback counts additions by newline-split lines.
+///
+/// TS: `prepareToolFiles` write branch (src ~2763-2782:
+/// `if (!filePath || !hasContent) return []`, else
+/// `additions: content.split("\n").length, deletions: 0`).
+/// TS tests: oversized write (test lines 2119-2168) + multi-text combining.
+#[test]
+fn slice16_write_fallback_counts_additions_by_lines() {
+    // Slice-16 stub (panics while RED).
+    // GREEN: JS `split("\n").length` semantics (empty string counts as 1).
+    assert_eq!(SummaryAggregator::count_write_additions("hello"), 1);
+    assert_eq!(SummaryAggregator::count_write_additions("a\nb\nc"), 3);
+    assert_eq!(SummaryAggregator::count_write_additions(""), 1);
+}
+
+/// SLICE 16: nested part + subtask-of-subagent guards drop before cards.
+///
+/// TS: `handleMessagePartUpdated` nested early return (src ~2072-2074:
+/// `if (isNestedSubagentSession(part.sessionID)) return`) + subtask guard
+/// (src ~2076-2080: `if (part.type === "subtask" && !isCurrentRootSession)
+/// return`, so a subtask of a subagent never reaches `registerSubtaskPart`
+/// and takes no card) on top of `isNestedSubagentSession` (src ~965-969).
+/// TS tests: nested-subagent block (test lines 1122-1234).
+#[test]
+fn slice16_nested_part_and_subtask_guards_drop() {
+    // Slice-16 stub (panics while RED).
+    // GREEN: nested parts always drop; subtasks drop off-root only.
+    assert!(SummaryAggregator::should_drop_nested_subtask(true, false, true));
+    assert!(SummaryAggregator::should_drop_nested_subtask(true, true, false));
+    assert!(SummaryAggregator::should_drop_nested_subtask(false, true, false));
+    assert!(!SummaryAggregator::should_drop_nested_subtask(false, true, true));
+    assert!(!SummaryAggregator::should_drop_nested_subtask(false, false, true));
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 17 (RED): cost-zero gate + token cache defaults + forget-live-turn +
+// diff counts + abort/interrupt/retry fallbacks. Each test targets a
+// slice-17 stub (`unimplemented!()`) and MUST FAIL until the Rust port
+// lands. TS source: `src/app/managers/summary-aggregation-manager.ts`; TS
+// tests: `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+/// SLICE 17: zero cost still formats and still fires `onCost`.
+///
+/// TS: `handleMessageUpdated` cost branch (src ~2023-2030: gate is
+/// `assistantInfo.cost !== undefined`, log `` `$${cost.toFixed(2)}` ``).
+/// A `0` cost must still format as `$0.00` and still fire; only a missing
+/// cost is gated. TS tests: cost `0.01` (test lines 3526-3528).
+#[test]
+fn slice17_cost_zero_formats_and_fires() {
+    // GREEN already (slice 5): zero formats with two decimals.
+    assert_eq!(SummaryAggregator::format_cost(0.0), "$0.00");
+
+    // Slice-17 stub (panics while RED): `Some(0.0)` fires, `None` does not.
+    assert!(SummaryAggregator::cost_fires_for_value(Some(0.0)));
+    assert!(!SummaryAggregator::cost_fires_for_value(None));
+}
+
+/// SLICE 17: token totals default missing cache sides to zero.
+///
+/// TS: `handleMessageUpdated` tokens branch (src ~1981-1982:
+/// `cache?.read || 0` / `cache?.write || 0`) + the
+/// `updateSubagentFromAssistantMessage` tokens arm (src ~1694-1695).
+/// TS tests: tokens `{ input: 800, output: 200, cache: { read: 100 } }`
+/// (test lines 3487-3539) and zero-token intermediate updates (3567-3616).
+#[test]
+fn slice17_token_cache_defaults_to_zero() {
+    // Slice-17 stub (panics while RED).
+    let tokens = SummaryAggregator::tokens_with_cache_defaults(800, 200, 10, None, None);
+
+    // GREEN: missing cache sides default to 0, the rest passes through.
+    assert_eq!(tokens.input, 800);
+    assert_eq!(tokens.output, 200);
+    assert_eq!(tokens.reasoning, 10);
+    assert_eq!(tokens.cache_read, 0);
+    assert_eq!(tokens.cache_write, 0);
+
+    let tokens = SummaryAggregator::tokens_with_cache_defaults(4000, 300, 0, Some(12_000), Some(50));
+    assert_eq!(tokens.cache_read, 12_000);
+    assert_eq!(tokens.cache_write, 50);
+}
+
+/// SLICE 17: forgetting the live turn clears it without bumping the mark.
+///
+/// TS: `forgetLiveTurn` (src ~612-615: `liveTurnStartedAt = null`, no
+/// `turnEndCount++`) + `startMissedLiveTurn` (src ~626-632) +
+/// `getTurnEndMark` (src ~618-620). TS tests: `describe("live turn
+/// start")` (test lines 2781-2867).
+#[test]
+fn slice17_forget_live_turn_clears_without_bumping_mark() {
+    let mut aggregator = SummaryAggregator::new();
+    aggregator.set_session("session-1");
+    let mark = aggregator.get_turn_end_mark();
+    aggregator.start_missed_live_turn("session-1", mark);
+    assert_eq!(
+        aggregator.get_live_turn_started_at("session-1"),
+        Some(1_000)
+    );
+
+    // Slice-17 stub (panics while RED).
+    aggregator.forget_live_turn();
+
+    // GREEN: the turn is forgotten but the generation is untouched, so the
+    // old mark still matches.
+    assert_eq!(aggregator.get_live_turn_started_at("session-1"), None);
+    assert_eq!(aggregator.get_turn_end_mark(), mark);
+}
+
+/// SLICE 17: diff change counts skip `+++`/`---` headers.
+///
+/// TS: `countDiffChangesFromText` (src ~373-389: `+` counts unless `+++`,
+/// `-` counts unless `---`) feeding the apply_patch `line` fallback
+/// (src ~2856). TS tests: apply_patch file lines (test lines 3309-3455).
+#[test]
+fn slice17_diff_counts_skip_header_lines() {
+    // Slice-17 stub (panics while RED).
+    assert_eq!(
+        SummaryAggregator::count_diff_changes(
+            "+++ b/src/one.ts\n--- a/src/one.ts\n+added\n-removed\n context\n+second"
+        ),
+        (2, 1)
+    );
+    assert_eq!(SummaryAggregator::count_diff_changes(""), (0, 0));
+    assert_eq!(SummaryAggregator::count_diff_changes("+++\n---\n"), (0, 0));
+}
+
+/// SLICE 17: abort vs genuine error + interrupt-reason + retry fallbacks.
+///
+/// TS: `isAbortError` (src ~358-360: record with
+/// `name === "MessageAbortedError"`), `isInterruptedIdle` (src ~322-324) +
+/// `readInterruptReason` (src ~326-341: only when interrupted and one of
+/// user/shutdown/superseded/inactivity), retry blank fallback (src ~2903:
+/// `status.message?.trim() || "Unknown retry error"`). TS tests:
+/// `session.error` abort vs error (test lines 3116-3139, 3841-3886) +
+/// retry (test lines 3141-3167).
+#[test]
+fn slice17_abort_error_and_interrupt_reason_gates() {
+    // Slice-17 stubs (panic while RED).
+    assert!(SummaryAggregator::is_abort_error(Some(
+        "MessageAbortedError"
+    )));
+    assert!(!SummaryAggregator::is_abort_error(Some("Error")));
+    assert!(!SummaryAggregator::is_abort_error(None));
+
+    assert_eq!(
+        SummaryAggregator::read_interrupt_reason(Some("user"), true),
+        Some("user".to_string())
+    );
+    assert_eq!(SummaryAggregator::read_interrupt_reason(Some("bogus"), true), None);
+    assert_eq!(
+        SummaryAggregator::read_interrupt_reason(Some("user"), false),
+        None
+    );
+    assert_eq!(SummaryAggregator::read_interrupt_reason(None, true), None);
+
+    assert_eq!(
+        SummaryAggregator::retry_message_or_fallback(None),
+        "Unknown retry error"
+    );
+    assert_eq!(
+        SummaryAggregator::retry_message_or_fallback(Some("   ")),
+        "Unknown retry error"
+    );
+    assert_eq!(
+        SummaryAggregator::retry_message_or_fallback(Some("  plan does not include access  ")),
+        "plan does not include access"
+    );
+}

@@ -276,10 +276,27 @@ pub struct SummaryAggregator {
     /// Child sessions with a recorded `session.created` (TS:
     /// `trackedSessionParents` / `handleSessionCreatedOrUpdated`; slice 7).
     created_child_sessions: HashSet<String>,
+    /// Ended subagent sessions (TS: `finishedSubagentSessionIds`; slice 15).
+    finished_subagent_sessions: HashSet<String>,
+    /// Token totals callback (TS: `onTokensCallback`; slice 11).
+    on_tokens: Option<TokensCallback>,
+    /// Message cost callback (TS: `onCostCallback`; slice 11).
+    on_cost: Option<CostCallback>,
+    /// Run-end callback (TS: `onSessionRunEndedCallback`; slice 11).
+    on_run_ended: Option<RunEndedCallback>,
+    /// Todo lists per session (slice 11; models the todo-tool list the
+    /// summary cards carry — no direct TS counterpart in the manager).
+    todos_by_session: HashMap<String, Vec<TodoItem>>,
     /// Synthetic text part ids per message (TS: `syntheticPartIds`;
     /// slice 9). A delta event often carries only the part id, so the
     /// flag is looked up in the registry too.
     synthetic_part_ids: HashMap<String, HashSet<String>>,
+    /// Messages that have fired a thinking update (TS:
+    /// `thinkingFiredForMessages`; slice 14).
+    thinking_fired_messages: HashSet<String>,
+    /// Messages that already signalled thinking-finished (TS:
+    /// `thinkingFinishedForMessages`; slice 14).
+    thinking_finished_messages: HashSet<String>,
 }
 
 /// Held outbound callback (TS: `deferredOutbound` entry; slice-6 subset:
@@ -348,7 +365,14 @@ impl SummaryAggregator {
             open_questions: HashSet::new(),
             permission_decisions: HashMap::new(),
             created_child_sessions: HashSet::new(),
+            finished_subagent_sessions: HashSet::new(),
+            on_tokens: None,
+            on_cost: None,
+            on_run_ended: None,
+            todos_by_session: HashMap::new(),
             synthetic_part_ids: HashMap::new(),
+            thinking_fired_messages: HashSet::new(),
+            thinking_finished_messages: HashSet::new(),
         }
     }
 
@@ -395,7 +419,11 @@ impl SummaryAggregator {
         self.open_questions.clear();
         self.permission_decisions.clear();
         self.created_child_sessions.clear();
+        self.finished_subagent_sessions.clear();
+        self.todos_by_session.clear();
         self.synthetic_part_ids.clear();
+        self.thinking_fired_messages.clear();
+        self.thinking_finished_messages.clear();
         if let Some(callback) = self.on_cleared.as_mut() {
             callback();
         }
@@ -1900,5 +1928,865 @@ impl SummaryAggregator {
     /// (TS: `handleSessionError` message extraction; slice 10).
     pub fn session_error_message(message: &str) -> String {
         message.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 11 (GREEN): todo lists, onTokens/onCost cards, run-end.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`handleMessageUpdated` tokens branch at ~1971-1992,
+// cost branch at ~2023-2030, `emitSessionRunEnded` at ~3113-3126 via
+// `handleSessionIdle` root/child at ~2937/2948 and `handleSessionError`
+// root/child at ~3026/3035).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (onTokens completed at 3487-3539, intermediate at 3541-3565,
+// zero->non-zero at 3567-3616, missing tokens at 3618-3636,
+// cost 0.01 at 3527, run-end at 3862-3885).
+// Todo-list aggregation has no direct TS counterpart in the manager;
+// it models the todo-tool list summary the cards carry.
+// ---------------------------------------------------------------------------
+
+/// One todo-list entry (SLICE 11 stub).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub title: String,
+    pub done: bool,
+}
+
+/// Fired with token totals and the completed flag (TS: `TokensCallback`;
+/// slice 11).
+pub type TokensCallback = Box<dyn FnMut(String, TokensInfo, bool)>;
+/// Fired with the message cost (TS: `CostCallback`; slice 11).
+pub type CostCallback = Box<dyn FnMut(String, f64)>;
+/// Fired when a run ends (TS: `SessionRunEndedCallback`; slice 11).
+pub type RunEndedCallback = Box<dyn FnMut(String)>;
+
+impl SummaryAggregator {
+    /// Register the tokens callback (TS: `setOnTokens`; slice 11).
+    pub fn set_on_tokens(&mut self, callback: TokensCallback) {
+        self.on_tokens = Some(callback);
+    }
+
+    /// Report token totals for a message (TS: `handleMessageUpdated`
+    /// tokens branch; slice 11). `is_completed` mirrors
+    /// `Boolean(time?.completed)`.
+    pub fn handle_tokens_update(
+        &mut self,
+        session_id: &str,
+        tokens: TokensInfo,
+        is_completed: bool,
+    ) {
+        if let Some(callback) = self.on_tokens.as_mut() {
+            callback(session_id.to_string(), tokens, is_completed);
+        }
+    }
+
+    /// Register the cost callback (TS: `setOnCost`; slice 11).
+    pub fn set_on_cost(&mut self, callback: CostCallback) {
+        self.on_cost = Some(callback);
+    }
+
+    /// Report the cost of a completed message (TS: `handleMessageUpdated`
+    /// cost branch; slice 11).
+    pub fn handle_cost_update(&mut self, session_id: &str, cost: f64) {
+        if let Some(callback) = self.on_cost.as_mut() {
+            callback(session_id.to_string(), cost);
+        }
+    }
+
+    /// Track a todo-tool list for a session (slice 11; no direct TS
+    /// counterpart — models the todo list the card summarizes).
+    pub fn track_todo_list(&mut self, session_id: &str, items: Vec<TodoItem>) {
+        self.todos_by_session
+            .insert(session_id.to_string(), items);
+    }
+
+    /// Summarize a session's todo list (slice 11).
+    pub fn todo_summary(&self, session_id: &str) -> String {
+        let items = self.todos_by_session.get(session_id);
+        let total = items.map(|list| list.len()).unwrap_or(0);
+        let done = items
+            .map(|list| list.iter().filter(|item| item.done).count())
+            .unwrap_or(0);
+        format!("{done}/{total} done")
+    }
+
+    /// Register the run-end callback (TS: `setOnSessionRunEnded`;
+    /// slice 11).
+    pub fn set_on_session_run_ended(&mut self, callback: RunEndedCallback) {
+        self.on_run_ended = Some(callback);
+    }
+
+    /// Report the end of a run for a followed or subagent session (TS:
+    /// `emitSessionRunEnded`; slice 11).
+    pub fn handle_run_end(&mut self, session_id: &str) {
+        if let Some(callback) = self.on_run_ended.as_mut() {
+            callback(session_id.to_string());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 12 (RED): text-message edge states, edit/write fallbacks,
+// thinking-finished gates.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (optimistic text at ~2200-2207, completed-message pending at ~1955-1992,
+// `extractFirstUpdatedFileFromTitle` at ~362-371, write branch at
+// ~2763-2783, `emitThinkingFinishedOnce` at ~2586-2600).
+// Each method below is a RED stub (`unimplemented!()`) until the port lands.
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Whether an unknown-text update (no `messageInfo`) emits an
+    /// optimistic partial (TS: `optimisticUpdateCount >= 2`; slice 12).
+    pub fn should_emit_optimistic_partial(update_count: usize) -> bool {
+        update_count >= 2
+    }
+
+    /// Whether pending text attached on a completed message emits a
+    /// partial (TS: completed goes straight to `onComplete`; slice 12).
+    /// Always false: the completed path never emits partial.
+    pub fn should_emit_pending_on_completed(_is_completed: bool) -> bool {
+        false
+    }
+
+    /// Parse the first patched path from an apply_patch tool title (TS:
+    /// `extractFirstUpdatedFileFromTitle`; slice 12). `None` when no
+    /// status line (`M/A/D/U/R/C` + space + path) is present.
+    pub fn edit_path_from_title(title: &str) -> Option<String> {
+        for raw_line in title.split('\n') {
+            let line = raw_line.trim();
+            let bytes = line.as_bytes();
+            if bytes.len() >= 3
+                && bytes[1] == b' '
+                && matches!(bytes[0], b'A' | b'M' | b'D' | b'U' | b'R' | b'C')
+            {
+                let path = line[2..].trim();
+                if !path.is_empty() {
+                    return Some(path.to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether a write-tool input yields a file (TS: `prepareToolFiles`
+    /// write branch needs both `filePath` and `content`; slice 12).
+    pub fn write_file_ready(file_path: &str, has_content: bool) -> bool {
+        !file_path.trim().is_empty() && has_content
+    }
+
+    /// Whether assistant text after reasoning signals thinking-finished
+    /// (TS: `emitThinkingFinishedOnce`: needs reasoning fired, skips when
+    /// already signalled; slice 12).
+    pub fn should_signal_thinking_finished(
+        had_reasoning: bool,
+        already_signalled: bool,
+    ) -> bool {
+        had_reasoning && !already_signalled
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 13 (RED): multi-file apply_patch edges, oversized/failed patch,
+// onTokens no-field gate, session-error variants. Each method below is a RED
+// stub (`unimplemented!()`) until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`prepareToolFiles` apply_patch branch at ~2809-2867, completed-only tool
+// gate at ~2273-2284, tokens gate at ~1976-1992, `handleSessionError` at
+// ~3003-3051) + `src/app/formatters/summary-formatter.ts`
+// (`getPatchFileChanges` at ~213-251, `formatPatchFileLine` at ~253-255,
+// `prepareCodeFile` budget at ~488-507) + `src/utils/opencode-error.ts`
+// (`extractErrorMessage` at ~100-130).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`.
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Format one `🩹 apply_patch <path> (+a -d)` line for a changed file
+    /// (TS: `formatPatchFileLine`; slice 13).
+    pub fn format_patch_file_line(path: &str, additions: usize, deletions: usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if additions > 0 {
+            parts.push(format!("+{additions}"));
+        }
+        if deletions > 0 {
+            parts.push(format!("-{deletions}"));
+        }
+        let info = if parts.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", parts.join(" "))
+        };
+        format!("🩹 apply_patch {path}{info}")
+    }
+
+    /// Whether an apply_patch diff of this size keeps its file attachment
+    /// (TS: `prepareCodeFile` budget — over-limit yields `fileData: null`
+    /// but keeps the line and file change; slice 13).
+    pub fn apply_patch_attachment_allowed(byte_len: usize) -> bool {
+        byte_len <= 100 * 1024
+    }
+
+    /// Whether a tool part state yields prepared files (TS: only
+    /// `status === "completed"` reaches `prepareToolFiles`, `error` adds
+    /// nothing; slice 13).
+    pub fn should_process_tool_state(status: &str) -> bool {
+        status == "completed"
+    }
+
+    /// Whether `message.updated` fires `onTokens` (TS: gated on
+    /// `assistantInfo.tokens` being present; slice 13).
+    pub fn should_fire_tokens(has_tokens: bool) -> bool {
+        has_tokens
+    }
+
+    /// Fallback message for unexpected `session.error` shapes (TS:
+    /// `extractErrorMessage(error) ?? "Unknown session error"`: a blank or
+    /// missing raw message falls back, a non-blank string passes through
+    /// trimmed; slice 13).
+    pub fn unexpected_session_error_message(raw: Option<&str>) -> String {
+        match raw.map(str::trim) {
+            Some(message) if !message.is_empty() => message.to_string(),
+            _ => "Unknown session error".to_string(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 14 (RED): session.created enrichment, subagent model/provider
+// pairing, thinking-message state machines. Each method below is a RED
+// stub (`unimplemented!()`) until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`handleSessionCreatedOrUpdated` at ~1600-1656 with
+// `getOrCreateSubagentForSession` at ~1531-1543 and
+// `enrichSubagentFromSessionTitle`; `updateSubagentFromAssistantMessage`
+// at ~1658-1703; `registerThinkingPart` at ~2478-2497,
+// `setThinkingPartSnapshot` at ~2499-2521, `applyThinkingDelta` at
+// ~2523-2548, `emitThinkingFinishedOnce` at ~2586-2600).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (live subagent at 183-320, variant at 322-433, reasoning at 2170-2214,
+// reasoning deltas at 2216-2310, thinking-finished at 2312-2410,
+// `session.created` gating at 1535-1602).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Attach a `session.created` child and enrich its card from the
+    /// session title (TS: `handleSessionCreatedOrUpdated` +
+    /// `enrichSubagentFromSessionTitle`; slice 14).
+    pub fn handle_session_created_with_title(
+        &mut self,
+        session_id: &str,
+        parent_session_id: &str,
+        title: &str,
+    ) {
+        if self.current_session_id.is_none() {
+            return;
+        }
+        self.created_child_sessions.insert(session_id.to_string());
+        self.attach_child_session(session_id, parent_session_id, title);
+    }
+
+    /// Pair agent + provider/model/variant from a child assistant message
+    /// onto its card (TS: `updateSubagentFromAssistantMessage`; slice 14).
+    pub fn pair_assistant_message_model(
+        &mut self,
+        child_session_id: &str,
+        agent: Option<&str>,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+        variant: Option<&str>,
+    ) {
+        let card_id = self.get_or_create_card_for_session(child_session_id, None);
+        if let Some(card) = self.subagent_cards.get_mut(&card_id) {
+            if let Some(agent) = agent {
+                if !agent.is_empty() {
+                    card.agent = agent.to_string();
+                }
+            }
+            if let Some(provider) = provider_id {
+                if !provider.is_empty() {
+                    card.provider_id = Some(provider.to_string());
+                }
+            }
+            if let Some(model) = model_id {
+                if !model.is_empty() {
+                    card.model_id = Some(model.to_string());
+                }
+            }
+            if let Some(variant) = variant {
+                if !variant.is_empty() {
+                    card.variant = Some(variant.to_string());
+                }
+            }
+            let both_known = card.provider_id.is_some() && card.model_id.is_some();
+            if let Some(display) = Self::format_subagent_model(
+                card.provider_id.as_deref(),
+                card.model_id.as_deref(),
+                card.variant.as_deref(),
+            ) {
+                if both_known || card.model.is_empty() {
+                    card.model = display;
+                }
+            }
+        }
+        self.emit_subagents();
+    }
+
+    /// Register a thinking snapshot, returning `(is_first_update,
+    /// was_updated)` (TS: `registerThinkingPart` +
+    /// `setThinkingPartSnapshot`; slice 14).
+    pub fn register_thinking_snapshot(
+        &mut self,
+        message_id: &str,
+        part_id: &str,
+        text: &str,
+        title: Option<&str>,
+    ) -> (bool, bool) {
+        let is_first = !self.thinking_fired_messages.contains(message_id);
+        if is_first {
+            self.thinking_fired_messages.insert(message_id.to_string());
+        }
+        let key = self
+            .thinking_by_message
+            .keys()
+            .find(|(_, message)| message == message_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                (
+                    self.current_session_id.clone().unwrap_or_default(),
+                    message_id.to_string(),
+                )
+            });
+        let state = self.thinking_by_message.entry(key).or_default();
+        if !state.ordered_part_ids.iter().any(|id| id == part_id) {
+            state.ordered_part_ids.push(part_id.to_string());
+        }
+        if state.sections.get(part_id).is_none() {
+            state.sections.insert(
+                part_id.to_string(),
+                ThinkingSection {
+                    id: part_id.to_string(),
+                    title: title.map(|value| value.to_string()),
+                    text: String::new(),
+                },
+            );
+        } else if let Some(next_title) = title {
+            if let Some(section) = state.sections.get_mut(part_id) {
+                if section.title.as_deref() != Some(next_title) {
+                    section.title = Some(next_title.to_string());
+                }
+            }
+        }
+        let next_title = title
+            .map(|value| value.to_string())
+            .or_else(|| {
+                state
+                    .sections
+                    .get(part_id)
+                    .and_then(|section| section.title.clone())
+            });
+        let unchanged = state.sections.get(part_id).map_or(false, |section| {
+            section.text == text && section.title == next_title
+        });
+        if unchanged {
+            return (false, false);
+        }
+        state.sections.insert(
+            part_id.to_string(),
+            ThinkingSection {
+                id: part_id.to_string(),
+                title: next_title,
+                text: text.to_string(),
+            },
+        );
+        (is_first, true)
+    }
+
+    /// Accumulate a thinking delta, letting a longer full-text hint win
+    /// (TS: `applyThinkingDelta`; slice 14).
+    pub fn apply_thinking_delta_with_hint(
+        &mut self,
+        session_id: &str,
+        message_id: &str,
+        part_id: &str,
+        delta: &str,
+        full_text_hint: Option<&str>,
+    ) -> String {
+        let exact = (session_id.to_string(), message_id.to_string());
+        let key = if self.thinking_by_message.contains_key(&exact) {
+            exact
+        } else {
+            self.thinking_by_message
+                .keys()
+                .find(|(_, message)| message == message_id)
+                .cloned()
+                .unwrap_or(exact)
+        };
+        if Some(session_id) != self.current_session_id.as_deref() {
+            return self
+                .thinking_by_message
+                .get(&key)
+                .and_then(|state| state.sections.get(part_id))
+                .map(|section| section.text.clone())
+                .unwrap_or_default();
+        }
+        let state = self.thinking_by_message.entry(key).or_default();
+        if !state.ordered_part_ids.iter().any(|id| id == part_id) {
+            state.ordered_part_ids.push(part_id.to_string());
+        }
+        if state.sections.get(part_id).is_none() {
+            state.sections.insert(
+                part_id.to_string(),
+                ThinkingSection {
+                    id: part_id.to_string(),
+                    title: None,
+                    text: String::new(),
+                },
+            );
+        }
+        let previous = state
+            .sections
+            .get(part_id)
+            .map(|section| section.text.clone())
+            .unwrap_or_default();
+        let mut accumulated = format!("{previous}{delta}");
+        if let Some(hint) = full_text_hint {
+            if hint.len() > accumulated.len() {
+                accumulated = hint.to_string();
+            }
+        }
+        let title = state
+            .sections
+            .get(part_id)
+            .and_then(|section| section.title.clone());
+        state.sections.insert(
+            part_id.to_string(),
+            ThinkingSection {
+                id: part_id.to_string(),
+                title,
+                text: accumulated.clone(),
+            },
+        );
+        accumulated
+    }
+
+    /// Poll the thinking-finished gate: true only for the first
+    /// text-after-reasoning of a message (TS:
+    /// `emitThinkingFinishedOnce`; slice 14).
+    pub fn poll_thinking_finished(
+        &mut self,
+        session_id: &str,
+        message_id: &str,
+        had_reasoning: bool,
+    ) -> bool {
+        if Some(session_id) != self.current_session_id.as_deref() {
+            return false;
+        }
+        let fired = had_reasoning || self.thinking_fired_messages.contains(message_id);
+        if !fired {
+            return false;
+        }
+        if self.thinking_finished_messages.contains(message_id) {
+            return false;
+        }
+        self.thinking_finished_messages.insert(message_id.to_string());
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 15 (RED): subagent terminal/cost full paths + background stale-drop
+// + nested guards. Each method below is a RED stub (`unimplemented!()`)
+// until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`handleSessionCreatedOrUpdated` at ~1600-1656 with the nested branch at
+// ~1618-1625, the background stale-drop at ~1627-1639, and the
+// `trackedSessionParents` parent guard at ~1641-1643;
+// `updateSubagentFromAssistantMessage` tokens arm at ~1689-1697 + cost arm
+// at ~1698-1700; `setSubagentTerminalStatus` completed path at ~1852-1876
+// via `endSubagent` + `retireSubagent` at ~1901-1915; `handleSessionIdle`
+// child completed/nested split at ~2928-2938 with `endNestedSubagentSession`
+// at ~2971-2975; `handleSessionError` child nested/abort/error split at
+// ~3017-3028; nested early returns in `handleMessageUpdated` at ~1930-1934
+// and `handleMessagePartUpdated` at ~2072-2074 + subtask-of-subagent guard
+// at ~2076-2090; `isNestedSubagentSession` at ~965-969).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (live subagent tokens/cost at 183-320, background `launchInBackground`
+// at 709-757, stale rediscovery, nested-subagent block at 1122-1234,
+// parallel subagents at 1604-1681, terminal cards at 1683-1901).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// End a child card as completed through the full terminal path (TS:
+    /// `setSubagentTerminalStatus(..., "completed")` -> `endSubagent` +
+    /// `retireSubagent`; slice 15).
+    pub fn complete_subagent(&mut self, child_session_id: &str) {
+        let card_id = match self.card_id_by_session.get(child_session_id).cloned() {
+            Some(card_id) => card_id,
+            None => {
+                if self.subagent_cards.contains_key(child_session_id) {
+                    child_session_id.to_string()
+                } else {
+                    return;
+                }
+            }
+        };
+        if let Some(card) = self.subagent_cards.get_mut(&card_id) {
+            card.status = SubagentStatus::Completed;
+            card.current_tool = None;
+            card.current_tool_call_id = None;
+            card.current_tool_started_at = None;
+            card.current_tool_title = None;
+            card.terminal_message = None;
+        }
+        self.emit_subagents();
+        self.retire_completed_card(&card_id);
+        self.finished_subagent_sessions
+            .insert(child_session_id.to_string());
+    }
+
+    /// Replace token totals and assign cost from a child assistant message
+    /// (TS: `updateSubagentFromAssistantMessage` tokens arm + cost arm;
+    /// slice 15).
+    pub fn apply_assistant_tokens_cost(
+        &mut self,
+        child_session_id: &str,
+        tokens: TokensInfo,
+        cost: f64,
+    ) {
+        if self.finished_subagent_sessions.contains(child_session_id) {
+            return;
+        }
+        let card_id = self.get_or_create_card_for_session(child_session_id, None);
+        if let Some(card) = self.subagent_cards.get_mut(&card_id) {
+            card.tokens = tokens;
+            card.cost = cost;
+        }
+        self.emit_subagents();
+    }
+
+    /// Attach a `session.created` child honoring the background stale-drop
+    /// (TS: `handleSessionCreatedOrUpdated` stale-drop: an unknown card
+    /// whose `createdAt < subagentRunStartedAt` is finished, never
+    /// attached; slice 15).
+    pub fn handle_session_created_with_created_at(
+        &mut self,
+        session_id: &str,
+        parent_session_id: &str,
+        title: &str,
+        created_at: u64,
+        run_started_at: u64,
+    ) {
+        if self.current_session_id.is_none() {
+            return;
+        }
+        if self.finished_subagent_sessions.contains(session_id) {
+            return;
+        }
+        let current = self.current_session_id.clone().unwrap_or_default();
+        // Nested branch first (TS ~1618-1625): launched by a tracked child,
+        // followed without a card.
+        if parent_session_id != current.as_str()
+            && self.session_parents.contains_key(parent_session_id)
+        {
+            if !self.session_parents.contains_key(session_id) {
+                self.session_parents
+                    .insert(session_id.to_string(), parent_session_id.to_string());
+            }
+            return;
+        }
+        // Stale-drop (TS ~1627-1639): unknown card while not accepting, or
+        // created before the run that started the subagent.
+        if !self.card_id_by_session.contains_key(session_id)
+            && (!self.accepts_subagent_events || created_at < run_started_at)
+        {
+            self.finished_subagent_sessions
+                .insert(session_id.to_string());
+            return;
+        }
+        // Tracked-parent guard (TS ~1641-1643).
+        if parent_session_id != current.as_str()
+            && !self.session_parents.contains_key(parent_session_id)
+        {
+            return;
+        }
+        if session_id == current {
+            return;
+        }
+        self.created_child_sessions.insert(session_id.to_string());
+        self.attach_child_session(session_id, parent_session_id, title);
+    }
+
+    /// Attach a `session.created` child honoring the tracked-parent guard
+    /// (TS: `handleSessionCreatedOrUpdated` parent guard: a parent the
+    /// aggregator never tracked attaches nothing; slice 15). Returns true
+    /// when a card was attached.
+    pub fn handle_session_created_guarded(
+        &mut self,
+        session_id: &str,
+        parent_session_id: &str,
+        title: &str,
+    ) -> bool {
+        if self.current_session_id.is_none() {
+            return false;
+        }
+        if self.finished_subagent_sessions.contains(session_id) {
+            return false;
+        }
+        let current = self.current_session_id.clone().unwrap_or_default();
+        // Nested launch takes no card (TS ~1620-1624).
+        if parent_session_id != current.as_str()
+            && self.session_parents.contains_key(parent_session_id)
+        {
+            if !self.session_parents.contains_key(session_id) {
+                self.session_parents
+                    .insert(session_id.to_string(), parent_session_id.to_string());
+            }
+            return false;
+        }
+        // Untracked parent attaches nothing (TS ~1641-1643).
+        if parent_session_id != current.as_str()
+            && !self.session_parents.contains_key(parent_session_id)
+        {
+            return false;
+        }
+        if session_id == current {
+            return false;
+        }
+        self.created_child_sessions.insert(session_id.to_string());
+        self.attach_child_session(session_id, parent_session_id, title);
+        true
+    }
+
+    /// Whether a session is a nested subagent (TS:
+    /// `isNestedSubagentSession`: tracked with a non-root parent; slice 15).
+    /// Nested sessions never get cards and their assistant/tool updates
+    /// early-return.
+    pub fn is_nested_subagent_session(&self, session_id: &str) -> bool {
+        match self.session_parents.get(session_id) {
+            Some(parent) => {
+                !parent.is_empty() && Some(parent.as_str()) != self.current_session_id.as_deref()
+            }
+            None => false,
+        }
+    }
+
+    /// Drop a completed card (TS: `endSubagent` + `retireSubagent`
+    /// bookkeeping; slice-15 subset without launch/held-end state).
+    fn retire_completed_card(&mut self, card_id: &str) {
+        let (parent, session_id) = match self.subagent_cards.get(card_id) {
+            Some(card) => (
+                card.parent_session_id.clone(),
+                card.session_id.clone(),
+            ),
+            None => return,
+        };
+        self.subagent_cards.remove(card_id);
+        self.subagent_order.retain(|id| id.as_str() != card_id);
+        if let Some(session_id) = session_id {
+            self.card_id_by_session.remove(&session_id);
+            self.background_child_sessions.remove(&session_id);
+            self.session_parents.remove(&session_id);
+            if let Some(queue) = self.pending_children_by_parent.get_mut(&parent) {
+                queue.retain(|pending| pending != &session_id);
+                if queue.is_empty() {
+                    self.pending_children_by_parent.remove(&parent);
+                }
+            }
+        }
+        if let Some(queue) = self.pending_cards_by_parent.get_mut(&parent) {
+            queue.retain(|pending| pending.as_str() != card_id);
+            if queue.is_empty() {
+                self.pending_cards_by_parent.remove(&parent);
+            }
+        }
+        if let Some(queue) = self.fallback_cards_by_parent.get_mut(&parent) {
+            queue.retain(|pending| pending.as_str() != card_id);
+            if queue.is_empty() {
+                self.fallback_cards_by_parent.remove(&parent);
+            }
+        }
+        self.last_snapshot.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 16 (RED): text-message edge states + edit/write fallbacks +
+// remaining nested guards. Each method below is a RED stub
+// (`unimplemented!()`) until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`applyTextDelta` full-text hint at ~2414-2418,
+// `handleMessageUpdated` partial gate at ~1967-1969
+// (`!isCompleted && optimisticUpdateCount === 1`),
+// `prepareToolFiles` edit branch at ~2785-2807
+// (`if (!filePath || !diffText) return []`),
+// `prepareToolFiles` write branch at ~2763-2782
+// (`additions: content.split("\n").length`),
+// `handleMessagePartUpdated` nested early return at ~2072-2074 +
+// subtask-of-subagent guard at ~2077-2080,
+// `isNestedSubagentSession` at ~965-969).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (multi-text/optimistic/completed-pending text blocks,
+// edit `filediff`/title fallback, write oversized/missing-input fallback,
+// nested-subagent block at 1122-1234).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Accumulate a streaming text delta, letting a longer full-text hint
+    /// win (TS: `applyTextDelta`: `previous + delta`, then `fullTextHint`
+    /// replaces it when longer; slice 16).
+    pub fn accumulate_text_delta_with_hint(
+        previous: &str,
+        delta: &str,
+        full_text_hint: Option<&str>,
+    ) -> String {
+        let mut accumulated = format!("{previous}{delta}");
+        if let Some(hint) = full_text_hint {
+            if hint.len() > accumulated.len() {
+                accumulated = hint.to_string();
+            }
+        }
+        accumulated
+    }
+
+    /// Whether `message.updated` emits a partial for pending text (TS:
+    /// `handleMessageUpdated`: only the first optimistic update of a
+    /// still-running message emits; completed messages never emit partial;
+    /// slice 16).
+    pub fn should_emit_updated_partial(
+        is_completed: bool,
+        optimistic_update_count: usize,
+    ) -> bool {
+        !is_completed && optimistic_update_count == 1
+    }
+
+    /// Whether an `edit`-tool payload yields a file (TS: `prepareToolFiles`
+    /// edit branch needs both a `filediff.file` path and `metadata.diff`
+    /// text; slice 16).
+    pub fn edit_file_ready(file_path: &str, has_diff: bool) -> bool {
+        !file_path.trim().is_empty() && has_diff
+    }
+
+    /// Count `write`-tool additions by lines (TS: `prepareToolFiles` write
+    /// branch: `additions: content.split("\n").length`; slice 16).
+    pub fn count_write_additions(content: &str) -> usize {
+        content.split('\n').count()
+    }
+
+    /// Whether a `message.part.updated` is dropped by the nested guards
+    /// (TS: `handleMessagePartUpdated`: any part from a nested subagent
+    /// session returns at ~2072-2074, and a `subtask` part whose session
+    /// is not the current root returns at ~2077-2080 so a subtask of a
+    /// subagent never takes a card; slice 16).
+    pub fn should_drop_nested_subtask(
+        is_nested: bool,
+        is_subtask: bool,
+        is_current_root: bool,
+    ) -> bool {
+        is_nested || (is_subtask && !is_current_root)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 17 (RED): cost-zero gate, token cache defaults, forget-live-turn,
+// diff counts, abort/interrupt/retry fallbacks. Each method below is a RED
+// stub (`unimplemented!()`) until the port lands.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (cost gate `cost !== undefined` at ~2024 + `` `$${cost.toFixed(2)}` `` at
+// ~2025; tokens `cache?.read || 0` / `cache?.write || 0` at ~1981-1982 and
+// the assistant-message tokens arm at ~1694-1695; `forgetLiveTurn` at
+// ~612-615; `countDiffChangesFromText` at ~373-389 skipping `+++`/`---`;
+// `isAbortError` at ~358-360; `isInterruptedIdle` at ~322-324 +
+// `readInterruptReason` at ~326-341; retry blank fallback
+// `status.message?.trim() || "Unknown retry error"` at ~2903).
+// TS tests: `tests/app/managers/summary-aggregation-manager.test.ts`
+// (cost `0.01` at 3526-3528, tokens `cache.read` at 3487-3616, live-turn
+// start at 2781-2867, apply_patch `getPatchFileChanges` diffs at
+// 3309-3455, `session.error` abort vs genuine error at 3116-3139 and
+// 3841-3886, retry at 3141-3167).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Whether a cost value reaches `onCost` (TS: `handleMessageUpdated`
+    /// cost branch: `cost !== undefined`; slice 17). `Some(0.0)` still
+    /// fires — the gate is undefined-ness, not truthiness.
+    pub fn cost_fires_for_value(cost: Option<f64>) -> bool {
+        cost.is_some()
+    }
+
+    /// Build token totals defaulting missing cache sides to 0 (TS: `cache?.read
+    /// || 0` / `cache?.write || 0`; slice 17).
+    pub fn tokens_with_cache_defaults(
+        input: u64,
+        output: u64,
+        reasoning: u64,
+        cache_read: Option<u64>,
+        cache_write: Option<u64>,
+    ) -> TokensInfo {
+        TokensInfo {
+            input,
+            output,
+            reasoning,
+            cache_read: cache_read.unwrap_or(0),
+            cache_write: cache_write.unwrap_or(0),
+        }
+    }
+
+    /// Forget the running turn without ending it (TS: `forgetLiveTurn`:
+    /// `liveTurnStartedAt = null`, no `turnEndCount++`; slice 17).
+    pub fn forget_live_turn(&mut self) {
+        self.live_turn_started_at = None;
+    }
+
+    /// Count additions/deletions in a unified diff, skipping `+++`/`---`
+    /// headers (TS: `countDiffChangesFromText`; slice 17).
+    pub fn count_diff_changes(text: &str) -> (u64, u64) {
+        let mut additions = 0u64;
+        let mut deletions = 0u64;
+        for line in text.split('\n') {
+            if line.starts_with('+') && !line.starts_with("+++") {
+                additions += 1;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                deletions += 1;
+            }
+        }
+        (additions, deletions)
+    }
+
+    /// Whether a `session.error` payload is an abort (TS: `isAbortError`:
+    /// record with `name === "MessageAbortedError"`; slice 17).
+    pub fn is_abort_error(error_name: Option<&str>) -> bool {
+        error_name == Some("MessageAbortedError")
+    }
+
+    /// Interrupt reason for an idle, or `None` (TS: `isInterruptedIdle` +
+    /// `readInterruptReason`: only when interrupted and one of
+    /// user/shutdown/superseded/inactivity; slice 17).
+    pub fn read_interrupt_reason(reason: Option<&str>, interrupted: bool) -> Option<String> {
+        if !interrupted {
+            return None;
+        }
+        match reason {
+            Some("user") | Some("shutdown") | Some("superseded") | Some("inactivity") => {
+                reason.map(|value| value.to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// Retry message with blank fallback (TS: `status.message?.trim() ||
+    /// "Unknown retry error"`; slice 17).
+    pub fn retry_message_or_fallback(raw: Option<&str>) -> String {
+        match raw.map(str::trim) {
+            Some(message) if !message.is_empty() => message.to_string(),
+            _ => "Unknown retry error".to_string(),
+        }
     }
 }

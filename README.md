@@ -465,6 +465,25 @@ The bot enforces a strict **user ID whitelist**. Only the Telegram user whose nu
 
 Since the bot runs locally on your machine and connects to your local OpenCode server, there is no external attack surface beyond the Telegram Bot API itself. The optional health endpoint (`BOT_HEALTH_PORT`) binds to `127.0.0.1` only and serves read-only status.
 
+## Rust Rewrite — Plan & Test Coverage
+
+The `rust-rewrite` branch ports core TypeScript logic to Rust test-first (RED → GREEN parity) in `crates/otb-core`, module by module: `render/chunker`, `render/markdown_v2`, `i18n`, `formatters/tool_batcher`, and `managers/summary_aggregation` (slices 1–14 done).
+Each Rust test mirrors a TypeScript spec, so GREEN means behavioral parity with the TS original.
+Parity specs live in [crates/otb-core/tests/](crates/otb-core/tests/).
+
+![Rust coverage](assets/rust-coverage.svg)
+
+| Module | Rust passed | TS source | % |
+| ------ | ----------: | --------- | - |
+| `render/chunker` | 12 | `src/bot/render/chunker.ts` | 100% of ported slice |
+| `render/markdown_v2` | 4 | `src/bot/render/markdown-to-telegram-v2.ts` | 100% of ported slice |
+| `i18n` | 7 | `src/i18n/` | 100% of ported slice |
+| `formatters/tool_batcher` | 8 | `src/app/formatters/tool-message-batcher.ts` | 100% of ported slice |
+| `managers/summary_aggregation` | 66 | `src/app/managers/summary-aggregation-manager.ts` (115 TS its) | 66/115 (~57%) |
+| **Total** | **97** | 3064 TS its overall | **97/3064 (~3.2%)** |
+
+Progress: **97/97 GREEN** (`cargo test -p otb-core`, exit 0). Next is slice 15 (subagent terminal/cost, background stale-drop, nested guards).
+
 ## Development
 
 ### Running from Source
