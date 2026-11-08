@@ -40,5 +40,8 @@ e2e/output/
 # Packaging artifacts
 *.tgz
 
+# Rust
+target/
+
 .boardown/
 manager/

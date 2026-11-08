@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" width="640" height="300" role="img" aria-labelledby="rc-title rc-desc">
+<title id="rc-title">Rust parity coverage: 97 tests GREEN</title>
+<desc id="rc-desc">Horizontal bar chart of ported Rust parity tests per module: chunker 12, markdown_v2 4, i18n 7, tool_batcher 8, summary_aggregation 66. Aggregator covers 66 of 115 TypeScript specs (57 percent); 97 of 3064 TypeScript specs overall (3.2 percent).</desc>
+<rect x="0.5" y="0.5" width="639" height="299" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+<text x="24" y="34" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="17" font-weight="700" fill="#24292f">Rust parity coverage — 97 passed</text>
+<g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13" fill="#24292f">
+<text x="24" y="81">chunker</text>
+<rect x="210" y="62" width="69" height="24" rx="4" fill="#2da44e"/>
+<text x="287" y="80">12</text>
+<text x="24" y="119">markdown_v2</text>
+<rect x="210" y="100" width="23" height="24" rx="4" fill="#2da44e"/>
+<text x="241" y="118">4</text>
+<text x="24" y="157">i18n</text>
+<rect x="210" y="138" width="40" height="24" rx="4" fill="#2da44e"/>
+<text x="258" y="156">7</text>
+<text x="24" y="195">tool_batcher</text>
+<rect x="210" y="176" width="46" height="24" rx="4" fill="#2da44e"/>
+<text x="264" y="194">8</text>
+<text x="24" y="233">summary_aggregation</text>
+<rect x="210" y="214" width="380" height="24" rx="4" fill="#2da44e"/>
+<text x="380" y="231" fill="#ffffff" font-weight="700">66</text>
+</g>
+<g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12.5" fill="#57606a">
+<text x="24" y="264">summary_aggregation: 66/115 TS its (~57%) — slices 1–14 done, slice 15 next</text>
+<text x="24" y="284">overall: 97/3064 TS its (~3.2%) — cargo test -p otb-core exit 0</text>
+</g>
+</svg>

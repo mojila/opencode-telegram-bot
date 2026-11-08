@@ -142,21 +142,21 @@ opencode-telegram config
 | `/sessions`       | Browse, search by title or ID, and switch sessions        |
 | `/recent`         | Browse recent sessions across projects and worktrees, see their status and attach directly |
 | `/messages`       | Browse user messages, revert or fork from a previous state     |
+| `/settings`       | Change bot settings                                     |
 | `/projects`       | Browse, search by name, and switch OpenCode projects      |
 | `/worktree`       | Switch between existing git worktrees                   |
-| `/open`           | Add a project by browsing directories                   |
-| `/ls`             | List directory contents, then tap to open or download   |
-| `/settings`       | Change bot settings                                     |
+| `/task`           | Create a scheduled task                                 |
+| `/tasklist`       | Browse, delete and enable or disable recurring scheduled tasks |
 | `/rename`         | Rename the current session                              |
 | `/commands`       | Browse and run custom commands                          |
 | `/skills`         | Browse and run OpenCode skills                          |
 | `/mcps`           | Browse and toggle MCP servers                           |
-| `/task`           | Create a scheduled task                                 |
-| `/tasklist`       | Browse, delete and enable or disable recurring scheduled tasks |
 | `/opencode_start` | Start the local OpenCode server on the bot machine      |
 | `/opencode_stop`  | Stop the local OpenCode server, including during a run  |
 | `/reload`         | Reload the OpenCode configuration without restarting the server (V2 only) |
 | `/goal`           | Enter a goal in the next message; view it and pause, continue or delete it from the bottom keyboard (V2 only) |
+| `/open`           | Add a project by browsing directories                   |
+| `/ls`             | List directory contents, then tap to open or download   |
 | `/help`           | Show available commands                                 |
 
 Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
@@ -464,6 +464,25 @@ To pick a model that is neither a favorite nor recent, tap **🗂 Providers** in
 The bot enforces a strict **user ID whitelist**. Only the Telegram user whose numeric ID matches `TELEGRAM_ALLOWED_USER_ID` can interact with the bot. Messages from any other user are silently ignored and logged as unauthorized access attempts.
 
 Since the bot runs locally on your machine and connects to your local OpenCode server, there is no external attack surface beyond the Telegram Bot API itself. The optional health endpoint (`BOT_HEALTH_PORT`) binds to `127.0.0.1` only and serves read-only status.
+
+## Rust Rewrite — Plan & Test Coverage
+
+The `rust-rewrite` branch ports core TypeScript logic to Rust test-first (RED → GREEN parity) in `crates/otb-core`, module by module: `render/chunker`, `render/markdown_v2`, `i18n`, `formatters/tool_batcher`, and `managers/summary_aggregation` (slices 1–14 done).
+Each Rust test mirrors a TypeScript spec, so GREEN means behavioral parity with the TS original.
+Parity specs live in [crates/otb-core/tests/](crates/otb-core/tests/).
+
+![Rust coverage](assets/rust-coverage.svg)
+
+| Module | Rust passed | TS source | % |
+| ------ | ----------: | --------- | - |
+| `render/chunker` | 12 | `src/bot/render/chunker.ts` | 100% of ported slice |
+| `render/markdown_v2` | 4 | `src/bot/render/markdown-to-telegram-v2.ts` | 100% of ported slice |
+| `i18n` | 7 | `src/i18n/` | 100% of ported slice |
+| `formatters/tool_batcher` | 8 | `src/app/formatters/tool-message-batcher.ts` | 100% of ported slice |
+| `managers/summary_aggregation` | 66 | `src/app/managers/summary-aggregation-manager.ts` (115 TS its) | 66/115 (~57%) |
+| **Total** | **97** | 3064 TS its overall | **97/3064 (~3.2%)** |
+
+Progress: **97/97 GREEN** (`cargo test -p otb-core`, exit 0). Next is slice 15 (subagent terminal/cost, background stale-drop, nested guards).
 
 ## Development
 
