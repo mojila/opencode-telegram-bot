@@ -142,21 +142,21 @@ opencode-telegram config
 | `/sessions`       | Browse, search by title or ID, and switch sessions        |
 | `/recent`         | Browse recent sessions across projects and worktrees, see their status and attach directly |
 | `/messages`       | Browse user messages, revert or fork from a previous state     |
+| `/settings`       | Change bot settings                                     |
 | `/projects`       | Browse, search by name, and switch OpenCode projects      |
 | `/worktree`       | Switch between existing git worktrees                   |
-| `/open`           | Add a project by browsing directories                   |
-| `/ls`             | List directory contents, then tap to open or download   |
-| `/settings`       | Change bot settings                                     |
+| `/task`           | Create a scheduled task                                 |
+| `/tasklist`       | Browse, delete and enable or disable recurring scheduled tasks |
 | `/rename`         | Rename the current session                              |
 | `/commands`       | Browse and run custom commands                          |
 | `/skills`         | Browse and run OpenCode skills                          |
 | `/mcps`           | Browse and toggle MCP servers                           |
-| `/task`           | Create a scheduled task                                 |
-| `/tasklist`       | Browse, delete and enable or disable recurring scheduled tasks |
 | `/opencode_start` | Start the local OpenCode server on the bot machine      |
 | `/opencode_stop`  | Stop the local OpenCode server, including during a run  |
 | `/reload`         | Reload the OpenCode configuration without restarting the server (V2 only) |
 | `/goal`           | Enter a goal in the next message; view it and pause, continue or delete it from the bottom keyboard (V2 only) |
+| `/open`           | Add a project by browsing directories                   |
+| `/ls`             | List directory contents, then tap to open or download   |
 | `/help`           | Show available commands                                 |
 
 Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.

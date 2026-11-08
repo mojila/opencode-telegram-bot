@@ -147,9 +147,9 @@ Current command set:
 - `/sessions` - browse, search and switch sessions in the current project
 - `/recent` - show recent sessions across projects and worktrees with their status and switch directly to one
 - `/messages` - browse user messages in the current session
+- `/settings` - change bot settings
 - `/projects` - show and switch projects
 - `/worktree` - show and switch existing git worktrees for the current repository
-- `/settings` - change bot settings
 - `/task` - create a scheduled task
 - `/tasklist` - browse and delete scheduled tasks, and enable or disable individual recurring tasks
 - `/rename` - rename current session
@@ -161,8 +161,8 @@ Current command set:
 - `/reload` - V2 only: reload the OpenCode configuration (config, plugins, providers and models, agents, commands, skills, MCP) for every loaded project without restarting the server; available during an active request, blocked while an interaction is on screen; the model menu reflects the reloaded providers at once
 - `/goal` - V2 only: with no goal, ask for its objective in the next text message and confirm start with a warning about automatic continuation and uncapped token use; with an existing goal, show its details. No command arguments or goal replacement: pause and delete the old goal before creating another. The bottom keyboard shows the short objective and a direct Pause, Continue (with confirmation), or Delete when complete, below queued messages and above the fixed grid. Details of a paused goal offer inline Delete. Details and Pause work during a run; creation, Continue and Delete require idle. All goal controls are blocked during another interaction. Pause stops future continuations without interrupting the current turn; `/abort` pauses and interrupts. The command menu and `/help` list it; `/commands` does not. Typed on V1 it is an unknown command
 - `/open` - add a project by browsing directories
-- `/help` - show command help
 - `/ls` - interactive file browser for the current project directory; a text file can be attached to the next prompt from its detail view
+- `/help` - show command help
 
 Model, agent, variant, and context actions are available from the persistent bottom keyboard. The context button opens window usage and the latest assistant message's token breakdown and cost when a session is idle; its inline controls close the details or open a separate compaction confirmation.
 
