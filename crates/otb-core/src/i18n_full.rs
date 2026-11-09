@@ -13,8 +13,8 @@
 //!   `agent.change_error_callback`, `variant.change_error_callback`,
 //!   `permission.inactive_callback`, `question.inactive_callback`).
 //!   Coverage before this module: 8/654 (~1.2%).
-//! - This module adds **71** representative keys (en + ru verbatim tables),
-//!   raising table coverage to 79/654 (~12%), still scoped to en/ru.
+//! - This module adds **72** representative keys (en + ru verbatim tables),
+//!   raising table coverage to 80/654 (~12%), still scoped to en/ru.
 //!
 //! SCOPE (GREEN, cycle 33b): only `en` + `ru` templates are embedded verbatim
 //! from `src/i18n/en.ts` / `src/i18n/ru.ts` so `{placeholder}` sets can be
@@ -101,6 +101,7 @@ pub const ERROR_KEYS: &[&str] = &[
     "bot.photo_too_large",
     "bot.file_too_large",
     "bot.project_folder_missing",
+    "bot.project_folder_missing_worktree",
     "bot.session_retry",
     "bot.prompt_send_error",
     "bot.create_session_error",
@@ -132,7 +133,7 @@ pub const FULL_CALLBACK_KEYS: &[&str] = &[
     "question.cancelled",
 ];
 
-/// Full representative key set for this module (71 keys).
+/// Full representative key set for this module (72 keys).
 pub const FULL_KEYS: &[&str] = &[
     // KEYBOARD_KEYS (6)
     "keyboard.agent_mode",
@@ -184,13 +185,14 @@ pub const FULL_KEYS: &[&str] = &[
     "status.session_selected",
     "status.header_running",
     "status.health.healthy",
-    // ERROR_KEYS (10)
+    // ERROR_KEYS (11)
     "error.generic",
     "bot.session_error",
     "bot.unknown_command",
     "bot.photo_too_large",
     "bot.file_too_large",
     "bot.project_folder_missing",
+    "bot.project_folder_missing_worktree",
     "bot.session_retry",
     "bot.prompt_send_error",
     "bot.create_session_error",
@@ -296,6 +298,9 @@ fn lookup_full(locale: &str, key: &str) -> Option<&'static str> {
         ("en", "bot.file_too_large") => Some("⚠️ File is too large (max {maxSizeMb}MB)"),
         ("en", "bot.project_folder_missing") => Some(
             "🚫 The project folder no longer exists: {path}. Choose another project in /projects.",
+        ),
+        ("en", "bot.project_folder_missing_worktree") => Some(
+            "🚫 The project folder no longer exists: {path}. Choose another worktree in /worktree.",
         ),
         ("en", "bot.session_retry") => Some(
             "🔁 {message}\n\nProvider keeps returning the same error on repeated retries. Use /abort to abort.",
@@ -404,6 +409,9 @@ fn lookup_full(locale: &str, key: &str) -> Option<&'static str> {
         ("ru", "bot.file_too_large") => Some("⚠️ Файл слишком большой (макс. {maxSizeMb}МБ)"),
         ("ru", "bot.project_folder_missing") => Some(
             "🚫 Папка проекта больше не существует: {path}. Выберите другой проект в /projects.",
+        ),
+        ("ru", "bot.project_folder_missing_worktree") => Some(
+            "🚫 Папка проекта больше не существует: {path}. Выберите другой worktree в /worktree.",
         ),
         ("ru", "bot.session_retry") => Some(
             "🔁 {message}\n\nПровайдер возвращает одну и ту же ошибку при повторных запросах. Используйте /abort для остановки.",
@@ -756,6 +764,16 @@ pub fn error_file_too_large(_locale: &str, _max_size_mb: u32) -> String {
 /// Missing project folder (`bot.project_folder_missing` + params).
 pub fn error_project_folder_missing(_locale: &str, _path: &str) -> String {
     render_full(_locale, "bot.project_folder_missing", &[("path", _path)])
+}
+
+/// Missing project folder owned by a listed worktree parent
+/// (`bot.project_folder_missing_worktree` + params).
+pub fn error_project_folder_missing_worktree(_locale: &str, _path: &str) -> String {
+    render_full(
+        _locale,
+        "bot.project_folder_missing_worktree",
+        &[("path", _path)],
+    )
 }
 
 /// Provider-retry notice (`bot.session_retry` + params).

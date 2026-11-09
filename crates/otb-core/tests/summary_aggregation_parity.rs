@@ -26,8 +26,7 @@
 use otb_core::managers::summary_aggregation::{
     AggregatorEvent, SummaryAggregator, TaskCallInput, ToolPart, ToolStatus,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 fn tool_part(session_id: &str, message_id: &str, call_id: &str, tool: &str) -> ToolPart {
     ToolPart {
@@ -42,25 +41,26 @@ fn tool_part(session_id: &str, message_id: &str, call_id: &str, tool: &str) -> T
 #[test]
 fn invokes_on_cleared_callback_when_aggregator_is_cleared() {
     let mut aggregator = SummaryAggregator::new();
-    let calls = Rc::new(RefCell::new(0usize));
-    let probe = Rc::clone(&calls);
+    let calls = Arc::new(Mutex::new(0usize));
+    let probe = Arc::clone(&calls);
     aggregator.set_on_cleared(Box::new(move || {
-        *probe.borrow_mut() += 1;
+        *probe.lock().unwrap() += 1;
     }));
 
     aggregator.clear();
 
-    assert_eq!(*calls.borrow(), 1);
+    assert_eq!(*calls.lock().unwrap(), 1);
 }
 
 #[test]
 fn includes_session_id_in_tool_callback_payload() {
     let mut aggregator = SummaryAggregator::new();
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_tool(Box::new(move |info| {
         probe
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push((info.session_id, info.call_id, info.tool));
     }));
     aggregator.set_session("session-1");
@@ -75,7 +75,7 @@ fn includes_session_id_in_tool_callback_payload() {
     part.status = ToolStatus::Completed;
     aggregator.process_event(AggregatorEvent::ToolPartUpdated { part });
 
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(
         seen[0],
@@ -90,11 +90,12 @@ fn includes_session_id_in_tool_callback_payload() {
 #[test]
 fn emits_root_tool_updates_before_completion_filtering() {
     let mut aggregator = SummaryAggregator::new();
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_root_tool_update(Box::new(move |info| {
         probe
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push((info.session_id, info.call_id, info.tool));
     }));
     aggregator.set_session("session-1");
@@ -107,7 +108,7 @@ fn emits_root_tool_updates_before_completion_filtering() {
         part: tool_part("session-1", "message-1", "call-task", "task"),
     });
 
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(
         seen[0],
@@ -122,10 +123,10 @@ fn emits_root_tool_updates_before_completion_filtering() {
 #[test]
 fn does_not_emit_root_tool_updates_for_unrelated_child_sessions() {
     let mut aggregator = SummaryAggregator::new();
-    let calls = Rc::new(RefCell::new(0usize));
-    let probe = Rc::clone(&calls);
+    let calls = Arc::new(Mutex::new(0usize));
+    let probe = Arc::clone(&calls);
     aggregator.set_on_root_tool_update(Box::new(move |_info| {
-        *probe.borrow_mut() += 1;
+        *probe.lock().unwrap() += 1;
     }));
     aggregator.set_session("session-1");
 
@@ -133,7 +134,7 @@ fn does_not_emit_root_tool_updates_for_unrelated_child_sessions() {
         part: tool_part("child-session", "message-1", "child-call", "bash"),
     });
 
-    assert_eq!(*calls.borrow(), 0);
+    assert_eq!(*calls.lock().unwrap(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -157,17 +158,17 @@ fn does_not_emit_root_tool_updates_for_unrelated_child_sessions() {
 fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.process_event(AggregatorEvent::SubtaskPartUpdated {
@@ -214,7 +215,7 @@ fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
     // Card snapshot carries provider/model + current tool (cost/tokens land
     // in a later slice; the Rust assistant-message signal carries only
     // provider/model/variant by design).
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -255,17 +256,17 @@ fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
 fn slice2_variant_shown_as_provider_id_variant() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.update_subagent_from_assistant_message(
@@ -276,7 +277,7 @@ fn slice2_variant_shown_as_provider_id_variant() {
     );
 
     // Card shows provider/id with variant.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -333,17 +334,17 @@ fn slice2_task_call_input_reaches_its_own_card() {
 fn slice2_current_tool_timing_starts_for_new_call() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.update_subagent_tool_state(
@@ -355,7 +356,7 @@ fn slice2_current_tool_timing_starts_for_new_call() {
     );
 
     // Card carries the new call id + start.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -385,17 +386,17 @@ fn slice2_current_tool_timing_starts_for_new_call() {
 fn slice2_subtask_part_creates_pending_card() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.register_subtask_part(
@@ -407,7 +408,7 @@ fn slice2_subtask_part_creates_pending_card() {
     );
 
     // A pending card exists for the subtask (no child session bound yet).
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -448,17 +449,17 @@ fn slice2_subtask_part_creates_pending_card() {
 fn slice3_interrupted_subagent_card_ends_interrupted() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.update_subagent_tool_state(
@@ -473,7 +474,7 @@ fn slice3_interrupted_subagent_card_ends_interrupted() {
     aggregator.interrupt_subagent("child-session-1");
 
     // GREEN: the child card ends Interrupted.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -500,17 +501,17 @@ fn slice3_interrupted_subagent_card_ends_interrupted() {
 fn slice3_nested_subagent_has_no_own_card() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.update_subagent_tool_state(
@@ -525,7 +526,7 @@ fn slice3_nested_subagent_has_no_own_card() {
     aggregator.track_nested_launch("child-session-1", "nested-session-1");
 
     // GREEN: no card of its own; the parent still shows its running task.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -576,17 +577,17 @@ fn slice3_live_turn_start_emits_new_turn() {
 fn slice3_subagent_error_ends_error() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     aggregator.update_subagent_tool_state(
@@ -601,7 +602,7 @@ fn slice3_subagent_error_ends_error() {
     aggregator.fail_subagent("child-session-1", "boom");
 
     // GREEN: the child card ends Error.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -747,17 +748,17 @@ fn slice5_token_accumulation_per_subagent_card() {
     use otb_core::managers::summary_aggregation::TokensInfo;
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
     aggregator.update_subagent_tool_state(
         "child-session-1",
@@ -779,7 +780,7 @@ fn slice5_token_accumulation_per_subagent_card() {
     );
 
     // GREEN: the card carries the step-finish token totals.
-    let snap = snapshots.borrow();
+    let snap = snapshots.lock().unwrap();
     assert!(!snap.is_empty(), "expected at least one subagent snapshot");
     let (session_id, cards) = &snap[snap.len() - 1];
     assert_eq!(session_id, "root-session");
@@ -800,7 +801,7 @@ fn slice5_token_accumulation_per_subagent_card() {
             cache_write: 0,
         },
     );
-    let snap = snapshots.borrow();
+    let snap = snapshots.lock().unwrap();
     let (_, cards) = &snap[snap.len() - 1];
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].tokens.input, 1_000);
@@ -947,10 +948,10 @@ fn slice5_completed_tool_fires_once() {
 fn slice6_idle_gate_suppresses_duplicate_emits() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let calls = Rc::new(RefCell::new(0usize));
-    let probe = Rc::clone(&calls);
+    let calls = Arc::new(Mutex::new(0usize));
+    let probe = Arc::clone(&calls);
     aggregator.set_on_session_idle(Box::new(move |_session_id, _info| {
-        *probe.borrow_mut() += 1;
+        *probe.lock().unwrap() += 1;
     }));
 
     // Slice-6 stub (panics while RED).
@@ -958,7 +959,7 @@ fn slice6_idle_gate_suppresses_duplicate_emits() {
     aggregator.set_idle_gated("session-1", false);
 
     // GREEN: the duplicate idle for the same run emits only once.
-    assert_eq!(*calls.borrow(), 1);
+    assert_eq!(*calls.lock().unwrap(), 1);
 }
 
 /// SLICE 6: retry/error path re-emits.
@@ -973,11 +974,12 @@ fn slice6_idle_gate_suppresses_duplicate_emits() {
 fn slice6_retry_error_path_re_emits() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let retries: Rc<RefCell<Vec<(String, u64, String)>>> = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&retries);
+    let retries: Arc<Mutex<Vec<(String, u64, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&retries);
     aggregator.set_on_session_retry(Box::new(move |info| {
         probe
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .push((info.session_id, info.attempt.unwrap_or(0), info.message));
     }));
 
@@ -985,12 +987,12 @@ fn slice6_retry_error_path_re_emits() {
     aggregator.retry_after_error("session-1", 2, "plan does not include access");
 
     // GREEN: the retry emits, then re-emits after the error path resets.
-    assert_eq!(retries.borrow().len(), 1);
-    assert_eq!(retries.borrow()[0].1, 2);
+    assert_eq!(retries.lock().unwrap().len(), 1);
+    assert_eq!(retries.lock().unwrap()[0].1, 2);
     aggregator.reset_stream_on_error("session-1");
     aggregator.retry_after_error("session-1", 3, "plan does not include access");
-    assert_eq!(retries.borrow().len(), 2);
-    assert_eq!(retries.borrow()[1].1, 3);
+    assert_eq!(retries.lock().unwrap().len(), 2);
+    assert_eq!(retries.lock().unwrap()[1].1, 3);
 }
 
 /// SLICE 6: outbound hold queues then flushes.
@@ -1003,10 +1005,10 @@ fn slice6_retry_error_path_re_emits() {
 fn slice6_outbound_hold_queues_then_flushes() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let calls = Rc::new(RefCell::new(0usize));
-    let probe = Rc::clone(&calls);
+    let calls = Arc::new(Mutex::new(0usize));
+    let probe = Arc::clone(&calls);
     aggregator.set_on_session_idle(Box::new(move |_session_id, _info| {
-        *probe.borrow_mut() += 1;
+        *probe.lock().unwrap() += 1;
     }));
 
     // Slice-6 stubs (panic while RED).
@@ -1014,9 +1016,9 @@ fn slice6_outbound_hold_queues_then_flushes() {
     aggregator.set_idle_gated("session-1", false);
 
     // GREEN: held outbound does not deliver yet; the flush delivers it.
-    assert_eq!(*calls.borrow(), 0);
+    assert_eq!(*calls.lock().unwrap(), 0);
     aggregator.flush_outbound(generation);
-    assert_eq!(*calls.borrow(), 1);
+    assert_eq!(*calls.lock().unwrap(), 1);
 }
 
 /// SLICE 6: `session.status` gating (only the current session emits).
@@ -1191,10 +1193,10 @@ fn slice7_file_summary_totals() {
 fn slice8_only_completed_tool_parts_reach_on_tool() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let seen = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_tool(Box::new(move |info| {
-        probe.borrow_mut().push(info.call_id);
+        probe.lock().unwrap().push(info.call_id);
     }));
 
     // A running part must not reach `on_tool` (root updates still fire,
@@ -1208,7 +1210,7 @@ fn slice8_only_completed_tool_parts_reach_on_tool() {
             status: ToolStatus::Running,
         },
     });
-    assert!(seen.borrow().is_empty());
+    assert!(seen.lock().unwrap().is_empty());
 
     // The completed part fires exactly once; the repeat is deduped.
     aggregator.process_event(AggregatorEvent::ToolPartUpdated {
@@ -1229,7 +1231,7 @@ fn slice8_only_completed_tool_parts_reach_on_tool() {
             status: ToolStatus::Completed,
         },
     });
-    assert_eq!(seen.borrow().as_slice(), ["call-1".to_string()]);
+    assert_eq!(seen.lock().unwrap().as_slice(), ["call-1".to_string()]);
 }
 
 /// SLICE 8: `clear` bumps the turn-end mark.
@@ -1588,10 +1590,13 @@ fn slice11_on_tokens_completed_flag() {
     use otb_core::managers::summary_aggregation::TokensInfo;
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let seen: Rc<RefCell<Vec<(String, TokensInfo, bool)>>> = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen: Arc<Mutex<Vec<(String, TokensInfo, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_tokens(Box::new(move |session_id, tokens, is_completed| {
-        probe.borrow_mut().push((session_id, tokens, is_completed));
+        probe
+            .lock()
+            .unwrap()
+            .push((session_id, tokens, is_completed));
     }));
 
     // Slice-11 stub (panics while RED).
@@ -1608,7 +1613,7 @@ fn slice11_on_tokens_completed_flag() {
     );
 
     // GREEN: the completed totals reach the callback with `true`.
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].0, "session-1");
     assert_eq!(seen[0].1.input, 800);
@@ -1628,10 +1633,13 @@ fn slice11_on_tokens_intermediate_update() {
     use otb_core::managers::summary_aggregation::TokensInfo;
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let seen: Rc<RefCell<Vec<(String, TokensInfo, bool)>>> = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen: Arc<Mutex<Vec<(String, TokensInfo, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_tokens(Box::new(move |session_id, tokens, is_completed| {
-        probe.borrow_mut().push((session_id, tokens, is_completed));
+        probe
+            .lock()
+            .unwrap()
+            .push((session_id, tokens, is_completed));
     }));
 
     // Slice-11 stubs (panic while RED).
@@ -1659,7 +1667,7 @@ fn slice11_on_tokens_intermediate_update() {
     );
 
     // GREEN: both intermediate updates fire with `false`.
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[1].1.input, 4000);
     assert_eq!(seen[1].1.cache_read, 12_000);
@@ -1675,17 +1683,17 @@ fn slice11_on_tokens_intermediate_update() {
 fn slice11_on_cost_card() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("session-1");
-    let seen: Rc<RefCell<Vec<(String, f64)>>> = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen: Arc<Mutex<Vec<(String, f64)>>> = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_cost(Box::new(move |session_id, cost| {
-        probe.borrow_mut().push((session_id, cost));
+        probe.lock().unwrap().push((session_id, cost));
     }));
 
     // Slice-11 stub (panics while RED).
     aggregator.handle_cost_update("session-1", 0.01);
 
     // GREEN: the cost reaches the callback verbatim.
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].0, "session-1");
     assert!((seen[0].1 - 0.01).abs() < f64::EPSILON);
@@ -1702,10 +1710,10 @@ fn slice11_on_cost_card() {
 fn slice11_run_end_reports_followed_and_subagents() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let seen: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&seen);
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&seen);
     aggregator.set_on_session_run_ended(Box::new(move |session_id| {
-        probe.borrow_mut().push(session_id);
+        probe.lock().unwrap().push(session_id);
     }));
 
     // Slice-11 stubs (panic while RED).
@@ -1713,7 +1721,7 @@ fn slice11_run_end_reports_followed_and_subagents() {
     aggregator.handle_run_end("root-session");
 
     // GREEN: both runs end, child first.
-    let seen = seen.borrow();
+    let seen = seen.lock().unwrap();
     assert_eq!(seen.as_slice(), ["child-session-1", "root-session"]);
 }
 
@@ -1983,17 +1991,17 @@ fn slice13_session_error_variants_fallback_and_passthrough() {
 fn slice14_session_created_enriches_card_from_title() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     // Slice-14 stub (panics while RED).
@@ -2004,7 +2012,7 @@ fn slice14_session_created_enriches_card_from_title() {
     );
 
     // GREEN: the created session binds a card enriched from its title.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"
@@ -2030,17 +2038,17 @@ fn slice14_session_created_enriches_card_from_title() {
 fn slice14_assistant_message_pairs_agent_provider_model_variant() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<
-        RefCell<
+    let snapshots: Arc<
+        Mutex<
             Vec<(
                 String,
                 Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
             )>,
         >,
-    > = Rc::new(RefCell::new(Vec::new()));
-    let probe = Rc::clone(&snapshots);
+    > = Arc::new(Mutex::new(Vec::new()));
+    let probe = Arc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
-        probe.borrow_mut().push((session_id, subagents));
+        probe.lock().unwrap().push((session_id, subagents));
     }));
 
     // Slice-14 stub (panics while RED).
@@ -2054,7 +2062,7 @@ fn slice14_assistant_message_pairs_agent_provider_model_variant() {
 
     // GREEN: agent + provider/model/variant land on the card with the
     // `provider/id (variant)` display.
-    let snapshots = snapshots.borrow();
+    let snapshots = snapshots.lock().unwrap();
     assert!(
         !snapshots.is_empty(),
         "expected at least one subagent snapshot"

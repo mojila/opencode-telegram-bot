@@ -194,3 +194,30 @@ pub fn should_refresh_model_views_after_reload(
 pub fn should_watch_late_catalog_after_reload(kind: ReloadResultKind) -> bool {
     kind == ReloadResultKind::Success
 }
+
+// ---------------------------------------------------------------------------
+// Ready-lifecycle transition guards (slice 174, GREEN).
+//
+// Rust port of the pure remainder in `src/opencode/ready-lifecycle.ts`:
+// `notifyReady` reports only the first time (later calls are ignored),
+// `notifyUnavailable` reports only the ready-to-down transition. The
+// lifecycle reason strings the start/stop commands post already live above;
+// handler fan-out, logging, and the `ready` flag itself stay with the
+// caller, which passes the current flag as an explicit bool.
+//
+// Deviations: none intended.
+// ---------------------------------------------------------------------------
+
+/// `true` when a ready notification fires (TS: `OpencodeReadyLifecycle`:
+/// `notifyReady` returns `false` without running handlers when already
+/// ready, else flips to ready and reports).
+pub fn should_fire_ready_notification(already_ready: bool) -> bool {
+    !already_ready
+}
+
+/// `true` when an unavailable notification fires (TS: `notifyUnavailable`
+/// returns `false` without logging when not ready, else flips to
+/// unavailable and warns).
+pub fn should_fire_unavailable_notification(is_ready: bool) -> bool {
+    is_ready
+}

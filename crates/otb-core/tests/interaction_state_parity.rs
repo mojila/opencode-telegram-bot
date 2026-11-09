@@ -854,3 +854,40 @@ fn slice27b_48_waiting_queue_at_head_and_session_drops() {
     assert_eq!(waiting.waiting_kind(), None);
     assert!(waiting.waiting_question_ids().is_empty());
 }
+
+// --- single-slot prompt blocking (message-router.ts + prompt.ts busy gate) ---
+
+#[test]
+fn slice27b_49_empty_slot_never_blocks_prompts() {
+    let slot = InteractionSlot::new();
+    assert_eq!(slot.kind(), None);
+    assert!(!slot.is_active());
+    assert!(!is_prompt_blocked_by_slot(slot.kind()));
+    assert!(!is_prompt_blocked_by_slot(None));
+}
+
+#[test]
+fn slice27b_50_held_slot_blocks_prompts_with_hint_hook() {
+    let mut slot = InteractionSlot::new();
+    slot.start("question", "callback", None, None);
+    assert_eq!(slot.kind(), Some("question"));
+    assert!(is_prompt_blocked_by_slot(slot.kind()));
+    assert_eq!(
+        blocked_prompt_hint_key(slot.kind()),
+        "question.blocked.expected_answer"
+    );
+    assert_eq!(
+        blocked_prompt_hint_key(Some("permission")),
+        "permission.blocked.expected_reply"
+    );
+    assert_eq!(
+        blocked_prompt_hint_key(Some("rename")),
+        "interaction.blocked.finish_current"
+    );
+    assert_eq!(
+        blocked_prompt_hint_key(None),
+        "interaction.blocked.finish_current"
+    );
+    slot.clear();
+    assert!(!is_prompt_blocked_by_slot(slot.kind()));
+}

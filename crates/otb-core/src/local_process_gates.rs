@@ -317,3 +317,87 @@ pub fn parse_unix_pid_list(stdout: &str) -> Option<u32> {
     }
     None
 }
+
+// ---------------------------------------------------------------------------
+// Serve spawn + stand-pid + kill escalation (slice 174, GREEN).
+//
+// Rust port of the pure remainder in `src/opencode/process.ts` beyond
+// slice 49:
+// - `createOpencodeServeSpawnCommand` (`serve` vs V2-service
+//   `serve --service`, always with `--port <port>`);
+// - `STAND_SERVER_PID_ENV` record/clear match gates (`recordStandServerPid`
+//   writes only with a pid file and a pid; `clearStandServerPid` drops the
+//   record only when it names the pid just stopped);
+// - `PROCESS_EXIT_POLL_MS` cadence + the `waitForProcessExit`
+//   `elapsed < timeoutMs` poll bound;
+// - the `killServerProcess` SIGTERM-then-SIGKILL escalation gate.
+//
+// Impure work stays with the caller: executable lookup (`which opencode`
+// / PATH fallbacks / npm-shim reads), `spawn` itself, `process.kill`
+// signal delivery, `setTimeout` waits, `Date.now()` clocks (arrive as
+// explicit `elapsed_ms`), pid-file reads/writes/deletes (arrive as
+// explicit `Option` snapshots).
+//
+// Deviations: none intended. A blank pid-file value counts as unset (TS
+// `?.trim() || null`); the recorded pid-file content arrives already
+// trimmed (TS trims after reading).
+// ---------------------------------------------------------------------------
+
+/// Exit-poll cadence while waiting for a killed server to die
+/// (TS: `PROCESS_EXIT_POLL_MS`).
+pub const PROCESS_EXIT_POLL_MS: u64 = 100;
+
+/// `serve` argv for a local launch, without the executable: V2 service mode
+/// runs the registered background server (`serve --service`) so a regular
+/// V2 CLI connects to it; every other version/mode runs a plain server
+/// (TS: `createOpencodeServeSpawnCommand`). The child inherits the bot
+/// environment, which is how a standalone server receives its password.
+pub fn serve_command_args(server_version: &str, server_mode: &str, port: u16) -> Vec<String> {
+    let mut args = vec!["serve".to_string()];
+    if server_version == "v2" && server_mode == "service" {
+        args.push("--service".to_string());
+    }
+    args.push("--port".to_string());
+    args.push(port.to_string());
+    args
+}
+
+/// Trimmed stand-server pid file, or `None` when unset/blank (TS:
+/// `standServerPidFile`). Only the stand e2e launcher sets it; production
+/// never does.
+pub fn resolve_stand_pid_file(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim).filter(|file| !file.is_empty())
+}
+
+/// `true` when the spawned pid is recorded (TS: `recordStandServerPid`:
+/// no pid file or no pid records nothing, so stand teardown never mistakes
+/// a stranger on the same port for its own server).
+pub fn should_record_stand_server_pid(pid_file: Option<&str>, has_pid: bool) -> bool {
+    pid_file.is_some() && has_pid
+}
+
+/// `true` when the pid-file record is dropped (TS: `clearStandServerPid`:
+/// only when the recorded pid is the one just stopped).
+pub fn should_clear_stand_server_pid(
+    pid_file: Option<&str>,
+    recorded_pid: Option<&str>,
+    pid: u32,
+) -> bool {
+    match (pid_file, recorded_pid) {
+        (Some(_), Some(recorded)) => recorded == pid.to_string(),
+        _ => false,
+    }
+}
+
+/// `true` while the exit wait keeps polling (TS: `waitForProcessExit`:
+/// `Date.now() - startTime < timeoutMs`).
+pub fn should_keep_waiting_for_exit(elapsed_ms: u64, timeout_ms: u64) -> bool {
+    elapsed_ms < timeout_ms
+}
+
+/// `true` when the graceful kill left the process alive and the stop
+/// escalates to the forced kill (TS: `killUnixProcess` / `killWindowsProcess`
+/// fall through to SIGKILL / `taskkill /F` after the first wait).
+pub fn should_escalate_kill(still_alive: bool) -> bool {
+    still_alive
+}

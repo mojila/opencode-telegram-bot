@@ -164,6 +164,12 @@ impl InteractionSlot {
         self.state.is_some()
     }
 
+    /// Kind held by the slot, if any (live single-slot read for the
+    /// attach/prompt busy guard; TS: `interactionManager.getSnapshot()?.kind`).
+    pub fn kind(&self) -> Option<&str> {
+        self.state.as_ref().map(|state| state.kind.as_str())
+    }
+
     pub fn is_expired(&self, now_ms: i64) -> bool {
         match &self.state {
             None => false,
@@ -184,6 +190,26 @@ impl InteractionSlot {
 
     pub fn bump_generation(&mut self) {
         self.generation += 1;
+    }
+}
+
+/// Whether a plain-text prompt must not dispatch while the single
+/// interaction slot is occupied (TS: the `interactionManager.isActive()` /
+/// `questionManager.isActive()` gate in `message-router.ts` + `prompt.ts`;
+/// PRODUCT.md single-slot rule: one blocking interaction at a time).
+pub fn is_prompt_blocked_by_slot(slot_kind: Option<&str>) -> bool {
+    slot_kind.is_some()
+}
+
+/// Locale hook for the blocked-prompt hint; copy stays with telegram-ux /
+/// i18n (TS keys: `question.blocked.expected_answer`,
+/// `permission.blocked.expected_reply`, otherwise
+/// `interaction.blocked.finish_current`).
+pub fn blocked_prompt_hint_key(slot_kind: Option<&str>) -> &'static str {
+    match slot_kind {
+        Some("question") => "question.blocked.expected_answer",
+        Some("permission") => "permission.blocked.expected_reply",
+        _ => "interaction.blocked.finish_current",
     }
 }
 

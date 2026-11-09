@@ -139,6 +139,29 @@ pub fn skill_path(server_version: &str) -> &'static str {
     }
 }
 
+/// Folder-listing path per server version (JS `file.list` parity in
+/// `src/opencode/v2/client.ts:487-492`: V2 `GET api/fs/list?path=`; the V2
+/// `api/` prefix is assumed like the probe route, see header). `None` on
+/// V1: folder presence is never probed there (TS `checkFolderPresence`
+/// answers `unknown` before listing on any non-V2 server).
+pub fn file_list_path(server_version: &str) -> Option<&'static str> {
+    if server_version == "v2" {
+        Some("api/fs/list")
+    } else {
+        None
+    }
+}
+
+/// Entry `path` values from a folder-listing body (pure; testable).
+/// Non-string `path` values are dropped, mirroring the TS
+/// `.map((entry) => entry.path)` over `FileSystem.Entry` rows.
+pub fn folder_entry_paths(body: &Value) -> Vec<String> {
+    session_list_from_body(body)
+        .iter()
+        .filter_map(|entry| entry.get("path")?.as_str().map(str::to_string))
+        .collect()
+}
+
 /// MCP status path per server version (JS `mcp.status` parity; the V2
 /// shim reads `mcp.list`. V2 `api/` prefix assumed, see header).
 pub fn mcp_status_path(server_version: &str) -> &'static str {
@@ -213,6 +236,99 @@ pub fn fork_path(server_version: &str, session_id: &str) -> String {
     format!("{}/{session_id}/fork", session_path(server_version))
 }
 
+/// Revert body (pure; testable). Both versions take `{"messageID":...}`
+/// (V1 `session.revert`, V2 `session.revert.stage` in
+/// `src/opencode/v2/client.ts:651-658`); the field name is version-
+/// independent, so no version split is needed.
+pub fn revert_payload(message_id: &str) -> Value {
+    serde_json::json!({ "messageID": message_id })
+}
+
+/// Fork body per server version (pure; testable). V1 takes
+/// `{"messageID":...}` (V1 `session.fork` SDK parity); V2 takes
+/// `{"before":...}` (TS `client.session.fork({sessionID, before})` in
+/// `src/opencode/v2/client.ts:642-650`, the message the fork leads up
+/// to). `None`/blank rides as absent, like the TS optional `messageID`.
+pub fn fork_payload(server_version: &str, message_id: Option<&str>) -> Value {
+    let message_id = message_id.filter(|id| !id.trim().is_empty());
+    if server_version == "v2" {
+        match message_id {
+            Some(id) => serde_json::json!({ "before": id }),
+            None => serde_json::json!({}),
+        }
+    } else {
+        match message_id {
+            Some(id) => serde_json::json!({ "messageID": id }),
+            None => serde_json::json!({}),
+        }
+    }
+}
+
+/// Question reply path per server version (Node SDK parity: V1 global
+/// `question.reply` is `POST /question/{requestID}/reply`; V2 native
+/// `session.question.reply` is `POST
+/// /api/session/{sessionID}/question/{requestID}/reply`). `session_id` only
+/// feeds the V2 shape. Pure; testable.
+pub fn question_reply_path(server_version: &str, session_id: &str, request_id: &str) -> String {
+    if server_version == "v2" {
+        format!(
+            "{}/{session_id}/question/{request_id}/reply",
+            session_path(server_version)
+        )
+    } else {
+        format!("question/{request_id}/reply")
+    }
+}
+
+/// Question reject path per server version (V1 `POST
+/// /question/{requestID}/reject`, V2 native `POST
+/// /api/session/{sessionID}/question/{requestID}/reject`). Pure; testable.
+pub fn question_reject_path(server_version: &str, session_id: &str, request_id: &str) -> String {
+    if server_version == "v2" {
+        format!(
+            "{}/{session_id}/question/{request_id}/reject",
+            session_path(server_version)
+        )
+    } else {
+        format!("question/{request_id}/reject")
+    }
+}
+
+/// Permission reply path per server version (Node SDK parity: V1
+/// `permission.reply` is `POST /permission/{requestID}/reply`; V2 native
+/// `session.permission.reply` is `POST
+/// /api/session/{sessionID}/permission/{requestID}/reply`). `session_id`
+/// only feeds the V2 shape. Pure; testable.
+pub fn permission_reply_path(server_version: &str, session_id: &str, request_id: &str) -> String {
+    if server_version == "v2" {
+        format!(
+            "{}/{session_id}/permission/{request_id}/reply",
+            session_path(server_version)
+        )
+    } else {
+        format!("permission/{request_id}/reply")
+    }
+}
+
+/// Question reply body per server version (pure; testable). Both versions
+/// take per-question label arrays: V1 `{"answers": string[][]}`
+/// (`QuestionAnswer`), V2 the same `answers` shape (`QuestionV2Reply`).
+pub fn question_reply_payload(answers: &[Vec<String>]) -> Value {
+    serde_json::json!({ "answers": answers })
+}
+
+/// Permission reply body per server version (pure; testable). `reply` is
+/// `once` / `always` / `reject` on both versions (V1 `permission.reply`,
+/// V2 `PermissionV2Reply`); `message` rides only when non-blank (TS passes
+/// it solely for the scheduled-task reject note).
+pub fn permission_reply_payload(reply: &str, message: Option<&str>) -> Value {
+    let mut payload = serde_json::json!({ "reply": reply });
+    if let Some(note) = message.filter(|note| !note.trim().is_empty()) {
+        payload["message"] = Value::String(note.to_string());
+    }
+    payload
+}
+
 /// Prompt path per server version: `<session_path>/<session_id>`
 /// (V1 `session/{id}`, V2 `api/session/{id}`; V2 prefix assumed, see header).
 pub fn prompt_path(server_version: &str, session_id: &str) -> String {
@@ -226,15 +342,142 @@ pub fn message_path(server_version: &str, session_id: &str) -> String {
     format!("{}/{}/message", session_path(server_version), session_id)
 }
 
+/// Single-message path per server version:
+/// `<message_path>/<message_id>` (V1 SDK `session.message` parity:
+/// `GET /session/{id}/message/{messageID}`; V2 `api/` prefix assumed,
+/// see header). Pure; testable.
+pub fn single_message_path(server_version: &str, session_id: &str, message_id: &str) -> String {
+    format!("{}/{message_id}", message_path(server_version, session_id))
+}
+
+/// Session-status path per server version (Node SDK parity: V1
+/// `session.status` is `GET session/status?directory=`; V2
+/// `session.active` is `GET api/session/active`, which the TS V2 client
+/// adapts into the same `{[id]: {type: "busy"}}` map — the raw body is
+/// returned here and shaping stays with the caller). Pure; testable.
+pub fn session_status_path(server_version: &str) -> &'static str {
+    if server_version == "v2" {
+        "api/session/active"
+    } else {
+        "session/status"
+    }
+}
+
+/// Agent-switch path per server version (Node `session.switchAgent`
+/// parity in `src/opencode/v2/client.ts:254`: V2 is
+/// `POST api/session/{id}/agent` with a `{"agent":...}` body; the V2
+/// `api/` prefix is assumed like the probe route, see header).
+/// Pure; testable.
+pub fn switch_agent_path(server_version: &str, session_id: &str) -> String {
+    format!("{}/{session_id}/agent", session_path(server_version))
+}
+
+/// Model-switch path per server version (Node `session.switchModel`
+/// parity in `src/opencode/v2/client.ts:262-265`: V2 is
+/// `POST api/session/{id}/model` with a `{"model":{...}}` body; the V2
+/// `api/` prefix is assumed like the probe route, see header).
+/// Pure; testable.
+pub fn switch_model_path(server_version: &str, session_id: &str) -> String {
+    format!("{}/{session_id}/model", session_path(server_version))
+}
+
 /// Prompt body per server version (pure; testable).
-/// V1 (SDK parity): `{"parts":[{"type":"text","text":...}]}`;
-/// V2 (Node `admitPrompt` parity): `{"text":...}`.
+/// V1 (SDK parity): `{"parts":[{"type":"text","text":...}]}` — the parts
+/// assembly mirrors `otb_core::prompt_request_gates::build_prompt_parts`
+/// (text-first, `/ls` attachment last, placeholder when files ride without
+/// text; agent/model/variant selection travels out-of-band here).
+/// V2 (LEGACY regression anchor: body kept byte-identical on purpose).
+/// Sends `{"text":...}` only. TS `admitPrompt`
+/// (`src/opencode/v2/client.ts:269-283`) instead sends
+/// `toV2PromptInput(parts)` text (`parts[].filter(type == "text")`
+/// joined with `"\n\n"`, `src/opencode/v2/mappers.ts:641-654`) plus
+/// `files[]`, `delivery` (default `"queue"`), an optional `system` preface,
+/// and `applySelection` agent/model/variant routing. That live V2 contract
+/// moved to [`prompt_payload_from_options`] (user-confirmed cutover); this
+/// V2 arm stays frozen so the regression test below pins it. See
+/// `otb_core::v2_mappers::to_v2_prompt_input` and
+/// `otb_core::v2_client_gates::{resolve_prompt_text, default_delivery}`
+/// for the pure TS-parity pieces.
 pub fn prompt_payload(server_version: &str, text: &str) -> Value {
     if server_version == "v2" {
         serde_json::json!({ "text": text })
     } else {
         serde_json::json!({ "parts": [{ "type": "text", "text": text }] })
     }
+}
+
+/// V2 prompt body from assembled [`otb_core::prompt_request_gates::PromptOptions`]
+/// (live V2 path since the user-confirmed cutover; [`prompt_payload`] keeps
+/// its legacy `{"text":...}` shape as a regression anchor).
+///
+/// TS parity (`src/opencode/v2/client.ts:269-283` `admitPrompt`,
+/// `src/opencode/v2/mappers.ts:641-654` `toV2PromptInput`):
+/// - Callers assemble `options` with
+///   `otb_core::prompt_request_gates::build_prompt_options` (which orders
+///   parts via `build_prompt_parts`: text first, files, `/ls` attachment
+///   last, placeholder when files ride without text).
+/// - Text joins text parts with `"\n\n"` via
+///   `otb_core::v2_mappers::to_v2_prompt_input`; `system` is folded into
+///   `text` via `otb_core::v2_client_gates::resolve_prompt_text`
+///   (`system + "\n\n" + text`), never sent as a separate key.
+/// - `files` is omitted when empty (`...(files.length > 0 ? { files } : {})`);
+///   otherwise each entry is `{"uri":...}` plus `name` when set.
+/// - `delivery` defaults to `"queue"` via
+///   `otb_core::v2_client_gates::default_delivery` (`delivery ?? "queue"`).
+///
+/// Agent/model/variant routing note: `options.agent` / `options.model` /
+/// `options.variant` are NOT serialized here. TS sends them out-of-band via
+/// `applySelection` (`client.ts:270-275`: `session.switchAgent` /
+/// `session.switchModel` when the session differs; skipped entirely when
+/// neither agent nor model is set — see
+/// `otb_core::v2_client_gates::{should_skip_apply_selection,
+/// should_switch_agent, should_switch_model}`). Nothing here calls the
+/// network; it only builds the JSON body.
+pub fn prompt_payload_from_options(
+    options: &otb_core::prompt_request_gates::PromptOptions,
+    system: Option<&str>,
+    delivery: Option<&str>,
+) -> Value {
+    let v1_parts: Vec<otb_core::v2_mappers::V1PromptPart> = options
+        .parts
+        .iter()
+        .map(|part| match part {
+            otb_core::prompt_request_gates::PromptPart::Text(text) => {
+                otb_core::v2_mappers::V1PromptPart {
+                    part_type: "text".to_string(),
+                    text: Some(text.clone()),
+                    mime: None,
+                    filename: None,
+                    url: None,
+                }
+            }
+            otb_core::prompt_request_gates::PromptPart::File => {
+                otb_core::v2_mappers::V1PromptPart {
+                    part_type: "file".to_string(),
+                    text: None,
+                    mime: None,
+                    filename: None,
+                    url: None,
+                }
+            }
+        })
+        .collect();
+    let input = otb_core::v2_mappers::to_v2_prompt_input(&v1_parts);
+    let text = otb_core::v2_client_gates::resolve_prompt_text(system, &input.text);
+    let delivery = otb_core::v2_client_gates::default_delivery(delivery).to_string();
+    let mut payload = serde_json::json!({ "text": text, "delivery": delivery });
+    if !input.files.is_empty() {
+        let files: Vec<Value> = input
+            .files
+            .iter()
+            .map(|file| match &file.name {
+                Some(name) => serde_json::json!({ "uri": file.uri, "name": name }),
+                None => serde_json::json!({ "uri": file.uri }),
+            })
+            .collect();
+        payload["files"] = Value::Array(files);
+    }
+    payload
 }
 
 /// Join a base URL and a relative path (pure; avoids double slashes).
@@ -306,6 +549,17 @@ pub fn server_password_from_env() -> Option<String> {
 pub fn auth_header_from_env() -> Option<String> {
     server_password_from_env()
         .map(|password| basic_auth_header(&server_username_from_env(), &password))
+}
+
+/// True when an OpenCode request error means the request already settled
+/// (pure; testable on the status mapping only through live calls).
+/// Node `isQuestionRequestGone` / `isPermissionRequestNotFound` parity over
+/// HTTP: `NotFoundError`, `QuestionNotFoundError`,
+/// `FormAlreadySettledError`, `PermissionNotFoundError` all surface as a
+/// 404 through `error_for_status`, so the caller treats it as resolved
+/// (release the slot) instead of failed (keep it answerable).
+pub fn is_not_found_error(err: &reqwest::Error) -> bool {
+    err.status() == Some(reqwest::StatusCode::NOT_FOUND)
 }
 
 /// True when a `content-type` header value carries JSON
@@ -470,6 +724,28 @@ impl OpencodeClient {
         Ok(HealthProbe { ok: true, version })
     }
 
+    /// Folder entries as the server's own filesystem lists them
+    /// (read-only). TS `file.list` parity for
+    /// `folder-presence-service.ts`: `GET api/fs/list?path=` with the
+    /// entry `path` values; accepts a bare array or a `{data:[...]}`
+    /// envelope like every other list body, anything else yields an empty
+    /// list. `?path=` is sent verbatim. V1 has no file-list surface and
+    /// yields an empty list (presence probing is V2-only, so no verdict
+    /// hangs on it). Never starts or stops the server.
+    pub async fn list_folder_entries(&self, path: &str) -> Result<Vec<String>, reqwest::Error> {
+        let Some(route) = file_list_path(&self.server_version) else {
+            return Ok(Vec::new());
+        };
+        let response = self
+            .get(route)
+            .query(&[("path", path)])
+            .send()
+            .await?
+            .error_for_status()?;
+        let body: Value = response.json().await?;
+        Ok(folder_entry_paths(&body))
+    }
+
     /// Session list (read-only). Returns raw session values; shaping stays
     /// with the caller. Accepts a bare array or a `{"data":[...]}` envelope
     /// (live V2 probe shape); anything else yields an empty list.
@@ -535,6 +811,45 @@ impl OpencodeClient {
         let response = request.send().await?.error_for_status()?;
         let body: Value = response.json().await?;
         Ok(session_list_from_body(&body))
+    }
+
+    /// One session message (read-only; TS `loadParentMessage` parity in
+    /// `session-callback-handler.ts`: the quoted user input is reloaded by
+    /// ID when the transcript pages no longer carry it). Returns the raw
+    /// message value (`info`/`parts` shapes); a `{"data":{...}}` envelope
+    /// is unwrapped.
+    pub async fn session_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        directory: &str,
+    ) -> Result<Value, reqwest::Error> {
+        let mut request = self.get(&single_message_path(
+            &self.server_version,
+            session_id,
+            message_id,
+        ));
+        if !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request.send().await?.error_for_status()?;
+        let body: Value = response.json().await?;
+        Ok(unwrap_data_envelope(&body).clone())
+    }
+
+    /// Session busy map (read-only; TS `readSessionBusy` parity in
+    /// `session-callback-handler.ts`). Returns the raw status body (V1
+    /// `{[id]: {type}}`; V2 the `active` body the TS client adapts);
+    /// shaping stays with the caller. A `{"data":{...}}` envelope is
+    /// unwrapped.
+    pub async fn session_status(&self, directory: &str) -> Result<Value, reqwest::Error> {
+        let mut request = self.get(session_status_path(&self.server_version));
+        if !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request.send().await?.error_for_status()?;
+        let body: Value = response.json().await?;
+        Ok(unwrap_data_envelope(&body).clone())
     }
 
     /// Custom-command list (read-only). Returns raw command values (`name`,
@@ -678,6 +993,14 @@ impl OpencodeClient {
     /// Unwraps a `{"data":{...}}` envelope when present so callers can
     /// read top-level `id`/`title` either way. Request shape (flat
     /// `{"directory":...}` + optional `title`) and auth/paths are unchanged.
+    ///
+    /// Session-half parity with `new-command.ts:58-77` (`session.create`
+    /// with `{ directory }` then `setCurrentSession` + cache ingest):
+    /// this helper performs the HTTP create; persisting via
+    /// `settings_current::write_current_session`, `resetInteractions`,
+    /// `attachToSession`, and the main-keyboard refresh stay with the
+    /// dispatcher caller (cf. `telegram.rs::ensure_execute_session` +
+    /// `new_reply`, both still skipping attach/subscribe/keyboard).
     pub async fn create_session(
         &self,
         directory: &str,
@@ -699,6 +1022,13 @@ impl OpencodeClient {
 
     /// Session prompt (parity only; the scaffold never calls it, keeping the
     /// default path read-only).
+    ///
+    /// KNOWN DRIFT (kept pending user confirmation): the V1 body here is
+    /// `{"text":...}`, while [`prompt_payload`] (and TS `buildPromptOptions`
+    /// in `src/bot/handlers/prompt.ts:514-550`) use
+    /// `{"parts":[{"type":"text","text":...}]}`. The shape stays as-is so
+    /// this dead-code helper keeps its current wire contract; callers that
+    /// need the parts shape use [`OpencodeClient::prompt_session`].
     pub async fn send_prompt(&self, session_id: &str, text: &str) -> Result<Value, reqwest::Error> {
         let path = format!("{}/{}", session_path(&self.server_version), session_id);
         let payload = serde_json::json!({ "text": text });
@@ -711,16 +1041,163 @@ impl OpencodeClient {
         response.json().await
     }
 
-    /// Send a text prompt into a session (T13 write path; nothing calls it
-    /// unless polling dispatches a command that needs it). Reuses the
-    /// versioned base URL + auth header helpers via `post`.
+    /// Send a text prompt into a session (T13 write path; polling dispatch
+    /// calls it when it needs it). Reuses the versioned base URL + auth
+    /// header helpers via `post`.
+    ///
+    /// V2 (`admitPrompt` parity in `src/opencode/v2/client.ts:269-283`):
+    /// the text is wrapped in default `PromptOptions` (no agent/model, no
+    /// files) and sent through [`OpencodeClient::admit_prompt`], so the
+    /// wire body is `{"text":..., "delivery":"queue"}` with no `files`
+    /// key. V1 keeps the legacy [`prompt_payload`] `parts[]` shape.
+    ///
+    /// Scope note: text-only (no agent/model/variant, no `directory`
+    /// query, no files, no `system` preface). The full TS assembly
+    /// (`processUserPrompt` in `src/bot/handlers/prompt.ts:180-391`:
+    /// mismatch reset, folder-notice gate, `buildPromptOptions` parts +
+    /// selection, busy check, `attachToSession`, `ensureEventSubscription`,
+    /// main-keyboard refresh) stays a dispatcher follow-up gated by
+    /// `OTB_ENABLE_POLLING=1`; `telegram.rs::ensure_execute_session` covers
+    /// only the reuse-or-create session half.
     pub async fn prompt_session(
         &self,
         session_id: &str,
         text: &str,
     ) -> Result<Value, reqwest::Error> {
+        if self.server_version == "v2" {
+            let options = otb_core::prompt_request_gates::build_prompt_options(
+                session_id,
+                "",
+                text,
+                0,
+                false,
+                otb_core::prompt_request_gates::PromptSelection::default(),
+            );
+            return self.admit_prompt(&options, None, None).await;
+        }
         let path = prompt_path(&self.server_version, session_id);
         let payload = prompt_payload(&self.server_version, text);
+        let response = self
+            .post(&path)
+            .json(&payload)
+            .send()
+            .await?
+            .error_for_status()?;
+        response.json().await
+    }
+
+    /// V2 agent/model routing out-of-band (TS `applySelection` in
+    /// `src/opencode/v2/client.ts:243-267`): skipped entirely when neither
+    /// agent nor model is set; otherwise the live session is read and only
+    /// a differing agent (`POST .../agent` with `{"agent":...}`) or model
+    /// (`POST .../model` with `{"model":{...}}`) is switched. V1 carries
+    /// selection inline with the prompt, so this is a no-op there. A
+    /// routing failure aborts the send (the TS `await` order): the prompt
+    /// is not posted when selection cannot be applied.
+    pub async fn apply_selection(
+        &self,
+        options: &otb_core::prompt_request_gates::PromptOptions,
+    ) -> Result<(), reqwest::Error> {
+        if self.server_version != "v2" {
+            return Ok(());
+        }
+        let has_agent = options
+            .agent
+            .as_deref()
+            .is_some_and(|agent| !agent.is_empty());
+        let has_model = options.model.is_some();
+        if otb_core::v2_client_gates::should_skip_apply_selection(has_agent, has_model) {
+            return Ok(());
+        }
+        let session = self.get_session(&options.session_id, "").await?;
+        if let Some(agent) = options.agent.as_deref().filter(|agent| !agent.is_empty()) {
+            let current = session.get("agent").and_then(Value::as_str);
+            if otb_core::v2_client_gates::should_switch_agent(current, Some(agent)) {
+                self.post(&switch_agent_path(
+                    &self.server_version,
+                    &options.session_id,
+                ))
+                .json(&serde_json::json!({ "agent": agent }))
+                .send()
+                .await?
+                .error_for_status()?;
+            }
+        }
+        if let Some(model) = options.model.as_ref() {
+            let current_id = session
+                .get("model")
+                .and_then(|model| model.get("id"))
+                .and_then(Value::as_str);
+            let current_provider = session
+                .get("model")
+                .and_then(|model| model.get("providerID"))
+                .and_then(Value::as_str);
+            let current_variant = session
+                .get("model")
+                .and_then(|model| model.get("variant"))
+                .and_then(Value::as_str);
+            if otb_core::v2_client_gates::should_switch_model(
+                current_id,
+                current_provider,
+                current_variant,
+                true,
+                &model.model_id,
+                &model.provider_id,
+                options.variant.as_deref(),
+            ) {
+                let mut switched =
+                    serde_json::json!({ "providerID": model.provider_id, "id": model.model_id });
+                if let Some(variant) = options.variant.as_deref().filter(|v| !v.is_empty()) {
+                    switched["variant"] = Value::String(variant.to_string());
+                }
+                self.post(&switch_model_path(
+                    &self.server_version,
+                    &options.session_id,
+                ))
+                .json(&serde_json::json!({ "model": switched }))
+                .send()
+                .await?
+                .error_for_status()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Full V2 prompt send (TS `admitPrompt` in
+    /// `src/opencode/v2/client.ts:269-283`): [`OpencodeClient::apply_selection`]
+    /// first (agent/model out-of-band), then the prompt POST built by
+    /// [`prompt_payload_from_options`] (`text` with the optional `system`
+    /// preface, `files[]` only when non-empty, `delivery` defaulting to
+    /// `"queue"`). V1 keeps the legacy [`prompt_payload`] `parts[]` body
+    /// assembled from the option text parts.
+    pub async fn admit_prompt(
+        &self,
+        options: &otb_core::prompt_request_gates::PromptOptions,
+        system: Option<&str>,
+        delivery: Option<&str>,
+    ) -> Result<Value, reqwest::Error> {
+        if self.server_version == "v2" {
+            self.apply_selection(options).await?;
+            let payload = prompt_payload_from_options(options, system, delivery);
+            let response = self
+                .post(&prompt_path(&self.server_version, &options.session_id))
+                .json(&payload)
+                .send()
+                .await?
+                .error_for_status()?;
+            return response.json().await;
+        }
+        let text = options
+            .parts
+            .iter()
+            .filter_map(|part| match part {
+                otb_core::prompt_request_gates::PromptPart::Text(text) => Some(text.as_str()),
+                otb_core::prompt_request_gates::PromptPart::File => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let path = prompt_path(&self.server_version, &options.session_id);
+        let payload = prompt_payload(&self.server_version, &text);
         let response = self
             .post(&path)
             .json(&payload)
@@ -749,13 +1226,12 @@ impl OpencodeClient {
     }
 
     /// Revert a session to a user message (JS `session.revert` parity in
-    /// `message-history-callback-handler.ts`: V1 `session.revert` is
-    /// `POST session/{id}/revert`; V2 `session.revert.stage` is covered by
-    /// the same versioned path with a `{"messageID":...}` body — the exact
-    /// V2 field name is an assumption, see header item 2). `?directory=` is
-    /// sent when non-empty. Any 2xx counts as accepted (`true`); anything
-    /// else is a request error. A rejected call means the caller renders
-    /// the local `messages.revert_error` notice.
+    /// `message-history-callback-handler.ts:242-246`: V1 `session.revert`
+    /// is `POST session/{id}/revert`; V2 `session.revert.stage` is covered
+    /// by the same versioned path with the [`revert_payload`] body).
+    /// `?directory=` is sent when non-empty. Any 2xx counts as accepted
+    /// (`true`); anything else is a request error. A rejected call means
+    /// the caller renders the local `messages.revert_error` notice.
     pub async fn revert_session(
         &self,
         session_id: &str,
@@ -767,7 +1243,7 @@ impl OpencodeClient {
             request = request.query(&[("directory", directory)]);
         }
         let response = request
-            .json(&serde_json::json!({ "messageID": message_id }))
+            .json(&revert_payload(message_id))
             .send()
             .await?
             .error_for_status()?;
@@ -775,10 +1251,9 @@ impl OpencodeClient {
     }
 
     /// Fork a session from a user message (JS `session.fork` parity in
-    /// `message-history-callback-handler.ts`: V1 `session.fork` is
+    /// `message-history-callback-handler.ts:275-279`: V1 `session.fork` is
     /// `POST session/{id}/fork`; V2 `session.fork({sessionID, before})` is
-    /// covered by the same versioned path with a `{"messageID":...}` body —
-    /// the exact V2 field name is an assumption, see header item 2).
+    /// covered by the same versioned path with the [`fork_payload`] body).
     /// `?directory=` is sent when non-empty. Returns the raw forked
     /// session; `{"data":{...}}` envelopes are unwrapped.
     pub async fn fork_session(
@@ -792,12 +1267,110 @@ impl OpencodeClient {
             request = request.query(&[("directory", directory)]);
         }
         let response = request
-            .json(&serde_json::json!({ "messageID": message_id }))
+            .json(&fork_payload(&self.server_version, Some(message_id)))
             .send()
             .await?
             .error_for_status()?;
         let body: Value = response.json().await?;
         Ok(unwrap_data_envelope(&body).clone())
+    }
+
+    /// Reply to a pending question (JS `question.reply` parity in
+    /// `question-menu.ts:359` + `question-callback-handler.ts` gone-shape in
+    /// `question-menu.ts:50-56`).
+    ///
+    /// V1 (`@opencode-ai/sdk` `question.reply`, `POST
+    /// /question/{requestID}/reply` with `?directory=` and an
+    /// `{"answers": string[][]}` body) is request-global, so `session_id`
+    /// only feeds the V2 path. V2 (native `session.question.reply`, `POST
+    /// /api/session/{sessionID}/question/{requestID}/reply`) is
+    /// session-scoped with the same `{"answers": ...}` body shape
+    /// (`QuestionV2Reply.answers`, an array of per-question label arrays)
+    /// and no directory query. Any 2xx counts as accepted (`true`).
+    ///
+    /// Gone-vs-failed split stays with the caller: a settled/unknown
+    /// request surfaces as a 404 through `error_for_status` (TS
+    /// `isQuestionRequestGone`: `NotFoundError`, `QuestionNotFoundError`,
+    /// `FormAlreadySettledError`), so the caller checks
+    /// `err.status() == Some(StatusCode::NOT_FOUND)` for the release path.
+    pub async fn reply_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        directory: &str,
+        answers: &[Vec<String>],
+    ) -> Result<bool, reqwest::Error> {
+        let mut request = self.post(&question_reply_path(
+            &self.server_version,
+            session_id,
+            request_id,
+        ));
+        if self.server_version != "v2" && !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request
+            .json(&question_reply_payload(answers))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(response.status().is_success())
+    }
+
+    /// Reject (dismiss) a pending question (JS `question.reject` parity in
+    /// `question-callback-handler.ts:310`: V1 `POST
+    /// /question/{requestID}/reject` with `?directory=`, V2 native `POST
+    /// /api/session/{sessionID}/question/{requestID}/reject` with no body and
+    /// no directory query). Any 2xx counts as accepted (`true`); a 404 means
+    /// the request already settled (caller checks `err.status()`).
+    pub async fn reject_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        directory: &str,
+    ) -> Result<bool, reqwest::Error> {
+        let mut request = self.post(&question_reject_path(
+            &self.server_version,
+            session_id,
+            request_id,
+        ));
+        if self.server_version != "v2" && !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request.send().await?.error_for_status()?;
+        Ok(response.status().is_success())
+    }
+
+    /// Reply to pending permission requests (JS `permission.reply` parity in
+    /// `permission-callback-handler.ts:176`: V1 `POST
+    /// /permission/{requestID}/reply` with `?directory=` and a
+    /// `{"reply": once|always|reject, "message"?}` body; V2 native `POST
+    /// /api/session/{sessionID}/permission/{requestID}/reply` with the same
+    /// body shape (`PermissionV2Reply` plus optional `message`) and no
+    /// directory query). Callers loop over every request ID the visible
+    /// prompt answers together. Any 2xx counts as accepted (`true`); a 404
+    /// means the request already settled (caller checks `err.status()`).
+    pub async fn reply_permission(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        directory: &str,
+        reply: &str,
+        message: Option<&str>,
+    ) -> Result<bool, reqwest::Error> {
+        let mut request = self.post(&permission_reply_path(
+            &self.server_version,
+            session_id,
+            request_id,
+        ));
+        if self.server_version != "v2" && !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request
+            .json(&permission_reply_payload(reply, message))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(response.status().is_success())
     }
 
     /// Subscribe to the SSE event stream with reconnect backoff (read-only).
@@ -1025,8 +1598,20 @@ mod tests {
         assert_eq!(mcp_disconnect_path("v2"), "api/mcp/disconnect");
         assert_eq!(message_path("v1", "ses_1"), "session/ses_1/message");
         assert_eq!(message_path("v2", "ses_1"), "api/session/ses_1/message");
+        assert_eq!(
+            single_message_path("v1", "ses_1", "msg_9"),
+            "session/ses_1/message/msg_9"
+        );
+        assert_eq!(
+            single_message_path("v2", "ses_1", "msg_9"),
+            "api/session/ses_1/message/msg_9"
+        );
+        assert_eq!(session_status_path("v1"), "session/status");
+        assert_eq!(session_status_path("v2"), "api/session/active");
         assert_eq!(event_path("v1"), "event");
         assert_eq!(event_path("v2"), "api/event");
+        assert_eq!(file_list_path("v1"), None);
+        assert_eq!(file_list_path("v2"), Some("api/fs/list"));
         assert_eq!(
             join_url("http://127.0.0.1:4096/", "event"),
             "http://127.0.0.1:4096/event"
@@ -1108,6 +1693,71 @@ mod tests {
     }
 
     #[test]
+    fn v2_options_payload_joins_text_parts_with_double_newline() {
+        // TS `toV2PromptInput`: text parts join with "\n\n".
+        let options = otb_core::prompt_request_gates::PromptOptions {
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            parts: vec![
+                otb_core::prompt_request_gates::PromptPart::Text("alpha".to_string()),
+                otb_core::prompt_request_gates::PromptPart::Text("beta".to_string()),
+            ],
+            agent: None,
+            model: None,
+            variant: None,
+        };
+        let payload = prompt_payload_from_options(&options, None, None);
+        assert_eq!(
+            payload.get("text").and_then(Value::as_str),
+            Some("alpha\n\nbeta")
+        );
+    }
+
+    #[test]
+    fn v2_options_payload_omits_files_when_empty_and_defaults_delivery() {
+        // TS `admitPrompt`: no `files` key when empty, `delivery ?? "queue"`.
+        let options = otb_core::prompt_request_gates::build_prompt_options(
+            "ses_1",
+            "/work",
+            "hi",
+            0,
+            false,
+            otb_core::prompt_request_gates::PromptSelection::default(),
+        );
+        let payload = prompt_payload_from_options(&options, None, None);
+        assert!(payload.get("files").is_none());
+        assert_eq!(
+            payload.get("delivery").and_then(Value::as_str),
+            Some("queue")
+        );
+        // Explicit delivery passes through; empty counts as missing.
+        let steer = prompt_payload_from_options(&options, None, Some("steer"));
+        assert_eq!(steer.get("delivery").and_then(Value::as_str), Some("steer"));
+        let blank = prompt_payload_from_options(&options, None, Some(""));
+        assert_eq!(blank.get("delivery").and_then(Value::as_str), Some("queue"));
+    }
+
+    #[test]
+    fn v2_options_payload_prefaces_text_with_system() {
+        // TS `admitPrompt`: `system ? system + "\n\n" + text : text`.
+        let options = otb_core::prompt_request_gates::build_prompt_options(
+            "ses_1",
+            "/work",
+            "hi",
+            0,
+            false,
+            otb_core::prompt_request_gates::PromptSelection::default(),
+        );
+        let payload = prompt_payload_from_options(&options, Some("sys"), None);
+        assert_eq!(
+            payload.get("text").and_then(Value::as_str),
+            Some("sys\n\nhi")
+        );
+        let plain = prompt_payload_from_options(&options, None, None);
+        assert_eq!(plain.get("text").and_then(Value::as_str), Some("hi"));
+    }
+
+    #[test]
     fn abort_path_follows_sdk_method_names_per_version() {
         // V1 `session.abort` is `POST /session/{id}/abort`; V2
         // `session.interrupt` is `POST /api/session/{id}/interrupt`
@@ -1124,6 +1774,122 @@ mod tests {
         assert_eq!(revert_path("v2", "ses_1"), "api/session/ses_1/revert");
         assert_eq!(fork_path("v1", "ses_1"), "session/ses_1/fork");
         assert_eq!(fork_path("v2", "ses_1"), "api/session/ses_1/fork");
+    }
+
+    #[test]
+    fn revert_payload_carries_message_id_on_both_versions() {
+        // `session.revert` (V1) / `session.revert.stage` (V2): the field
+        // is `messageID` either way (`message-history-callback-handler.ts`
+        // `session.revert({messageID})`, `v2/client.ts:651-658`).
+        assert_eq!(
+            revert_payload("msg_1"),
+            serde_json::json!({ "messageID": "msg_1" })
+        );
+    }
+
+    #[test]
+    fn fork_payload_uses_before_on_v2() {
+        // V1 `session.fork({messageID})` vs V2
+        // `session.fork({sessionID, before})` (`v2/client.ts:642-650`).
+        assert_eq!(
+            fork_payload("v1", Some("msg_1")),
+            serde_json::json!({ "messageID": "msg_1" })
+        );
+        assert_eq!(
+            fork_payload("v2", Some("msg_1")),
+            serde_json::json!({ "before": "msg_1" })
+        );
+        assert_eq!(fork_payload("v1", None), serde_json::json!({}));
+        assert_eq!(fork_payload("v2", Some("  ")), serde_json::json!({}));
+    }
+
+    #[test]
+    fn question_paths_are_request_global_on_v1_and_session_scoped_on_v2() {
+        // V1 SDK parity: `POST /question/{requestID}/reply|reject`
+        // (`@opencode-ai/sdk` `QuestionReplyData` / `QuestionRejectData`
+        // `url` shapes, `?directory=` folded by the caller).
+        assert_eq!(
+            question_reply_path("v1", "ses_1", "req_1"),
+            "question/req_1/reply"
+        );
+        assert_eq!(
+            question_reject_path("v1", "ses_1", "req_1"),
+            "question/req_1/reject"
+        );
+        // V2 native parity: `POST
+        // /api/session/{sessionID}/question/{requestID}/reply|reject`
+        // (`V2SessionQuestionReplyData` / `V2SessionQuestionRejectData`
+        // `url` shapes, no directory query).
+        assert_eq!(
+            question_reply_path("v2", "ses_1", "req_1"),
+            "api/session/ses_1/question/req_1/reply"
+        );
+        assert_eq!(
+            question_reject_path("v2", "ses_1", "req_1"),
+            "api/session/ses_1/question/req_1/reject"
+        );
+    }
+
+    #[test]
+    fn permission_reply_path_is_request_global_on_v1_and_session_scoped_on_v2() {
+        // V1 SDK parity: `POST /permission/{requestID}/reply`
+        // (`PermissionReplyData` `url` shape).
+        assert_eq!(
+            permission_reply_path("v1", "ses_1", "req_1"),
+            "permission/req_1/reply"
+        );
+        // V2 native parity: `POST
+        // /api/session/{sessionID}/permission/{requestID}/reply`
+        // (`V2SessionPermissionReplyData` `url` shape).
+        assert_eq!(
+            permission_reply_path("v2", "ses_1", "req_1"),
+            "api/session/ses_1/permission/req_1/reply"
+        );
+    }
+
+    #[test]
+    fn question_reply_payload_carries_per_question_label_arrays() {
+        // Both versions take `answers: string[][]` (V1 `QuestionAnswer`,
+        // V2 `QuestionV2Reply.answers`).
+        let answers = vec![vec!["label one".to_string()], vec!["a".to_string()]];
+        assert_eq!(
+            question_reply_payload(&answers),
+            serde_json::json!({ "answers": [["label one"], ["a"]] })
+        );
+        let empty: Vec<Vec<String>> = Vec::new();
+        assert_eq!(
+            question_reply_payload(&empty),
+            serde_json::json!({ "answers": [] })
+        );
+    }
+
+    #[test]
+    fn permission_reply_payload_omits_blank_message() {
+        // `reply` always rides; `message` only when non-blank (TS passes it
+        // solely for the scheduled-task reject note).
+        assert_eq!(
+            permission_reply_payload("once", None),
+            serde_json::json!({ "reply": "once" })
+        );
+        assert_eq!(
+            permission_reply_payload("reject", Some("  ")),
+            serde_json::json!({ "reply": "reject" })
+        );
+        assert_eq!(
+            permission_reply_payload("reject", Some("note")),
+            serde_json::json!({ "reply": "reject", "message": "note" })
+        );
+    }
+
+    #[test]
+    fn switch_paths_follow_session_prefix_per_version() {
+        // `session.switchAgent` / `session.switchModel` parity: the
+        // versioned session prefix plus the verb (V2 `api/` prefix
+        // assumed, like the probe).
+        assert_eq!(switch_agent_path("v1", "ses_1"), "session/ses_1/agent");
+        assert_eq!(switch_agent_path("v2", "ses_1"), "api/session/ses_1/agent");
+        assert_eq!(switch_model_path("v1", "ses_1"), "session/ses_1/model");
+        assert_eq!(switch_model_path("v2", "ses_1"), "api/session/ses_1/model");
     }
 
     #[test]
@@ -1186,6 +1952,29 @@ mod tests {
         let junk = serde_json::json!({ "data": { "id": "ses_1" } });
         assert!(session_list_from_body(&junk).is_empty());
         assert!(session_list_from_body(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
+    fn folder_entry_paths_maps_entry_paths_and_drops_non_strings() {
+        // V2 `file.list` shape: `{location, data: [{path, type}]}`.
+        let body = serde_json::json!({
+            "location": { "directory": "/work" },
+            "data": [
+                { "path": "/work/src/main.ts", "type": "file" },
+                { "path": "/work/docs", "type": "directory" },
+                { "type": "file" },
+                { "path": 7, "type": "file" },
+            ]
+        });
+        assert_eq!(
+            folder_entry_paths(&body),
+            vec!["/work/src/main.ts", "/work/docs"]
+        );
+
+        // Bare array and empty bodies.
+        let bare = serde_json::json!([{ "path": "a" }]);
+        assert_eq!(folder_entry_paths(&bare), vec!["a"]);
+        assert!(folder_entry_paths(&serde_json::json!({})).is_empty());
     }
 
     #[test]

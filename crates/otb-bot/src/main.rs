@@ -5,6 +5,9 @@
 //! background task and, only with `OTB_ENABLE_POLLING=1`, runs the Telegram
 //! long-poll loop. No DB writes, no daemon changes.
 
+/// Attach + event-subscription live path (thin wiring; polls only when
+/// `OTB_ENABLE_POLLING=1`).
+mod attach;
 mod cli;
 /// T7: 23-command registry (structure only; no Telegram API calls).
 mod commands;

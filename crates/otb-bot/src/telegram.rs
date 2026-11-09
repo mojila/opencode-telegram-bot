@@ -21,11 +21,13 @@
 //!    `send_message` is a plain async helper; only the opt-in poll loop
 //!    (`run_telegram_from_env`, never called by tests) invokes it.
 
-use teloxide_core::payloads::{AnswerCallbackQuerySetters, GetUpdatesSetters, SendMessageSetters};
+use teloxide_core::payloads::{
+    AnswerCallbackQuerySetters, EditMessageTextSetters, GetUpdatesSetters, SendMessageSetters,
+};
 use teloxide_core::requests::Requester;
 use teloxide_core::types::{
-    CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MaybeInaccessibleMessage,
-    MessageId, Update, UpdateKind,
+    CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions,
+    MaybeInaccessibleMessage, MediaKind, Message, MessageId, MessageKind, Update, UpdateKind,
 };
 
 /// Env flag that opts into (future) polling. Anything but `"1"` means off.
@@ -1367,6 +1369,54 @@ async fn recent_view(locale: &str, page: usize) -> (String, Option<InlineKeyboar
 
 /// Loaded `/messages` context shared by the list reply and the select
 /// callback.
+/// Latest assistant text across raw `session.messages` entries (JS
+/// `loadLatestAssistantResponse` parity in `message-history-service.ts`):
+/// non-`assistant` and summary entries are skipped, `text` parts join, and
+/// the entry with the greatest `info.time.created` wins (`>=` keeps the
+/// later entry on ties). Returns `None` when nothing assistant-like
+/// carries text. Pure; testable.
+pub fn latest_assistant_text(messages: &[serde_json::Value]) -> Option<String> {
+    let mut latest: Option<(i64, String)> = None;
+    for message in messages {
+        let info = message.get("info")?;
+        if info.get("role")?.as_str() != Some("assistant") {
+            continue;
+        }
+        if info
+            .get("summary")
+            .and_then(|summary| summary.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let text = message
+            .get("parts")?
+            .as_array()?
+            .iter()
+            .filter(|part| part.get("type").and_then(|kind| kind.as_str()) == Some("text"))
+            .filter_map(|part| part.get("text")?.as_str())
+            .collect::<Vec<_>>()
+            .join("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let created = info
+            .get("time")
+            .and_then(|time| time.get("created"))
+            .and_then(|created| created.as_i64())
+            .unwrap_or(0);
+        if match &latest {
+            None => true,
+            Some((at, _)) => created >= *at,
+        } {
+            latest = Some((created, text));
+        }
+    }
+    latest.map(|(_, text)| text)
+}
+
 struct MessagesContext {
     items: Vec<crate::commands::UserMessageItem>,
     session_id: String,
@@ -1728,6 +1778,10 @@ async fn handle_session_callback(
         item.id.len()
     );
     answer_callback(bot, query, None, false).await;
+    // Live path (TS `selectSessionById` → `attachToSession` core chain
+    // parity): follow the session so its event stream pumps and the
+    // assistant answer arrives over SSE. Non-fatal by construction.
+    crate::attach::attach_session(&item.id, &context.worktree);
     let Some(chat_id) = callback_chat_id(query) else {
         return;
     };
@@ -1735,6 +1789,9 @@ async fn handle_session_callback(
     if let Err(err) = send_message(bot, chat_id, &confirmation).await {
         tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
     }
+    // Last user input as quote, last assistant reply in full, plus the
+    // newest still-waiting input (TS `sendSessionPickTranscript` parity).
+    send_attach_transcript(bot, chat_id, &item.id, &context.worktree, locale).await;
 }
 
 /// Handle a `session:search*` tap (JS
@@ -1792,6 +1849,39 @@ async fn handle_session_search_callback(
             )
             .await;
         }
+    }
+}
+
+/// Best-effort `resolveProjectAgent` fallback (TS
+/// `agent-selection-service.ts:53-76`): after a project switch, when the
+/// stored agent is not listed for the new worktree, persist the
+/// build-preferring fallback. Empty catalogs and write failures only log.
+async fn apply_project_agent_fallback(worktree: &str, app_home: &std::path::Path) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_agents(worktree).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: agents list failed: {err}");
+            return;
+        }
+    };
+    let items = crate::commands::agent_list_from_values(&raw);
+    if items.is_empty() {
+        return;
+    }
+    let current = crate::settings_current::read_settings_current(app_home);
+    let stored = current.agent.as_deref().unwrap_or("build");
+    let names: Vec<&str> = items.iter().map(|item| item.name.as_str()).collect();
+    if otb_core::agent_model_variant_gates::is_agent_listed(&names, stored) {
+        return;
+    }
+    let fallback = otb_core::agent_model_variant_gates::pick_fallback_agent(&names);
+    if let Err(err) = crate::settings_current::write_current_agent(app_home, &fallback) {
+        tracing::warn!("[otb-bot] telegram: cannot remember fallback agent: {err}");
+    } else {
+        tracing::info!("[otb-bot] telegram: project agent fallback applied");
     }
 }
 
@@ -1877,6 +1967,7 @@ async fn handle_project_callback(
         item.id.chars().take(8).collect::<String>(),
         item.id.len()
     );
+    apply_project_agent_fallback(&item.worktree, &app_home).await;
     answer_callback(bot, query, None, false).await;
     let Some(chat_id) = callback_chat_id(query) else {
         return;
@@ -2112,6 +2203,10 @@ async fn handle_recent_callback(
         item.id.len()
     );
     answer_callback(bot, query, None, false).await;
+    // Live path (TS background/`recent` select → `attachToSession` core
+    // chain parity): follow the session so its event stream pumps.
+    // Non-fatal by construction.
+    crate::attach::attach_session(&item.id, &item.directory);
     let Some(chat_id) = callback_chat_id(query) else {
         return;
     };
@@ -2119,6 +2214,9 @@ async fn handle_recent_callback(
     if let Err(err) = send_message(bot, chat_id, &confirmation).await {
         tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
     }
+    // Last user input as quote, last assistant reply in full, plus the
+    // newest still-waiting input (TS `sendSessionPickTranscript` parity).
+    send_attach_transcript(bot, chat_id, &item.id, &item.directory, locale).await;
 }
 
 /// Handle a `messages:*` tap: page taps re-render the requested list page
@@ -2376,11 +2474,38 @@ async fn handle_messages_fork(bot: &teloxide_core::Bot, locale: &str, query: &Ca
     let confirmation =
         crate::locale::translate(locale, "messages.fork_success").replace("{text}", &target.text);
     reply_list_view(bot, chat_id, &confirmation, None).await;
+    // `messages.sendLatestAssistantResponse` parity
+    // (`message-history-callback-handler.ts:314-323`): the forked session's
+    // latest assistant answer follows in the background
+    // (`safeBackgroundTask`). Best-effort: a quiet stream or a missing
+    // answer only logs, never edits the confirm above.
+    let bot_owned = bot.clone();
+    let forked_id = id.clone();
+    let forked_dir = context.directory.clone();
+    tokio::spawn(async move {
+        let client = crate::config::AppConfig::load()
+            .map(|config| config.opencode_client())
+            .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+        let raw = match client.session_messages(&forked_id, &forked_dir).await {
+            Ok(raw) => raw,
+            Err(err) => {
+                tracing::debug!("[otb-bot] telegram: fork follow-up messages failed: {err}");
+                return;
+            }
+        };
+        let Some(answer) = latest_assistant_text(&raw) else {
+            return;
+        };
+        if let Err(err) = send_message(&bot_owned, chat_id, &answer).await {
+            tracing::debug!("[otb-bot] telegram: fork follow-up send failed: {err}");
+        }
+    });
 }
 
 /// Live `/new` reply: create a session in the current project directory and
 /// remember it as `currentSession` (JS `new-command.ts` parity, minus the
-/// attach/keyboard side effects that need the dispatcher).
+/// attach/keyboard side effects that need the dispatcher). Plain-text
+/// prompts reuse this remembered session via `ensure_execute_session`.
 /// No project → `new.project_not_selected`; create failure (or a bad write
 /// of the remembered session) → `new.create_error`; otherwise `new.created`.
 async fn new_reply(locale: &str) -> String {
@@ -2811,6 +2936,1704 @@ pub const PERMISSION_CALLBACK_ALWAYS: &str =
     otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_ALWAYS;
 pub const PERMISSION_CALLBACK_REJECT: &str =
     otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_REJECT;
+
+/// Poll-card text from the pump's prepped [`crate::attach::PollCardData`]
+/// (pure; testable).
+///
+/// Node `formatQuestionDetailsPart` fallback-text parity
+/// (`src/bot/menus/question-menu.ts`): one `❓ n/total header` line per
+/// prepped header, joined with `\n\n` through
+/// `question_fallback_text`, then markdown-normalized and capped at
+/// [`TELEGRAM_TEXT_LIMIT`].
+///
+/// SUBSET: the prep carries headers only (no per-question options,
+/// `multiple`/`custom` flags, or selection state), so the card lists the
+/// poll's questions without option rows or the multi-select hint. Those
+/// need the dispatcher `questionManager` and stay a follow-up. The
+/// `_locale` param is kept for that follow-up (status lines and the
+/// multi-select hint are localized in TS); today's segments carry agent
+/// text only.
+pub fn build_poll_card_text(card: &crate::attach::PollCardData, _locale: &str) -> String {
+    use otb_core::question_permission_inline_gates as gates;
+    let total = card.question_count.max(card.headers.len()).max(1);
+    let mut segments: Vec<gates::QuestionSegment> = card
+        .headers
+        .iter()
+        .enumerate()
+        .filter(|(_, header)| !header.trim().is_empty())
+        .map(|(index, header)| {
+            let progress = gates::question_progress_text(index as u64, total as u64);
+            let title = if progress.is_empty() {
+                format!("{} {header}", gates::QUESTION_EMOJI)
+            } else {
+                format!("{} {progress} {header}", gates::QUESTION_EMOJI)
+            };
+            gates::QuestionSegment {
+                label: Some(title),
+                rest: String::new(),
+            }
+        })
+        .collect();
+    if segments.is_empty() {
+        segments.push(gates::QuestionSegment {
+            label: Some(gates::QUESTION_EMOJI.to_string()),
+            rest: String::new(),
+        });
+    }
+    let visible = gates::truncate_question_segments(&segments, gates::QUESTION_MESSAGE_LIMIT);
+    let fallback = gates::question_fallback_text(&visible);
+    let normalized =
+        otb_core::markdown_normalizer::normalize_markdown_for_telegram_rendering(&fallback);
+    truncate_text(&normalized, TELEGRAM_TEXT_LIMIT).to_string()
+}
+
+/// Poll-card keyboard (pure; testable): custom-answer + cancel rows with
+/// the `question:*` callbacks and localized labels.
+///
+/// SUBSET: per-option select rows and the submit row need the live option
+/// list plus selection state (`questionManager`), so they stay a
+/// dispatcher follow-up. Taps the scaffold already answers: cancel rejects
+/// the held request, a custom answer arrives as plain text while the slot
+/// is held, anything else only acks the spinner.
+pub fn build_poll_card_keyboard(locale: &str) -> InlineKeyboardMarkup {
+    use otb_core::question_permission_inline_gates as gates;
+    InlineKeyboardMarkup::new(vec![
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "question.button.custom"),
+            gates::build_question_custom_callback(0),
+        )],
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "question.button.cancel"),
+            gates::build_question_cancel_callback(0),
+        )],
+    ])
+}
+
+/// Localized display name for a permission kind (pure; testable): the
+/// `permission.name.*` key, falling back to the raw id for unknown kinds
+/// (Node `PERMISSION_NAME_KEYS` lookup parity in `permission-menu.ts`).
+pub fn permission_kind_display_name(permission: &str, locale: &str) -> String {
+    let key = format!("permission.name.{permission}");
+    let translated = crate::locale::translate(locale, &key);
+    if translated == key {
+        permission.to_string()
+    } else {
+        translated
+    }
+}
+
+/// Permission-card text from the pump's prepped
+/// [`crate::attach::PermissionCardData`] (pure; testable).
+///
+/// Node `formatPermissionText` header parity
+/// (`src/bot/menus/permission-menu.ts`): emoji (`🔐` fallback) plus the
+/// localized kind name through the `permission.header` template, with the
+/// `permission.grouped_count` line when the prompt answers more than one
+/// pending request. Then markdown-normalized and capped at
+/// [`TELEGRAM_TEXT_LIMIT`].
+///
+/// SUBSET: the prep carries the pattern count only, not the patterns
+/// themselves, so the `• pattern` list is omitted. Carrying the patterns
+/// (V1 `properties.patterns` / V2 `data.resources`) stays a follow-up.
+pub fn build_permission_card_text(
+    card: &crate::attach::PermissionCardData,
+    locale: &str,
+) -> String {
+    use otb_core::question_permission_inline_gates as gates;
+    let emoji = gates::permission_emoji_for(&card.permission);
+    let name = permission_kind_display_name(&card.permission, locale);
+    let header = crate::locale::translate(locale, "permission.header")
+        .replace("{emoji}", emoji)
+        .replace("{name}", &name);
+    let grouped = if card.request_ids.len() > 1 {
+        crate::locale::translate(locale, "permission.grouped_count")
+            .replace("{count}", &card.request_ids.len().to_string())
+    } else {
+        String::new()
+    };
+    let normalized = otb_core::markdown_normalizer::normalize_markdown_for_telegram_rendering(
+        &format!("{header}{grouped}"),
+    );
+    truncate_text(&normalized, TELEGRAM_TEXT_LIMIT).to_string()
+}
+
+/// Permission-card keyboard (pure; testable): allow-once / allow-always /
+/// reject rows with the exact `permission:*` callbacks and localized
+/// labels (Node `buildPermissionKeyboard` parity in
+/// `permission-menu.ts`).
+pub fn build_permission_card_keyboard(locale: &str) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "permission.button.allow"),
+            PERMISSION_CALLBACK_ONCE.to_string(),
+        )],
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "permission.button.always"),
+            PERMISSION_CALLBACK_ALWAYS.to_string(),
+        )],
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "permission.button.reject"),
+            PERMISSION_CALLBACK_REJECT.to_string(),
+        )],
+    ])
+}
+
+/// Native rich-message budget for one attach reply chunk (TS Bot API 10.1
+/// parity: native messages hold 32768 characters instead of 4096, so a
+/// reply is split rarely; bot-composed quote/waiting/empty lines stay at
+/// [`TELEGRAM_TEXT_LIMIT`]).
+pub const ATTACH_REPLY_CHUNK_LIMIT: usize = 32_768;
+
+/// Read one raw `session.messages` entry into the session-pick shape the
+/// [`otb_core::session_pick_catalog_gates`] pickers inspect (pure;
+/// testable).
+///
+/// TS `SessionPickMessage` parity (`session-pick-reply.ts`): `info.id`,
+/// `info.role`, `info.summary`, `info.parentID`, `info.error` truthiness,
+/// `info.time.{created,completed}`, and `parts[]` with `type` plus
+/// `text?` / `filename?` (a `name` field is accepted as a filename
+/// fallback). Entries without an `info` object yield `None`; untyped
+/// parts are skipped.
+pub fn session_pick_message_from_value(
+    value: &serde_json::Value,
+) -> Option<otb_core::session_pick_catalog_gates::SessionPickMessage> {
+    use otb_core::session_pick_catalog_gates as pick;
+    let info = value.get("info")?;
+    if !info.is_object() {
+        return None;
+    }
+    let text_field = |key: &str| {
+        info.get(key)
+            .and_then(|field| field.as_str())
+            .map(str::trim)
+            .filter(|field| !field.is_empty())
+            .map(str::to_string)
+    };
+    let mut parts = Vec::new();
+    if let Some(raw_parts) = value.get("parts").and_then(|parts| parts.as_array()) {
+        for part in raw_parts {
+            let kind = part
+                .get("type")
+                .and_then(|kind| kind.as_str())
+                .unwrap_or("")
+                .to_string();
+            if kind.is_empty() {
+                continue;
+            }
+            parts.push(pick::SessionPickPart {
+                kind,
+                text: part
+                    .get("text")
+                    .and_then(|text| text.as_str())
+                    .map(str::to_string),
+                filename: part
+                    .get("filename")
+                    .or_else(|| part.get("name"))
+                    .and_then(|name| name.as_str())
+                    .map(str::to_string),
+            });
+        }
+    }
+    Some(pick::SessionPickMessage {
+        info: pick::SessionPickInfo {
+            id: text_field("id"),
+            role: info
+                .get("role")
+                .and_then(|role| role.as_str())
+                .map(str::to_string),
+            summary: info
+                .get("summary")
+                .and_then(|summary| summary.as_bool())
+                .unwrap_or(false),
+            parent_id: text_field("parentID"),
+            has_error: info
+                .get("error")
+                .is_some_and(|error| !error.is_null() && error != &serde_json::Value::Bool(false)),
+            created: info
+                .get("time")
+                .and_then(|time| time.get("created"))
+                .and_then(|created| created.as_i64()),
+            completed: info
+                .get("time")
+                .and_then(|time| time.get("completed"))
+                .and_then(|completed| completed.as_i64()),
+        },
+        parts,
+    })
+}
+
+/// Whether the session counts as busy in a raw `session.status` body
+/// (pure; testable).
+///
+/// TS `readSessionBusy` parity (`session-callback-handler.ts`):
+/// `data[sessionId]?.type === "busy"`. A bare `"busy"` entry and an id
+/// list under `active`/`busy`/`sessions` (or a bare id array) are
+/// tolerated for version-shape drift; anything else reads as idle.
+pub fn attach_session_is_busy(status: &serde_json::Value, session_id: &str) -> bool {
+    if session_id.is_empty() {
+        return false;
+    }
+    if let Some(entry) = status.get(session_id) {
+        if entry.get("type").and_then(|kind| kind.as_str()) == Some("busy") {
+            return true;
+        }
+        if entry.as_str() == Some("busy") {
+            return true;
+        }
+    }
+    for key in ["active", "busy", "sessions"] {
+        if let Some(ids) = status.get(key).and_then(|ids| ids.as_array()) {
+            if ids.iter().any(|id| id.as_str() == Some(session_id)) {
+                return true;
+            }
+        }
+    }
+    if let Some(ids) = status.as_array() {
+        if ids.iter().any(|id| id.as_str() == Some(session_id)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The shown reply's parent input when the loaded transcript no longer
+/// carries it (pure; testable). TS `sendSessionPickTranscript` parity:
+/// the reply's `parentId` is reloaded (`loadParentMessage`) only when no
+/// loaded message has that id; otherwise there is nothing to fetch.
+pub fn missing_attach_parent_id(
+    messages: &[otb_core::session_pick_catalog_gates::SessionPickMessage],
+    busy: bool,
+) -> Option<String> {
+    use otb_core::session_pick_catalog_gates as pick;
+    let reply = pick::find_eligible_reply(messages, busy)?;
+    let parent = reply.parent_id.filter(|id| !id.is_empty())?;
+    if messages
+        .iter()
+        .any(|message| message.info.id.as_deref() == Some(parent.as_str()))
+    {
+        return None;
+    }
+    Some(parent)
+}
+
+/// Build the quote text for one picked user input (pure; testable).
+///
+/// TS `sendPickQuote` parity (`session-callback-handler.ts` plus
+/// `session-pick-reply.ts` `buildSessionPickQuote` over
+/// `buildQuotedNotification`): the localized `👤` title over the input
+/// text (or its `📎` file lines), CRLF-normalized and truncated like
+/// external input, rendered as a `>` blockquote. The scaffold sends
+/// plain text (no MarkdownV2 parse-mode transport), so the normalized
+/// raw fallback is used; native blockquote nesting survives through the
+/// `>` prefix. Capped at [`TELEGRAM_TEXT_LIMIT`]; `None` when the
+/// message carries no quotable text.
+pub fn build_attach_quote_text(
+    message: &otb_core::session_pick_catalog_gates::SessionPickMessage,
+    locale: &str,
+) -> Option<String> {
+    use otb_core::session_pick_catalog_gates as pick;
+    let title = crate::locale::translate(locale, "sessions.last_input.title");
+    let attachment = crate::locale::translate(locale, "sessions.last_input.attachment");
+    let quote = pick::build_session_pick_quote(message, &title, &attachment)?;
+    let notice =
+        otb_core::outage_ready_gates::build_quoted_notification(&quote.title, &quote.body, None);
+    let normalized = otb_core::markdown_normalizer::normalize_markdown_for_telegram_rendering(
+        &notice.raw_fallback_text,
+    );
+    Some(truncate_text(&normalized, TELEGRAM_TEXT_LIMIT).to_string())
+}
+
+/// Render one assistant reply into sendable native-budget chunks (pure;
+/// testable).
+///
+/// TS `renderAssistantFinalPartsSafe` parity
+/// (`assistant-rendering.ts`): markdown-normalized (headings, rules,
+/// checklists, quote continuations) and split rarely — one chunk unless
+/// the reply exceeds [`ATTACH_REPLY_CHUNK_LIMIT`] — splitting cleanly on
+/// line breaks, then whitespace, then char boundaries (the
+/// `splitTextIntoChunks` contract reused from
+/// [`otb_core::render::chunker::chunk_plain_text`]). Blank text yields
+/// no chunks. The native rich-blocks transport stays a dispatcher
+/// follow-up; these chunks carry the normalized fallback text.
+pub fn build_attach_reply_chunks(text: &str) -> Vec<String> {
+    use otb_core::render::chunker::{self, PlainChunkerOptions};
+    let normalized = otb_core::markdown_normalizer::normalize_markdown_for_telegram_rendering(text);
+    if normalized.trim().is_empty() {
+        return Vec::new();
+    }
+    chunker::chunk_plain_text(
+        &normalized,
+        Some(PlainChunkerOptions {
+            max_chars: Some(ATTACH_REPLY_CHUNK_LIMIT),
+        }),
+    )
+    .into_iter()
+    .map(|part| part.fallback_text)
+    .filter(|chunk| !chunk.is_empty())
+    .collect()
+}
+
+/// Build the empty-transcript notice (pure; testable). TS
+/// `sendSessionPickTranscript` parity: `sessions.preview.empty` when the
+/// transcript has neither quote nor reply. Capped at
+/// [`TELEGRAM_TEXT_LIMIT`].
+pub fn build_attach_empty_text(locale: &str) -> String {
+    truncate_text(
+        &crate::locale::translate(locale, "sessions.preview.empty"),
+        TELEGRAM_TEXT_LIMIT,
+    )
+    .to_string()
+}
+
+/// The attach transcript: last user input as quote, last assistant reply
+/// in full, plus the newest still-waiting input (pure; testable).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttachTranscript {
+    pub quote: Option<String>,
+    pub reply_chunks: Vec<String>,
+    pub waiting: Option<String>,
+}
+
+/// Build the attach transcript from loaded session messages (pure;
+/// testable).
+///
+/// TS `sendSessionPickTranscript` parity
+/// (`session-callback-handler.ts`): the eligible reply's parent input is
+/// the quote (falling back to the newest user prompt only when there is
+/// no reply — the single-message reload itself stays with the caller via
+/// [`missing_attach_parent_id`]); the reply renders in full; a user
+/// input newer than the shown reply is quoted again as the waiting line.
+pub fn build_attach_transcript(
+    messages: &[otb_core::session_pick_catalog_gates::SessionPickMessage],
+    busy: bool,
+    locale: &str,
+) -> AttachTranscript {
+    use otb_core::session_pick_catalog_gates as pick;
+    let attachment = crate::locale::translate(locale, "sessions.last_input.attachment");
+    let reply = pick::find_eligible_reply(messages, busy);
+    let quote_source = match &reply {
+        Some(reply) => reply
+            .parent_id
+            .as_deref()
+            .and_then(|id| pick::find_message_by_id(messages, id)),
+        None => pick::find_latest_user_prompt(messages, &attachment),
+    };
+    let quote = quote_source.and_then(|message| build_attach_quote_text(message, locale));
+    let reply_chunks = reply
+        .as_ref()
+        .map(|reply| build_attach_reply_chunks(&reply.text))
+        .unwrap_or_default();
+    let waiting = match &reply {
+        Some(reply) => pick::find_pending_user_prompt(messages, reply.created, &attachment)
+            .and_then(|message| build_attach_quote_text(message, locale)),
+        None => None,
+    };
+    AttachTranscript {
+        quote,
+        reply_chunks,
+        waiting,
+    }
+}
+
+/// Whether the transcript degrades to the empty notice (pure; testable).
+/// TS gate parity: `!reply && !quote` sends `sessions.preview.empty`
+/// (via [`otb_core::session_select_callback_gates`]).
+pub fn should_send_attach_empty(transcript: &AttachTranscript) -> bool {
+    otb_core::session_select_callback_gates::should_send_empty_session_preview(
+        !transcript.reply_chunks.is_empty(),
+        transcript.quote.is_some(),
+    )
+}
+
+/// Whether a waiting line follows the reply (pure; testable). TS gate
+/// parity: after the reply parts, a pending newer-than-reply prompt plus
+/// its quote must both exist (via
+/// [`otb_core::session_select_callback_gates`]).
+pub fn should_show_attach_waiting(transcript: &AttachTranscript) -> bool {
+    otb_core::session_select_callback_gates::should_show_pending_prompt(
+        !transcript.reply_chunks.is_empty(),
+        transcript.waiting.is_some(),
+    )
+}
+
+/// Send bot-composed text with no link preview (TS
+/// `withBotLinkPreviewDefault` parity in `src/bot/index.ts`: only agent
+/// text keeps the preview). Text is capped at [`TELEGRAM_TEXT_LIMIT`]
+/// via [`build_send_payload`]; failures only trace.
+async fn send_bot_composed_text(bot: &teloxide_core::Bot, chat_id: i64, text: &str) {
+    let (chat, body) = build_send_payload(chat_id, text);
+    let result = bot
+        .send_message(chat, body)
+        .link_preview_options(LinkPreviewOptions {
+            is_disabled: true,
+            url: None,
+            prefer_small_media: false,
+            prefer_large_media: false,
+            show_above_text: false,
+        })
+        .await;
+    if let Err(err) = result {
+        tracing::warn!("[otb-bot] telegram: composed send failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Send agent text keeping Telegram's link preview (TS
+/// `AGENT_TEXT_LINK_PREVIEW_OPTIONS` parity in
+/// `src/bot/messages/telegram-text.ts`). No 4096 truncation: callers
+/// pass native-budget chunks (see [`ATTACH_REPLY_CHUNK_LIMIT`]); the
+/// native rich transport stays a dispatcher follow-up.
+async fn send_agent_text(bot: &teloxide_core::Bot, chat_id: i64, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let result = bot
+        .send_message(ChatId(chat_id), text.to_string())
+        .link_preview_options(LinkPreviewOptions {
+            is_disabled: false,
+            url: None,
+            prefer_small_media: false,
+            prefer_large_media: false,
+            show_above_text: false,
+        })
+        .await;
+    if let Err(err) = result {
+        tracing::warn!("[otb-bot] telegram: agent send failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Live attach transcript (TS `sendSessionPickTranscript` parity in
+/// `session-callback-handler.ts`): last user input as quote, last
+/// assistant reply in full, plus the newest still-waiting input.
+///
+/// Order and preview flags mirror TS: quote (no preview), reply chunks
+/// (preview kept), waiting quote (no preview); neither quote nor reply
+/// degrades to `sessions.preview.empty` (no preview). Busy comes from
+/// `session.status` — a failed read assumes busy like TS
+/// `readSessionBusy` (a partial run is never shown as the full reply).
+/// A shown reply whose parent input fell out of the loaded transcript is
+/// reloaded once by ID. Every failure stays inside `tracing`; the attach
+/// itself never fails by construction.
+async fn send_attach_transcript(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    session_id: &str,
+    directory: &str,
+    locale: &str,
+) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let busy = match client.session_status(directory).await {
+        Ok(status) => attach_session_is_busy(&status, session_id),
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: attach status read failed: {err}");
+            true
+        }
+    };
+    let raw = match client.session_messages(session_id, directory).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: attach transcript list failed: {err}");
+            send_bot_composed_text(bot, chat_id, &build_attach_empty_text(locale)).await;
+            return;
+        }
+    };
+    let mut messages: Vec<otb_core::session_pick_catalog_gates::SessionPickMessage> = raw
+        .iter()
+        .filter_map(session_pick_message_from_value)
+        .collect();
+    if let Some(parent_id) = missing_attach_parent_id(&messages, busy) {
+        match client
+            .session_message(session_id, &parent_id, directory)
+            .await
+        {
+            Ok(value) => {
+                if let Some(message) = session_pick_message_from_value(&value) {
+                    messages.push(message);
+                }
+            }
+            Err(err) => {
+                tracing::warn!("[otb-bot] telegram: attach parent reload failed: {err}");
+            }
+        }
+    }
+    let transcript = build_attach_transcript(&messages, busy, locale);
+    if should_send_attach_empty(&transcript) {
+        send_bot_composed_text(bot, chat_id, &build_attach_empty_text(locale)).await;
+        return;
+    }
+    if let Some(quote) = transcript.quote.as_deref() {
+        send_bot_composed_text(bot, chat_id, quote).await;
+    }
+    for chunk in &transcript.reply_chunks {
+        send_agent_text(bot, chat_id, chunk).await;
+    }
+    if should_show_attach_waiting(&transcript) {
+        if let Some(waiting) = transcript.waiting.as_deref() {
+            send_bot_composed_text(bot, chat_id, waiting).await;
+        }
+    }
+    tracing::info!("[otb-bot] telegram: attach transcript sent");
+}
+
+/// Send a card with an inline keyboard and no link preview (bot-composed
+/// prompt parity with TS `withBotLinkPreviewDefault` in
+/// `src/bot/index.ts`: only agent text keeps the preview). Text is capped
+/// at [`TELEGRAM_TEXT_LIMIT`] via [`build_send_payload`].
+async fn send_card_with_keyboard(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    text: &str,
+    keyboard: InlineKeyboardMarkup,
+) -> Result<(), teloxide_core::RequestError> {
+    let (chat, body) = build_send_payload(chat_id, text);
+    bot.send_message(chat, body)
+        .reply_markup(keyboard)
+        .link_preview_options(LinkPreviewOptions {
+            is_disabled: true,
+            url: None,
+            prefer_small_media: false,
+            prefer_large_media: false,
+            show_above_text: false,
+        })
+        .await?;
+    Ok(())
+}
+
+/// Send one poll card for a prepped question ask (live path only; never
+/// called from tests). Failures stay inside `tracing`: the slot hold is
+/// the prompt and a retry tap still lands.
+async fn send_poll_card(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    card: &crate::attach::PollCardData,
+    locale: &str,
+) {
+    let text = build_poll_card_text(card, locale);
+    let keyboard = build_poll_card_keyboard(locale);
+    if let Err(err) = send_card_with_keyboard(bot, chat_id, &text, keyboard).await {
+        tracing::warn!("[otb-bot] telegram: poll card send failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Send one permission card for a prepped permission ask (live path only;
+/// never called from tests). Failures stay inside `tracing`: the slot
+/// hold is the prompt and a retry tap still lands.
+async fn send_permission_card(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    card: &crate::attach::PermissionCardData,
+    locale: &str,
+) {
+    let text = build_permission_card_text(card, locale);
+    let keyboard = build_permission_card_keyboard(locale);
+    if let Err(err) = send_card_with_keyboard(bot, chat_id, &text, keyboard).await {
+        tracing::warn!("[otb-bot] telegram: permission card send failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Install the telegram-ux poll/permission card hooks behind the pump's
+/// [`crate::attach::set_poll_card_hook`] /
+/// [`crate::attach::set_permission_card_hook`] wiring (live path only).
+///
+/// Each hook clones the bot plus the target chat and locale, then spawns
+/// the send: the pump hook is sync while sending is async. A zero
+/// `chat_id` (the deny-all sentinel, no DM target) installs nothing.
+///
+/// ASSUMPTION: single-user bot, so the card target is the allowed user's
+/// DM (`chat_id == allowed user id`). The TS destination policy
+/// (`policy.getDestination`) has no scaffold equivalent; a dispatcher
+/// with per-session chat routing replaces this.
+pub fn install_card_hooks(bot: &teloxide_core::Bot, chat_id: i64, locale: &str) {
+    if chat_id == 0 {
+        tracing::debug!("[otb-bot] telegram: card hooks not installed (no chat target)");
+        return;
+    }
+    let poll_bot = bot.clone();
+    let poll_locale = locale.to_string();
+    crate::attach::set_poll_card_hook(Some(Box::new(move |card| {
+        let bot = poll_bot.clone();
+        let locale = poll_locale.clone();
+        tokio::spawn(async move {
+            send_poll_card(&bot, chat_id, &card, &locale).await;
+        });
+    })));
+    let perm_bot = bot.clone();
+    let perm_locale = locale.to_string();
+    crate::attach::set_permission_card_hook(Some(Box::new(move |card| {
+        let bot = perm_bot.clone();
+        let locale = perm_locale.clone();
+        tokio::spawn(async move {
+            send_permission_card(&bot, chat_id, &card, &locale).await;
+        });
+    })));
+    tracing::info!("[otb-bot] telegram: poll/permission card hooks installed");
+}
+
+/// Current wall-clock time in ms since the Unix epoch for footer `elapsed`
+/// math (fail-open `0` when the clock reads before the epoch).
+fn live_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+/// Install the telegram-ux idle-footer sender behind the pump's
+/// [`crate::attach::set_session_idle_footer_hook`] wiring (live path only).
+///
+/// Each hook fire spawns the send: the pump hook is sync while sending is
+/// async. A zero `chat_id` (the deny-all sentinel, no DM target) installs
+/// nothing. Completed-run hydration (agent/model/steps plus the suppressed
+/// and interrupted-without-response flags) stays a dispatcher follow-up, so
+/// `completed` is `None` and every idle stays footerless until that lands;
+/// the live call chain (idle signal -> idle gate -> run-close tail ->
+/// [`send_footer_line`]) is what this wires. `show_footer` mirrors the TS
+/// `getShowAssistantRunFooter` setting read at install time.
+pub fn install_session_idle_footer_hook(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    locale: &str,
+    show_footer: bool,
+) {
+    if chat_id == 0 {
+        tracing::debug!("[otb-bot] telegram: idle footer hook not installed (no chat target)");
+        return;
+    }
+    let footer_bot = bot.clone();
+    let footer_locale = locale.to_string();
+    crate::attach::set_session_idle_footer_hook(Some(Box::new(move |signal| {
+        let bot = footer_bot.clone();
+        let locale = footer_locale.clone();
+        tokio::spawn(async move {
+            send_session_idle_footer(
+                &bot,
+                chat_id,
+                show_footer,
+                None,
+                live_now_ms(),
+                &locale,
+                signal.shutdown_idle,
+                false,
+                false,
+            )
+            .await;
+        });
+    })));
+    tracing::info!("[otb-bot] telegram: session-idle footer hook installed");
+}
+
+/// Streaming footers / pinned dashboard / compact progress (telegram-ux
+/// slice 0.71: pure render plus the live `session.idle` footer hook; the
+/// dispatcher still owns the completed-run snapshot).
+///
+/// TS parity:
+/// - `src/app/formatters/assistant-run-footer-formatter.ts`
+///   (`assistantRunTokensPerSecond`, `formatAssistantRunFooter`; PRODUCT.md
+///   #82 — every answered turn ends with its own footer, none on abort /
+///   error / reject / cancel / restart / stop)
+/// - `src/bot/pinned/pinned-message-manager.ts` (`formatMessage`: title,
+///   goal, project, worktree, model, context, cost, files; PRODUCT.md
+///   #102-106 — live dashboard, empty diff removes the list, failed
+///   refresh keeps the last one by not calling the renderer)
+/// - `src/bot/streaming/compact-progress-streamer.ts` + `formatCompactSummary`
+///   (PRODUCT.md #88 — one `⏳ Working` line per stretch, `✅ ...` count
+///   line when it closes, removed when there is nothing to count)
+/// - `src/bot/streaming/stream-throttle.ts`
+///   (`resolveProgressiveThrottleMs`; PRODUCT.md #96 — 1s edits the first
+///   minute, then 2s / 5s / 10s; the interval resets when the run stops)
+///
+/// Preview policy (PRODUCT.md result-delivery rule): every send here goes
+/// through [`send_bot_composed_text`] (no link preview on first send);
+/// dispatcher edits of the same messages must reuse
+/// [`bot_composed_preview_options`] (no preview on edit either). Agent
+/// replies keep the preview via `send_agent_text` and are untouched.
+/// Link-preview options shared by bot-composed streaming surfaces
+/// (footer, pinned dashboard, compact progress): disabled, URLs stay
+/// clickable. Edits (dispatcher follow-up) must pass the same value.
+pub fn bot_composed_preview_options() -> LinkPreviewOptions {
+    LinkPreviewOptions {
+        is_disabled: true,
+        url: None,
+        prefer_small_media: false,
+        prefer_large_media: false,
+        show_above_text: false,
+    }
+}
+
+/// Substitute one `{name}` placeholder in an i18n template (pure).
+fn fill_stream_template(template: &str, name: &str, value: &str) -> String {
+    template.replace(&format!("{{{name}}}"), value)
+}
+
+/// Whether an answered turn gets its footer line (PRODUCT.md #82).
+/// Aborted / errored turns (`completed_ok == false`), rejected
+/// permissions, cancelled polls, restarts and stops get none; a disabled
+/// footer setting suppresses the rest.
+pub fn should_append_assistant_footer(show_footer: bool, completed_ok: bool) -> bool {
+    show_footer && completed_ok
+}
+
+/// Build the assistant-run footer line for one answered turn
+/// (`agent · 🧠 provider/model · 🕒 elapsed [· ⚡ x.x tok/s]
+/// [· ⏹ interrupted]`). `steps` feeds OpenCode's speed formula (each step
+/// weighted by its own stream span; `None` until every step streamed).
+/// Pure; the caller decides delivery via [`should_append_assistant_footer`].
+pub fn build_assistant_footer(
+    agent: &str,
+    provider_id: &str,
+    model_id: &str,
+    elapsed_ms: i64,
+    steps: &[otb_core::duration_footer_display_gates::AssistantRunStep],
+    interrupted: bool,
+    locale: &str,
+) -> String {
+    let agent_display = otb_core::types_config::get_agent_display_name(agent);
+    let speed = otb_core::duration_footer_display_gates::assistant_run_tokens_per_second(steps);
+    let interrupted_label = crate::locale::translate(locale, "assistant.footer.interrupted");
+    otb_core::duration_footer_display_gates::format_assistant_run_footer(
+        &agent_display,
+        provider_id,
+        model_id,
+        elapsed_ms,
+        speed,
+        interrupted,
+        &interrupted_label,
+    )
+}
+
+/// Completed-run snapshot for one closing foreground run (TS
+/// `AssistantRunInfo` footer subset in
+/// `src/bot/events/handlers/run-close.ts:1-11`). The dispatcher owns the
+/// tool flush and the compact-progress finalize; this struct carries only
+/// what the footer needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunCloseCompletedRun {
+    /// TS `hasCompletedResponse`: a reply landed before the close.
+    pub has_completed_response: bool,
+    /// TS `suppressFooter`: a permission reject or a cancelled question
+    /// marked the turn footerless before the close.
+    pub suppress_footer: bool,
+    /// TS `configuredAgent` / `actualAgent` (actual wins when set).
+    pub configured_agent: Option<String>,
+    /// TS `configuredProviderID` / `actualProviderID` (actual wins).
+    pub configured_provider_id: Option<String>,
+    /// TS `configuredModelID` / `actualModelID` (actual wins).
+    pub configured_model_id: Option<String>,
+    pub actual_agent: Option<String>,
+    pub actual_provider_id: Option<String>,
+    pub actual_model_id: Option<String>,
+    /// TS `startedAt` (ms epoch) for the `🕒 elapsed` part.
+    pub started_at_ms: i64,
+    /// TS `steps` for the `⚡ x.x tok/s` part.
+    pub steps: Vec<otb_core::duration_footer_display_gates::AssistantRunStep>,
+    /// TS `interrupted`: a client stop after the reply completed.
+    pub interrupted: bool,
+}
+
+/// Pick the effective run identity (`actual || configured`, trimmed).
+/// Empty identities read as missing (TS `run-close.ts:39-44` early return).
+fn run_close_identity(run: &RunCloseCompletedRun) -> Option<(String, String, String)> {
+    let pick = |actual: &Option<String>, configured: &Option<String>| {
+        actual
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                configured
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+            .map(str::to_string)
+    };
+    let agent = pick(&run.actual_agent, &run.configured_agent)?;
+    let provider = pick(&run.actual_provider_id, &run.configured_provider_id)?;
+    let model = pick(&run.actual_model_id, &run.configured_model_id)?;
+    Some((agent, provider, model))
+}
+
+/// Resolve the run-close footer for one finished turn (pure; testable).
+/// TS `run-close.ts:31-44` parity: no footer when the setting is off, when
+/// no reply completed (abort / error / restart / stop / scheduled error),
+/// when the turn is suppressed (rejected permission / cancelled question),
+/// or when the agent/model identity is incomplete. Otherwise builds via
+/// [`build_assistant_footer`] with `elapsed = now_ms - started_at_ms`.
+/// Scheduled-task success shares this shape with `interrupted == false`;
+/// a scheduled error has no completed run, so it reads as `None`.
+pub fn resolve_run_close_footer(
+    show_footer: bool,
+    completed: Option<&RunCloseCompletedRun>,
+    now_ms: i64,
+    locale: &str,
+) -> Option<String> {
+    let run = completed?;
+    if !should_append_assistant_footer(show_footer, run.has_completed_response) {
+        return None;
+    }
+    if run.suppress_footer {
+        return None;
+    }
+    let (agent, provider, model) = run_close_identity(run)?;
+    let elapsed_ms = now_ms.saturating_sub(run.started_at_ms).max(0);
+    Some(build_assistant_footer(
+        &agent,
+        &provider,
+        &model,
+        elapsed_ms,
+        &run.steps,
+        run.interrupted,
+        locale,
+    ))
+}
+
+/// Resolve the `session.idle` footer (pure; testable). TS
+/// `session-lifecycle-handler.ts:70-91` parity: a server-stop shutdown idle,
+/// a suppressed turn, and an interrupted turn with no completed reply stay
+/// footerless even when a snapshot is passed. The surviving path is the
+/// [`resolve_run_close_footer`] gate above.
+pub fn resolve_session_idle_footer(
+    show_footer: bool,
+    completed: Option<&RunCloseCompletedRun>,
+    now_ms: i64,
+    locale: &str,
+    shutdown_idle: bool,
+    footer_suppressed: bool,
+    interrupted_without_response: bool,
+) -> Option<String> {
+    if shutdown_idle || footer_suppressed || interrupted_without_response {
+        return None;
+    }
+    resolve_run_close_footer(show_footer, completed, now_ms, locale)
+}
+
+/// One changed file on the pinned dashboard (TS `FileChange` subset).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedChangedFile {
+    pub file: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// Pinned dashboard values for one render (TS `formatMessage` inputs).
+/// `tokens_limit` is `None` until the context limit loads; `cost` is
+/// `None` until the first cost arrives; `changed_files` is OpenCode's
+/// session diff (empty removes the list).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinnedDashboardData {
+    pub session_title: String,
+    pub goal_status: Option<String>,
+    pub goal_objective: Option<String>,
+    pub project_path: String,
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
+    pub is_linked_worktree: bool,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub variant: Option<String>,
+    pub tokens_used: u64,
+    pub tokens_limit: Option<u64>,
+    pub cost: Option<f64>,
+    pub changed_files: Vec<PinnedChangedFile>,
+}
+
+/// Whether the dashboard may draw (TS `should_render_dashboard` gate:
+/// enabled AND a session with message state). Pure; the dispatcher owns
+/// the send/pin/edit.
+pub fn pinned_dashboard_visible(
+    dashboard_enabled: bool,
+    has_session: bool,
+    has_message_state: bool,
+) -> bool {
+    otb_core::pinned_models::should_render_dashboard(
+        dashboard_enabled,
+        has_session,
+        has_message_state,
+    )
+}
+
+/// Render the pinned dashboard text (TS `formatMessage` parity).
+/// A blank title falls back to `pinned.default_session_title`; the goal
+/// line appears only when status and objective are both known; the
+/// worktree line appears only for linked worktrees; unknown model/limit
+/// use `pinned.unknown`; cost renders only when known (`$x.xx`); the file
+/// section lists at most 10 items plus a `... and N more` overflow line.
+/// Pure; i18n via `translate` + `{placeholder}` fill.
+pub fn render_pinned_dashboard(data: &PinnedDashboardData, locale: &str) -> String {
+    let t = |key: &str| crate::locale::translate(locale, key);
+    let title = {
+        let trimmed = data.session_title.trim();
+        if trimmed.is_empty() {
+            t("pinned.default_session_title")
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let mut lines = vec![title];
+    let goal_status = data.goal_status.as_deref().map(str::trim).unwrap_or("");
+    let goal_objective = data.goal_objective.as_deref().map(str::trim).unwrap_or("");
+    if !goal_status.is_empty() && !goal_objective.is_empty() {
+        let line = fill_stream_template(&t("pinned.line.goal"), "status", goal_status);
+        lines.push(fill_stream_template(&line, "objective", goal_objective));
+    }
+    let project_display = match data.branch.as_deref().map(str::trim) {
+        Some(branch) if !branch.is_empty() => format!("{}: {branch}", data.project_path),
+        _ => data.project_path.clone(),
+    };
+    lines.push(fill_stream_template(
+        &t("pinned.line.project"),
+        "project",
+        &project_display,
+    ));
+    if data.is_linked_worktree {
+        if let Some(worktree) = data.worktree_path.as_deref().map(str::trim) {
+            if !worktree.is_empty() {
+                lines.push(fill_stream_template(
+                    &t("pinned.line.worktree"),
+                    "worktree",
+                    worktree,
+                ));
+            }
+        }
+    }
+    let model_name = match (
+        data.provider_id.as_deref().map(str::trim),
+        data.model_id.as_deref().map(str::trim),
+    ) {
+        (Some(provider), Some(model)) if !provider.is_empty() && !model.is_empty() => {
+            let base = format!("{provider}/{model}");
+            match data.variant.as_deref().map(str::trim) {
+                Some(variant) if !variant.is_empty() => format!("{base} ({variant})"),
+                _ => base,
+            }
+        }
+        _ => t("pinned.unknown"),
+    };
+    lines.push(fill_stream_template(
+        &t("pinned.line.model"),
+        "model",
+        &model_name,
+    ));
+    let used = otb_core::pinned_models::format_token_count(data.tokens_used);
+    let limit = data
+        .tokens_limit
+        .filter(|limit| *limit > 0)
+        .map(otb_core::pinned_models::format_token_count)
+        .unwrap_or_else(|| t("pinned.unknown"));
+    let percent = otb_core::pinned_models::context_percent(data.tokens_used, data.tokens_limit);
+    let context = fill_stream_template(&t("pinned.line.context"), "used", &used);
+    let context = fill_stream_template(&context, "limit", &limit);
+    lines.push(fill_stream_template(
+        &context,
+        "percent",
+        &percent.to_string(),
+    ));
+    if let Some(cost) = data.cost {
+        lines.push(fill_stream_template(
+            &t("pinned.line.cost"),
+            "cost",
+            &format!("${cost:.2}"),
+        ));
+    }
+    if !data.changed_files.is_empty() {
+        lines.push(String::new());
+        lines.push(fill_stream_template(
+            &t("pinned.files.title"),
+            "count",
+            &data.changed_files.len().to_string(),
+        ));
+        for change in data
+            .changed_files
+            .iter()
+            .take(otb_core::pinned_models::MAX_LISTED_FILES)
+        {
+            let path =
+                otb_core::pinned_models::display_path_for_project(&change.file, &data.project_path);
+            let diff = otb_core::pinned_models::format_file_diff_suffix(
+                change.additions,
+                change.deletions,
+            );
+            let item = fill_stream_template(&t("pinned.files.item"), "path", &path);
+            lines.push(fill_stream_template(&item, "diff", &diff));
+        }
+        if data.changed_files.len() > otb_core::pinned_models::MAX_LISTED_FILES {
+            lines.push(fill_stream_template(
+                &t("pinned.files.more"),
+                "count",
+                &(data.changed_files.len() - otb_core::pinned_models::MAX_LISTED_FILES).to_string(),
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Render the compact `⏳ Working` progress line for the current stretch
+/// (TS `t("progress.compact.activity", { header, activity })` parity).
+/// Pure; blank activities fall back to the thinking line.
+pub fn render_compact_progress(activity: &str, locale: &str) -> String {
+    let activity = {
+        let trimmed = activity.trim();
+        if trimmed.is_empty() {
+            crate::locale::translate(locale, "progress.compact.thinking")
+        } else {
+            trimmed.to_string()
+        }
+    };
+    let template = crate::locale::translate(locale, "progress.compact.activity");
+    let header = crate::locale::translate(locale, "progress.compact.working_header");
+    let filled = fill_stream_template(&template, "header", &header);
+    fill_stream_template(&filled, "activity", &activity)
+}
+
+/// Render the finished compact card's `✅ ...` count line, or `""` when
+/// there is nothing to count (the card is then removed). Non-zero counts
+/// in fixed order via the `progress.compact.count.*` i18n keys. Pure.
+pub fn render_compact_summary(
+    commands: u32,
+    edits: u32,
+    reads: u32,
+    tools: u32,
+    changed_files: usize,
+    locale: &str,
+) -> String {
+    let entries: [(&str, usize); 5] = [
+        ("progress.compact.count.commands", commands as usize),
+        ("progress.compact.count.edits", edits as usize),
+        ("progress.compact.count.reads", reads as usize),
+        ("progress.compact.count.tools", tools as usize),
+        ("progress.compact.count.changed_files", changed_files),
+    ];
+    let line = entries
+        .iter()
+        .filter(|entry| entry.1 > 0)
+        .map(|(key, count)| {
+            fill_stream_template(
+                &crate::locale::translate(locale, key),
+                "count",
+                &count.to_string(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!("✅ {line}")
+    }
+}
+
+/// Next stream-edit interval for a run of `run_elapsed_ms` (PRODUCT.md
+/// #96: 1s the first minute, then 2s / 5s / 10s). Pure wrapper over the
+/// `stream-throttle.ts` progressive tiers.
+pub fn next_stream_interval_ms(run_elapsed_ms: u64) -> u64 {
+    otb_core::streaming::resolve_progressive_throttle_ms(run_elapsed_ms)
+}
+
+/// Whether a stream edit (assistant/tool/thinking/pinned) is due:
+/// the first edit always sends (`last_edit_ms == None`); later edits
+/// wait for the progressive interval. Pure; the caller resets the clock
+/// (elapsed back to zero) when the run stops so the next run restarts
+/// at 1s.
+pub fn should_send_stream_edit(
+    last_edit_ms: Option<u64>,
+    now_ms: u64,
+    run_elapsed_ms: u64,
+) -> bool {
+    match last_edit_ms {
+        None => true,
+        Some(last) => {
+            if now_ms < last {
+                return true;
+            }
+            now_ms.saturating_sub(last) >= next_stream_interval_ms(run_elapsed_ms)
+        }
+    }
+}
+
+/// Send an assistant-run footer line (live path only; never called from
+/// tests). Bot-composed: no link preview. Failures stay in `tracing`.
+pub async fn send_footer_line(bot: &teloxide_core::Bot, chat_id: i64, footer: &str) {
+    if footer.trim().is_empty() {
+        return;
+    }
+    send_bot_composed_text(bot, chat_id, footer).await;
+    tracing::info!("[otb-bot] telegram: assistant footer sent");
+}
+
+/// Live run-close send (TS `run-close.ts:16-61` delivery tail). Resolves
+/// via [`resolve_run_close_footer`] and sends through [`send_footer_line`]
+/// (bot-composed, no link preview). Tool flush / compact finalize stay with
+/// the dispatcher; footerless turns log at debug and send nothing.
+pub async fn send_run_close_footer(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    show_footer: bool,
+    completed: Option<&RunCloseCompletedRun>,
+    now_ms: i64,
+    locale: &str,
+) {
+    let Some(footer) = resolve_run_close_footer(show_footer, completed, now_ms, locale) else {
+        tracing::debug!("[otb-bot] telegram: run-close footer skipped (footerless turn)");
+        return;
+    };
+    send_footer_line(bot, chat_id, &footer).await;
+}
+
+/// Live `session.idle` send (TS `session-lifecycle-handler.ts:108-111`
+/// `closeForegroundRun` call). Gates through [`resolve_session_idle_footer`]
+/// (shutdown / suppressed / interrupted-without-response turns log at debug
+/// and send nothing), then shares the run-close tail
+/// [`send_run_close_footer`] so the single send stays bot-composed with no
+/// link preview. The gate string is discarded and re-resolved by the tail
+/// (one small pure format per idle, same inputs so the same result);
+/// completed-run hydration stays a dispatcher follow-up.
+pub async fn send_session_idle_footer(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    show_footer: bool,
+    completed: Option<&RunCloseCompletedRun>,
+    now_ms: i64,
+    locale: &str,
+    shutdown_idle: bool,
+    footer_suppressed: bool,
+    interrupted_without_response: bool,
+) {
+    if resolve_session_idle_footer(
+        show_footer,
+        completed,
+        now_ms,
+        locale,
+        shutdown_idle,
+        footer_suppressed,
+        interrupted_without_response,
+    )
+    .is_none()
+    {
+        tracing::debug!("[otb-bot] telegram: session-idle footer skipped (footerless turn)");
+        return;
+    }
+    send_run_close_footer(bot, chat_id, show_footer, completed, now_ms, locale).await;
+}
+
+/// Send a pinned-dashboard snapshot (live path only; never called from
+/// tests). Bot-composed: no link preview. The dashboard pin and the
+/// failed-refresh-keeps-last merge stay with the dispatcher; see
+/// [`apply_pinned_patch`] (pure merge) plus [`edit_pinned_dashboard`] and
+/// [`install_pinned_dashboard_hook`] (live transport).
+pub async fn send_pinned_dashboard(bot: &teloxide_core::Bot, chat_id: i64, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    send_bot_composed_text(bot, chat_id, text).await;
+    tracing::info!("[otb-bot] telegram: pinned dashboard sent");
+}
+
+/// Incremental SSE/tool-event patch merged into the held dashboard snapshot
+/// before rendering (pure inputs; the pump builds one per event and the
+/// dispatcher holds the snapshot — telegram-ux owns only this merge).
+///
+/// TS parity (`pinned-message-manager.ts`):
+/// - `onMessageComplete` / `updateTokensSilent`: `tokens_used` replaces
+///   (`input + cacheRead`); `None` keeps the held value.
+/// - `fetchContextLimit` failure: `tokens_limit` `None` keeps the held
+///   limit (PRODUCT.md #104 never shows a placeholder zero); `Some(v)`
+///   replaces (`0` still renders as `pinned.unknown` via
+///   [`render_pinned_dashboard`]).
+/// - `onCostUpdate`: `cost_delta` is additive and ignored when it cannot
+///   change the total (via `should_apply_cost_update`); `cost_total`
+///   replaces absolutely and wins when both are set (fresh load beats
+///   in-flight deltas).
+/// - `onSessionDiff` (`session.diff` event): `changed_files` `Some`
+///   replaces (an empty list removes the section); `None` is a failed
+///   refresh and keeps the last good list (PRODUCT.md #103).
+/// - `onSessionTitleUpdate`: `session_title` applies only when non-empty
+///   and different (via `should_update_title`).
+///
+/// Returns `true` when the snapshot changed (the caller re-renders only
+/// then; unchanged diffs skip the edit like TS `areFileDiffsEqual`).
+#[derive(Debug, Clone, Default)]
+pub struct PinnedDashboardPatch {
+    pub session_title: Option<String>,
+    pub tokens_used: Option<u64>,
+    pub tokens_limit: Option<u64>,
+    pub cost_delta: Option<f64>,
+    pub cost_total: Option<f64>,
+    pub changed_files: Option<Vec<PinnedChangedFile>>,
+}
+
+/// Merge one [`PinnedDashboardPatch`] into the held snapshot (pure;
+/// testable). Failed-refresh-keeps-last throughout: every `None` field
+/// leaves the held value untouched. Additive cost; title gated.
+pub fn apply_pinned_patch(data: &mut PinnedDashboardData, patch: &PinnedDashboardPatch) -> bool {
+    let mut changed = false;
+    if let Some(title) = patch.session_title.as_deref() {
+        if otb_core::pinned_models::should_update_title(&data.session_title, title) {
+            data.session_title = title.to_string();
+            changed = true;
+        }
+    }
+    if let Some(tokens) = patch.tokens_used {
+        if data.tokens_used != tokens {
+            data.tokens_used = tokens;
+            changed = true;
+        }
+    }
+    if let Some(limit) = patch.tokens_limit {
+        if data.tokens_limit != Some(limit) {
+            data.tokens_limit = Some(limit);
+            changed = true;
+        }
+    }
+    if let Some(total) = patch.cost_total {
+        if data.cost != Some(total) {
+            data.cost = Some(total);
+            changed = true;
+        }
+    } else if let Some(delta) = patch.cost_delta {
+        if otb_core::pinned_models::should_apply_cost_update(data.cost.unwrap_or(0.0), delta) {
+            let next = data.cost.unwrap_or(0.0) + delta;
+            if data.cost != Some(next) {
+                data.cost = Some(next);
+                changed = true;
+            }
+        }
+    }
+    if let Some(files) = patch.changed_files.as_ref() {
+        if !otb_core::pinned_models::diffs_equal(
+            &files
+                .iter()
+                .map(|change| otb_core::pinned_models::FileChange {
+                    file: change.file.clone(),
+                    additions: change.additions,
+                    deletions: change.deletions,
+                })
+                .collect::<Vec<_>>(),
+            &data
+                .changed_files
+                .iter()
+                .map(|change| otb_core::pinned_models::FileChange {
+                    file: change.file.clone(),
+                    additions: change.additions,
+                    deletions: change.deletions,
+                })
+                .collect::<Vec<_>>(),
+        ) {
+            data.changed_files = files.clone();
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Resolve the dashboard text for one merged snapshot (pure; testable).
+/// TS `updatePinnedMessage` gate parity: `None` while the dashboard is
+/// disabled or the session has no message state yet (a snapshot arriving
+/// before the session is known never draws); otherwise the
+/// [`render_pinned_dashboard`] text. Blank renders stay `None` so the
+/// caller sends nothing.
+pub fn resolve_pinned_text(
+    data: &PinnedDashboardData,
+    dashboard_enabled: bool,
+    has_message_state: bool,
+    locale: &str,
+) -> Option<String> {
+    if !pinned_dashboard_visible(dashboard_enabled, true, has_message_state) {
+        return None;
+    }
+    let text = render_pinned_dashboard(data, locale);
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(text)
+}
+
+/// Whether a pinned edit is due (pure; testable). TS
+/// `lastRenderedMessageText` parity: an unchanged re-render skips the edit
+/// (Telegram would answer `message is not modified`), as does a blank
+/// render.
+pub fn should_send_pinned_edit(last_text: Option<&str>, next_text: &str) -> bool {
+    if next_text.trim().is_empty() {
+        return false;
+    }
+    last_text != Some(next_text)
+}
+
+/// Outcome of one live pinned-dashboard edit (testable classification over
+/// `pinned_models` Telegram-error gates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedEditOutcome {
+    /// Edit applied (or answered `message is not modified`, which counts as
+    /// delivered per TS `flushPendingPinnedUpdates`).
+    Updated,
+    /// The dashboard was deleted (`message to edit not found`): the caller
+    /// recreates it via [`send_pinned_dashboard`] (TS recreate path).
+    Deleted,
+    /// Any other failure (network, rate limit): ownership stays, no
+    /// recreate (TS logs and keeps the id for retry).
+    Failed,
+}
+
+/// Edit the live pinned dashboard in place (live path only; never called
+/// from tests). Bot-composed: the edit reuses
+/// [`bot_composed_preview_options`] so no preview appears on edit either.
+/// Failures stay in `tracing`; the return tells the caller whether a
+/// recreate (`Deleted`) is due.
+pub async fn edit_pinned_dashboard(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    message_id: MessageId,
+    text: &str,
+) -> PinnedEditOutcome {
+    if text.trim().is_empty() {
+        return PinnedEditOutcome::Updated;
+    }
+    let result = bot
+        .edit_message_text(ChatId(chat_id), message_id, text.to_string())
+        .link_preview_options(bot_composed_preview_options())
+        .await;
+    match result {
+        Ok(_) => {
+            tracing::debug!("[otb-bot] telegram: pinned dashboard edited");
+            PinnedEditOutcome::Updated
+        }
+        Err(err) => {
+            let message = err.to_string();
+            if otb_core::pinned_models::is_not_modified_error(&message) {
+                tracing::debug!("[otb-bot] telegram: pinned edit unchanged (already current)");
+                PinnedEditOutcome::Updated
+            } else if otb_core::pinned_models::is_message_deleted_error(&message) {
+                tracing::warn!("[otb-bot] telegram: pinned message deleted, recreate due");
+                PinnedEditOutcome::Deleted
+            } else {
+                tracing::warn!("[otb-bot] telegram: pinned edit failed: {err}");
+                PinnedEditOutcome::Failed
+            }
+        }
+    }
+}
+
+/// Merged snapshot plus the draw gate for one hook fire (the pump merges
+/// SSE/tool events via [`apply_pinned_patch`], then emits this; the
+/// install below renders and sends/edits).
+#[derive(Debug, Clone)]
+pub struct PinnedDashboardSignal {
+    pub data: PinnedDashboardData,
+    pub has_message_state: bool,
+}
+
+/// Install the telegram-ux pinned-dashboard sender behind the pump's
+/// [`crate::attach::set_pinned_dashboard_hook`] wiring (live path only).
+///
+/// Each hook fire spawns the send: the pump hook is sync while sending is
+/// async. A zero `chat_id` (the deny-all sentinel, no DM target) installs
+/// nothing. The hook holds the dashboard message id plus the last rendered
+/// text and edit clock: the first fire sends ([`send_pinned_dashboard`]
+/// shape, no preview) and remembers the id; later fires skip unchanged
+/// re-renders ([`should_send_pinned_edit`]), wait out the stream-throttle
+/// floor ([`should_send_stream_edit`] at the 1s tier — the pump's debounce
+/// owns the progressive tiers), then edit in place
+/// ([`edit_pinned_dashboard`], no preview); a deleted dashboard falls back
+/// to a fresh send on the next fire. Pin/unpin and snapshot hydration stay
+/// dispatcher follow-ups.
+///
+/// ASSUMPTION: single-user bot, so the target is the allowed user's DM
+/// (`chat_id == allowed user id`), like
+/// [`install_session_idle_footer_hook`].
+pub fn install_pinned_dashboard_hook(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    locale: &str,
+    dashboard_enabled: bool,
+) {
+    if chat_id == 0 {
+        tracing::debug!("[otb-bot] telegram: pinned hook not installed (no chat target)");
+        return;
+    }
+    let hook_bot = bot.clone();
+    let hook_locale = locale.to_string();
+    let message_id = std::sync::Arc::new(std::sync::Mutex::new(None::<MessageId>));
+    let last_text = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let last_edit_ms = std::sync::Arc::new(std::sync::Mutex::new(None::<u64>));
+    crate::attach::set_pinned_dashboard_hook(Some(Box::new(move |signal| {
+        let bot = hook_bot.clone();
+        let locale = hook_locale.clone();
+        let message_id = message_id.clone();
+        let last_text = last_text.clone();
+        let last_edit_ms = last_edit_ms.clone();
+        tokio::spawn(async move {
+            let Some(text) = resolve_pinned_text(
+                &signal.data,
+                dashboard_enabled,
+                signal.has_message_state,
+                &locale,
+            ) else {
+                tracing::debug!("[otb-bot] telegram: pinned update skipped (dashboard gated)");
+                return;
+            };
+            let unchanged = !should_send_pinned_edit(
+                last_text
+                    .lock()
+                    .ok()
+                    .as_ref()
+                    .and_then(|text| text.as_deref()),
+                &text,
+            );
+            if unchanged {
+                tracing::debug!("[otb-bot] telegram: pinned update skipped (content unchanged)");
+                return;
+            }
+            let now_ms = live_now_ms() as u64;
+            let due = last_edit_ms
+                .lock()
+                .ok()
+                .map(|last| should_send_stream_edit(*last, now_ms, 0))
+                .unwrap_or(true);
+            if !due {
+                tracing::debug!("[otb-bot] telegram: pinned edit throttled");
+                return;
+            }
+            let known_id = message_id.lock().ok().and_then(|id| *id);
+            if let Some(known) = known_id {
+                match edit_pinned_dashboard(&bot, chat_id, known, &text).await {
+                    PinnedEditOutcome::Updated => {
+                        if let Ok(mut last) = last_text.lock() {
+                            *last = Some(text);
+                        }
+                        if let Ok(mut last) = last_edit_ms.lock() {
+                            *last = Some(live_now_ms() as u64);
+                        }
+                    }
+                    PinnedEditOutcome::Deleted => {
+                        if let Ok(mut id) = message_id.lock() {
+                            *id = None;
+                        }
+                        tracing::warn!(
+                            "[otb-bot] telegram: pinned dashboard lost, next fire re-sends"
+                        );
+                    }
+                    PinnedEditOutcome::Failed => {}
+                }
+                return;
+            }
+            let (chat, body) = build_send_payload(chat_id, &text);
+            match bot
+                .send_message(chat, body)
+                .link_preview_options(bot_composed_preview_options())
+                .await
+            {
+                Ok(sent) => {
+                    if let Ok(mut id) = message_id.lock() {
+                        *id = Some(sent.id);
+                    }
+                    if let Ok(mut last) = last_text.lock() {
+                        *last = Some(text);
+                    }
+                    if let Ok(mut last) = last_edit_ms.lock() {
+                        *last = Some(live_now_ms() as u64);
+                    }
+                    tracing::info!("[otb-bot] telegram: pinned dashboard sent");
+                }
+                Err(err) => {
+                    tracing::warn!("[otb-bot] telegram: pinned dashboard send failed: {err}");
+                }
+            }
+        });
+    })));
+    tracing::info!("[otb-bot] telegram: pinned dashboard hook installed");
+}
+
+/// Send a compact progress/summary line (live path only; never called
+/// from tests). Bot-composed: no link preview. Card edits/deletes stay
+/// with the dispatcher.
+pub async fn send_compact_line(bot: &teloxide_core::Bot, chat_id: i64, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    send_bot_composed_text(bot, chat_id, text).await;
+    tracing::debug!("[otb-bot] telegram: compact line sent");
+}
+
+/// Whether a compact progress edit should go out (pure; testable).
+/// TS `lastRenderedMessageText` parity (same gate as
+/// [`should_send_pinned_edit`]): a blank render or an unchanged re-render
+/// skips the edit (Telegram would answer `message is not modified`).
+pub fn should_send_compact_edit(last_text: Option<&str>, next_text: &str) -> bool {
+    if next_text.trim().is_empty() {
+        return false;
+    }
+    last_text != Some(next_text)
+}
+
+/// Whether a closing compact card should be deleted instead of edited
+/// (pure; testable). TS `closeState:277-294` parity: the card is removed
+/// when the run asks for it (`deleteOnFinish`, the "Delete progress on
+/// finish" setting) or when the summary is empty (nothing to count);
+/// otherwise the `✅ ...` line edits the card in place.
+pub fn should_delete_compact_card(summary: &str, delete_on_finish: bool) -> bool {
+    delete_on_finish || summary.trim().is_empty()
+}
+
+/// Additive summary render from aggregated counts (pure; testable).
+/// The dispatcher accumulates one [`otb_core::streaming::ToolCallCounts`]
+/// per finished call id (counted once) via
+/// [`otb_core::streaming::add_tool_call_counts`] plus the distinct
+/// changed-file count, then renders here through
+/// [`render_compact_summary`] (fixed order, zero counts left out, `""`
+/// when there is nothing to count). TS
+/// `formatCompactSummary:73-89` parity.
+pub fn render_compact_summary_from_counts(
+    counts: &otb_core::streaming::ToolCallCounts,
+    changed_files: usize,
+    locale: &str,
+) -> String {
+    render_compact_summary(
+        counts.commands,
+        counts.edits,
+        counts.reads,
+        counts.tools,
+        changed_files,
+        locale,
+    )
+}
+
+/// Whether a stretch-start progress update is due (pure; testable).
+/// Wires the compact card onto the shared stream throttle: the content
+/// must change ([`should_send_compact_edit`]) AND the progressive
+/// interval must have elapsed ([`should_send_stream_edit`] over
+/// [`next_stream_interval_ms`], PRODUCT.md #96 — 1s the first minute,
+/// then 2s / 5s / 10s). The caller resets the edit clock when the run
+/// stops so the next stretch restarts at 1s. TS
+/// `compact-progress-streamer.ts:451,458-473` parity (`updateActivityState`
+/// render plus the `ensureTimer` throttle gate).
+pub fn should_send_compact_progress(
+    last_text: Option<&str>,
+    last_edit_ms: Option<u64>,
+    now_ms: u64,
+    run_elapsed_ms: u64,
+    next_text: &str,
+) -> bool {
+    should_send_compact_edit(last_text, next_text)
+        && should_send_stream_edit(last_edit_ms, now_ms, run_elapsed_ms)
+}
+
+/// Outcome of one live compact-card edit/delete (testable classification
+/// over the shared Telegram-error gates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactEditOutcome {
+    /// Edit applied (or answered `message is not modified`, which counts
+    /// as delivered per TS `syncState`).
+    Updated,
+    /// The card was deleted (`message to edit not found`): the caller
+    /// drops the held id; the next stretch sends fresh.
+    Deleted,
+    /// Any other failure (network, rate limit): ownership stays, no
+    /// recreate (TS logs and keeps the id for retry).
+    Failed,
+}
+
+/// Edit the live compact card in place (live path only; never called from
+/// tests). Bot-composed: the edit reuses
+/// [`bot_composed_preview_options`] so no preview appears on edit either.
+/// Blank text never edits (the caller deletes instead via
+/// [`should_delete_compact_card`]). Failures stay in `tracing`; the
+/// return tells the caller whether the held id is stale (`Deleted`).
+pub async fn edit_compact_line(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    message_id: MessageId,
+    text: &str,
+) -> CompactEditOutcome {
+    if text.trim().is_empty() {
+        return CompactEditOutcome::Updated;
+    }
+    let result = bot
+        .edit_message_text(ChatId(chat_id), message_id, text.to_string())
+        .link_preview_options(bot_composed_preview_options())
+        .await;
+    match result {
+        Ok(_) => {
+            tracing::debug!("[otb-bot] telegram: compact card edited");
+            CompactEditOutcome::Updated
+        }
+        Err(err) => {
+            let message = err.to_string();
+            if otb_core::pinned_models::is_not_modified_error(&message) {
+                tracing::debug!("[otb-bot] telegram: compact edit unchanged (already current)");
+                CompactEditOutcome::Updated
+            } else if otb_core::pinned_models::is_message_deleted_error(&message) {
+                tracing::warn!("[otb-bot] telegram: compact card deleted, next stretch re-sends");
+                CompactEditOutcome::Deleted
+            } else {
+                tracing::warn!("[otb-bot] telegram: compact edit failed: {err}");
+                CompactEditOutcome::Failed
+            }
+        }
+    }
+}
+
+/// Delete the live compact card (live path only; never called from
+/// tests). Best-effort: failures stay in `tracing`. Returns `true` when
+/// the card is gone (deleted or already unknown); `false` keeps the held
+/// id for retry (rate limit / network).
+pub async fn delete_compact_line(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    message_id: MessageId,
+) -> bool {
+    match bot.delete_message(ChatId(chat_id), message_id).await {
+        Ok(_) => {
+            tracing::debug!("[otb-bot] telegram: compact card deleted");
+            true
+        }
+        Err(err) => {
+            let message = err.to_string();
+            if otb_core::pinned_models::is_message_deleted_error(&message) {
+                tracing::debug!("[otb-bot] telegram: compact card already gone");
+                true
+            } else {
+                tracing::warn!("[otb-bot] telegram: compact delete failed: {err}");
+                false
+            }
+        }
+    }
+}
+
+/// Live compact finalize: summary-or-remove for one closing stretch
+/// (live path only; never called from tests). Renders nothing here: the
+/// caller passes the [`render_compact_summary`] / [`render_compact_summary_from_counts`]
+/// line (or `""` when there is nothing to count). TS
+/// `closeState:277-302` parity: `(deleteOnFinish || !summary)` deletes the
+/// card, otherwise the summary edits it in place; a never-sent card sends
+/// the summary instead (TS `syncState` send branch) and an empty summary
+/// with no card sends nothing. The single close edit/delete bypasses the
+/// stream throttle (TS finalizes via `syncState` directly); stretch
+/// updates stay throttled via [`should_send_compact_progress`].
+/// Bot-composed throughout: no link preview on send or edit.
+pub async fn finalize_compact_card(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    message_id: Option<MessageId>,
+    summary: &str,
+    delete_on_finish: bool,
+) -> CompactEditOutcome {
+    if should_delete_compact_card(summary, delete_on_finish) {
+        if let Some(known) = message_id {
+            if delete_compact_line(bot, chat_id, known).await {
+                return CompactEditOutcome::Updated;
+            }
+            return CompactEditOutcome::Failed;
+        }
+        tracing::debug!("[otb-bot] telegram: compact finalize skipped (nothing to count)");
+        return CompactEditOutcome::Updated;
+    }
+    match message_id {
+        Some(known) => edit_compact_line(bot, chat_id, known, summary).await,
+        None => {
+            send_compact_line(bot, chat_id, summary).await;
+            CompactEditOutcome::Updated
+        }
+    }
+}
 
 /// File-browser callback prefixes (Node `file-browser-menu.ts` parity).
 /// Values reuse `otb_core::file_browser_menu_gates` so the shapes cannot
@@ -4744,9 +6567,23 @@ fn task_view(locale: &str, args: &str) -> String {
     crate::commands::render_task_ack(args, Some(locale))
 }
 
-/// Live `/opencode_start` reply (safety scaffold): health probe only, the bot
+/// Live `/opencode_start` reply (safety scaffold): container + local-target
+/// gates first (TS `opencode-start-command.ts:88-97` parity), then the
+/// already-running health gate only. The spawn/wait/ready half
+/// (`resolveUnavailableOpencodeServer`, `startLocalOpencodeServer`,
+/// `waitForServerReady`) is impure and stays deferred with a trace; the bot
 /// never spawns the server process. Read-only.
 async fn opencode_start_view(locale: &str) -> String {
+    use otb_core::{local_process_gates, server_command_gates};
+    if crate::health::is_container_runtime() {
+        return crate::locale::translate(locale, "runtime.container.command_unavailable");
+    }
+    let api_url = crate::config::AppConfig::load()
+        .map(|config| config.opencode_api_url)
+        .unwrap_or_else(|_| crate::opencode::base_url_from_env());
+    if local_process_gates::resolve_local_opencode_target(&api_url).is_none() {
+        return crate::locale::translate(locale, "opencode_start.remote_configured");
+    }
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
@@ -4760,26 +6597,50 @@ async fn opencode_start_view(locale: &str) -> String {
             }
         }
     };
-    crate::commands::render_opencode_start_status(probe.ok, probe.version.as_deref(), Some(locale))
+    if server_command_gates::should_report_start_already_running(probe.ok) {
+        return crate::commands::render_opencode_start_status(
+            probe.ok,
+            probe.version.as_deref(),
+            Some(locale),
+        );
+    }
+    tracing::info!(
+        "[otb-bot] telegram: opencode_start spawn deferred (no spawn/wait syscalls in scaffold)"
+    );
+    crate::commands::render_opencode_start_status(false, None, Some(locale))
 }
 
-/// Live `/opencode_stop` reply (safety scaffold): health probe only, the bot
-/// never kills the server process. Read-only.
+/// Live `/opencode_stop` reply (safety scaffold): container + local-target
+/// gates first, then the pid gate directly (TS `opencode-stop-command.ts`
+/// `STOP_REASON` + `!localTarget` + `findServerPid` order parity). Health is
+/// never consulted (PRODUCT #160: the stop kills even when health hangs).
+/// The pid lookup + `killServerProcess` syscalls are impure and stay
+/// deferred with a trace; the bot never kills the server process. Read-only.
 async fn opencode_stop_view(locale: &str) -> String {
-    let client = crate::config::AppConfig::load()
-        .map(|config| config.opencode_client())
-        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    let probe = match client.health().await {
-        Ok(probe) => probe,
-        Err(err) => {
-            tracing::warn!("[otb-bot] telegram: opencode_stop probe failed: {err}");
-            crate::opencode::HealthProbe {
-                ok: false,
-                version: None,
-            }
-        }
-    };
-    crate::commands::render_opencode_stop_status(probe.ok, probe.version.as_deref(), Some(locale))
+    use otb_core::server_command_gates;
+    if crate::health::is_container_runtime() {
+        return crate::locale::translate(locale, "runtime.container.command_unavailable");
+    }
+    let api_url = crate::config::AppConfig::load()
+        .map(|config| config.opencode_api_url)
+        .unwrap_or_else(|_| crate::opencode::base_url_from_env());
+    let has_local_target =
+        otb_core::local_process_gates::resolve_local_opencode_target(&api_url).is_some();
+    if server_command_gates::should_report_stop_remote(has_local_target) {
+        return crate::locale::translate(locale, "opencode_stop.remote_configured");
+    }
+    // `findServerPid` / `killServerProcess` need netstat/ss/lsof + signal
+    // syscalls: deferred to the dispatcher follow-up. The scaffold cannot
+    // prove a pid listens, so the gate reads as not-running (never claim a
+    // stop that did not happen).
+    tracing::info!(
+        "[otb-bot] telegram: opencode_stop pid lookup deferred (findServerPid/kill syscalls follow-up)"
+    );
+    let has_pid = false;
+    debug_assert!(server_command_gates::should_report_stop_not_running(
+        has_pid
+    ));
+    crate::locale::translate(locale, "opencode_stop.not_running")
 }
 
 /// Live `/reload` reply (minimal scaffold): re-read the local
@@ -4871,6 +6732,426 @@ pub fn split_command_args(text: &str) -> Option<(String, String)> {
         .trim()
         .to_string();
     Some((name.to_lowercase(), args))
+}
+
+/// Unknown-command reply (Node `unknown-command.ts` parity:
+/// `t("bot.unknown_command", { command: commandToken })`). Pure; the raw
+/// slash token (`/name[@bot]`, case preserved) fills `{command}` with `en`
+/// fallback via [`crate::locale::translate`].
+pub fn unknown_command_reply(locale: &str, command_token: &str) -> String {
+    crate::locale::translate(locale, "bot.unknown_command").replace("{command}", command_token)
+}
+
+/// Pure route for scaffold plain-text input per
+/// `otb_core::message_router_text_gates` ordering (Node
+/// `message-router.ts` `message:text` chain parity): input exists, no
+/// slash, no blocking interaction snapshot fed in here, and no
+/// goal/task/search/rename/catalog stage handles it, so the tail resolves
+/// to `Merge` — the prompt flow. Live answer routing and the single-slot
+/// occupancy are checked separately in `handle_plain_text_prompt` (a held
+/// question takes the text as its answer before the prompt flow runs).
+pub fn plain_text_prompt_route() -> otb_core::message_router_text_gates::MessageRouterTextRoute {
+    otb_core::message_router_text_gates::select_message_router_text_route(
+        true,  // has_input: `message.text()` is `Some`
+        false, // is_slash: `split_command_args` is `None`
+        false, // question_active: no interaction memory in the scaffold
+        false, // goal_handled
+        false, // task_handled
+        false, // model_search_handled
+        false, // project_handled
+        false, // session_handled
+        false, // rename_handled
+        false, // catalog_handled
+        false, // queued_busy: no busy-session tracking in the scaffold
+    )
+}
+
+/// Whether scaffold plain text dispatches a prompt (Node `prompt.ts`
+/// empty-prompt guard parity via
+/// `otb_core::prompt_request_gates::should_dispatch_prompt`): blank text
+/// with no files/photos/attachments sends nothing.
+pub fn should_dispatch_plain_text(text: &str) -> bool {
+    otb_core::prompt_request_gates::should_dispatch_prompt(text, 0, 0, false)
+}
+
+/// Whether plain text is a bottom-keyboard agent press (pure; testable).
+/// Node `AGENT_MODE_BUTTON_TEXT_PATTERN` parity in `message-router.ts`
+/// (`bot.hears(AGENT_MODE_BUTTON_TEXT_PATTERN)` -> `showAgentSelectionMenu`)
+/// via `otb_core::keyboards::is_agent_mode_button_text`.
+pub fn is_agent_button_press(text: &str) -> bool {
+    otb_core::keyboards::is_agent_mode_button_text(text)
+}
+
+/// Voice/audio `file_id` plus size from a message, if it carries either
+/// (TS `voice-handler.ts:187-190`: `voice?.file_id ?? audio?.file_id`).
+/// The `u32::MAX` teloxide fallback (missing `file_size`) reads as unknown
+/// (`None`), so the TS `if (file.file_size && ...)` pass-through holds.
+/// Blank ids and non-voice/audio kinds yield `None` (silent ignore).
+pub fn voice_audio_intake_from_message(message: &Message) -> Option<(String, Option<u64>)> {
+    let (file_id, file_size) = match &message.kind {
+        MessageKind::Common(common) => match &common.media_kind {
+            MediaKind::Voice(voice) => (
+                voice.voice.file.id.clone(),
+                voice_file_size_opt(voice.voice.file.size),
+            ),
+            MediaKind::Audio(audio) => (
+                audio.audio.file.id.clone(),
+                voice_file_size_opt(audio.audio.file.size),
+            ),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if file_id.trim().is_empty() {
+        return None;
+    }
+    Some((file_id, file_size))
+}
+
+/// Map a teloxide `file_size` to the intake gate input: the `u32::MAX`
+/// missing-size fallback reads as unknown (`None`).
+fn voice_file_size_opt(size: u32) -> Option<u64> {
+    if size == u32::MAX {
+        None
+    } else {
+        Some(u64::from(size))
+    }
+}
+
+/// Stubbed STT transcript (P0-7 wiring step): the live `getFile` download +
+/// STT `transcriptions` POST (with the secret key on the wire) stays a
+/// dispatcher follow-up, so this always reports the deferred detail and the
+/// caller answers `stt.error`. Swapping in the live call keeps the
+/// recognizing/empty/transcript chain below untouched.
+async fn stub_voice_transcript() -> Result<String, String> {
+    tracing::info!("[otb-bot] telegram: voice transcribe deferred (live STT POST follow-up)");
+    Err("transcription deferred".to_string())
+}
+
+/// Live voice/audio intake (TS `voice-handler.ts:187-204` guard order):
+/// single-slot busy first (PRODUCT.md single-slot rule), then the
+/// `decide_voice_intake` verdict (missing id ignores, unconfigured STT
+/// answers `stt.not_configured`, over-cap answers `bot.file_too_large`),
+/// then the `stt.recognizing` status. The transcript tail
+/// ([`handle_voice_transcript`]) is shared with the `processUserPrompt`
+/// prompt flow. No secret is ever logged; only the configured flag, the id
+/// length, and the size travel to logs.
+///
+/// SCAFFOLD DEVIATION: TS edits the `stt.recognizing` status message in
+/// place; the scaffold has no status-message tracking, so recognizing,
+/// deferred-error, and transcript follow-ups arrive as new messages.
+async fn handle_voice_message(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    locale: &str,
+    file_id: &str,
+    file_size: Option<u64>,
+) {
+    if let Some(hint_key) = crate::attach::prompt_blocked_hint() {
+        tracing::info!("[otb-bot] telegram: voice prompt blocked by interaction slot");
+        if let Err(err) =
+            send_message(bot, chat_id, &crate::locale::translate(locale, &hint_key)).await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    let api_url = crate::media::stt_api_url_from_env();
+    let api_key = crate::media::stt_api_key_from_env();
+    let configured = crate::media::is_stt_configured(&api_url, &api_key);
+    tracing::debug!(
+        "[otb-bot] telegram: voice intake (configured={configured} id_len={} size={:?})",
+        file_id.len(),
+        file_size,
+    );
+    let intake = crate::media::decide_voice_intake(Some(file_id), file_size, configured);
+    match intake {
+        crate::media::VoiceIntake::Ignore => {
+            tracing::debug!("[otb-bot] telegram: ignoring voice message with no file id");
+            return;
+        }
+        crate::media::VoiceIntake::Reject { .. } => {
+            if let Some(reply) = crate::media::voice_intake_error_text(locale, intake) {
+                tracing::info!("[otb-bot] telegram: voice intake rejected");
+                if let Err(err) = send_message(bot, chat_id, &reply).await {
+                    tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+                }
+            }
+            return;
+        }
+        crate::media::VoiceIntake::Accept => {}
+    }
+    if let Err(err) =
+        send_message(bot, chat_id, &crate::media::voice_recognizing_text(locale)).await
+    {
+        tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        return;
+    }
+    match stub_voice_transcript().await {
+        Ok(transcript) => handle_voice_transcript(bot, chat_id, locale, &transcript).await,
+        Err(detail) => {
+            tracing::warn!("[otb-bot] telegram: voice transcribe stub reported: {detail}");
+            if let Err(err) = send_message(
+                bot,
+                chat_id,
+                &crate::media::voice_error_text(locale, &detail),
+            )
+            .await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+        }
+    }
+}
+
+/// Voice transcript tail (TS `voice-handler.ts:224-277` parity): blank
+/// transcripts answer `stt.empty_result`, otherwise the `STT_NOTE_PROMPT`
+/// preface folds into the LLM text and the result reuses the plain-text
+/// prompt tail (slot re-check, project gate, `ensure_execute_session`,
+/// `attach_session`, versioned `prompt_session`). A sent prompt gets no
+/// immediate chat reply; the assistant answer arrives over SSE.
+async fn handle_voice_transcript(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    locale: &str,
+    recognized_text: &str,
+) {
+    let transcript = recognized_text.trim();
+    if otb_core::voice_media_intake_gates::transcript_reject_key(transcript).is_some() {
+        tracing::info!("[otb-bot] telegram: voice transcript empty");
+        if let Err(err) =
+            send_message(bot, chat_id, &crate::media::voice_empty_result_text(locale)).await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    let note_prompt = crate::media::stt_note_prompt_from_env();
+    let llm_text = crate::media::build_voice_llm_text(&note_prompt, transcript);
+    if !crate::media::is_voice_prompt_sendable(&llm_text) {
+        tracing::debug!("[otb-bot] telegram: voice transcript not sendable");
+        return;
+    }
+    if let Some(hint_key) = crate::attach::prompt_blocked_hint() {
+        tracing::info!("[otb-bot] telegram: voice transcript blocked by interaction slot");
+        if let Err(err) =
+            send_message(bot, chat_id, &crate::locale::translate(locale, &hint_key)).await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        if let Err(err) = send_message(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "bot.project_not_selected"),
+        )
+        .await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    };
+    let (session_id, _) = match ensure_execute_session(&worktree).await {
+        Ok(session) => session,
+        Err(key) => {
+            if let Err(err) =
+                send_message(bot, chat_id, &crate::locale::translate(locale, key)).await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+            return;
+        }
+    };
+    crate::attach::attach_session(&session_id, &worktree);
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    if let Err(err) = client.prompt_session(&session_id, &llm_text).await {
+        tracing::warn!("[otb-bot] telegram: voice prompt failed: {err}");
+        if let Err(err) = send_message(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "bot.prompt_send_error"),
+        )
+        .await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: voice transcript sent as prompt");
+}
+
+/// Live plain-text prompt (Node `processUserPrompt` session half parity):
+/// reuse the remembered session for the project worktree or create and
+/// remember a fresh one (`ensure_execute_session` parity with
+/// `new-command.ts` `setCurrentSession`), then send the text through the
+/// versioned `prompt_session` write path (V1 `parts[]`, V2
+/// `{"text", "delivery"}` plus conditional `files[]` via `admitPrompt`
+/// parity in `opencode.rs`).
+///
+/// Guard order matches `processUserPrompt`: blank text is ignored, a
+/// bottom-keyboard agent press opens the agents view (`message-router.ts`
+/// `AGENT_MODE_BUTTON_TEXT_PATTERN` -> `showAgentSelectionMenu` parity via
+/// [`agents_view`] + [`build_agents_keyboard`]), a held
+/// question takes the text as its custom answer (`question.reply`,
+/// released on resolve), a held permission (or other) interaction replies
+/// its blocked hint, no project replies `bot.project_not_selected`, a
+/// failed ensure replies its key, a failed send replies
+/// `bot.prompt_send_error`. A sent prompt gets no immediate chat reply —
+/// the assistant answer still arrives over the SSE event subscription when
+/// it lands.
+///
+/// SCAFFOLD FOLLOW-UPS (dispatcher): goal/task/search/rename/catalog text
+/// stages per `message_router_text_gates` ordering; main-keyboard refresh
+/// on a newly created session (`new-command.ts` parity, like `new_reply`
+/// still skips).
+async fn handle_plain_text_prompt(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    locale: &str,
+    text: &str,
+) {
+    // Ordering gate first so the dispatch mapping cannot drift silently.
+    let route = plain_text_prompt_route();
+    tracing::debug!("[otb-bot] telegram: plain-text route={route:?}");
+    // Bottom-keyboard agent entry (TS `message-router.ts` agent hears
+    // parity): the button label itself is never a prompt. A held slot keeps
+    // blocking the menu (`blockMenuWhileInteractionActive` parity), so the
+    // press answers the blocked hint instead of opening the view.
+    if is_agent_button_press(text) {
+        tracing::debug!("[otb-bot] telegram: agent button pressed");
+        if let Some(hint_key) = crate::attach::prompt_blocked_hint() {
+            tracing::info!("[otb-bot] telegram: agent menu blocked by interaction slot");
+            if let Err(err) =
+                send_message(bot, chat_id, &crate::locale::translate(locale, &hint_key)).await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+            return;
+        }
+        let (view_text, keyboard) = agents_view(locale).await;
+        tracing::info!("[otb-bot] telegram: agent menu shown");
+        reply_list_view(bot, chat_id, &view_text, keyboard).await;
+        return;
+    }
+    if !should_dispatch_plain_text(text) {
+        return;
+    }
+    // Single-slot guard (TS `message-router.ts` + `prompt.ts` busy check /
+    // PRODUCT.md single-slot rule): a held interaction blocks the prompt
+    // before attach/send, so no double prompt lands while one is on screen.
+    // The hint copy stays with telegram-ux / i18n (this is only the hook).
+    // A held question instead takes the text as its custom answer (TS
+    // `handleQuestionTextAnswer` parity, minus the custom-input affordance:
+    // with no poll cards rendered, the hold itself is the prompt).
+    if let Some(pending) = crate::attach::held_question() {
+        tracing::info!("[otb-bot] telegram: plain-text answer routed to held question");
+        let client = crate::config::AppConfig::load()
+            .map(|config| config.opencode_client())
+            .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+        let answers = vec![vec![text.to_string()]];
+        let bot_owned = bot.clone();
+        let locale_owned = locale.to_string();
+        // `submitPollAnswers` parity: no immediate chat reply — the slot
+        // frees once OpenCode takes the answer.
+        tokio::spawn(async move {
+            match client
+                .reply_question(
+                    &pending.session_id,
+                    &pending.request_id,
+                    &pending.directory,
+                    &answers,
+                )
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("[otb-bot] telegram: question answered");
+                    crate::attach::release_interaction_slot();
+                }
+                Err(err) if crate::opencode::is_not_found_error(&err) => {
+                    tracing::info!("[otb-bot] telegram: question already settled");
+                    crate::attach::release_interaction_slot();
+                }
+                Err(err) => {
+                    tracing::warn!("[otb-bot] telegram: question answer failed: {err}");
+                    // Keep the hold so a retry still lands (TS
+                    // delivery-warning parity), and say so.
+                    if let Err(err) = send_message(
+                        &bot_owned,
+                        chat_id,
+                        &crate::locale::translate(&locale_owned, "permission.delivery_failed"),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[otb-bot] telegram: reply failed for chat {chat_id}: {err}"
+                        );
+                    }
+                }
+            }
+        });
+        return;
+    }
+    if let Some(hint_key) = crate::attach::prompt_blocked_hint() {
+        tracing::info!("[otb-bot] telegram: plain-text prompt blocked by interaction slot");
+        if let Err(err) =
+            send_message(bot, chat_id, &crate::locale::translate(locale, &hint_key)).await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        if let Err(err) = send_message(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "bot.project_not_selected"),
+        )
+        .await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    };
+    let (session_id, _) = match ensure_execute_session(&worktree).await {
+        Ok(session) => session,
+        Err(key) => {
+            if let Err(err) =
+                send_message(bot, chat_id, &crate::locale::translate(locale, key)).await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+            return;
+        }
+    };
+    // Live path (TS `processUserPrompt` attach-before-send order):
+    // follow the session and make sure its event stream pumps, so the
+    // assistant answer arrives over SSE. Non-fatal by construction.
+    crate::attach::attach_session(&session_id, &worktree);
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    if let Err(err) = client.prompt_session(&session_id, text).await {
+        tracing::warn!("[otb-bot] telegram: plain-text prompt failed: {err}");
+        if let Err(err) = send_message(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "bot.prompt_send_error"),
+        )
+        .await
+        {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: plain-text prompt sent");
 }
 
 /// `start` wiring: only constructs the bot when `OTB_ENABLE_POLLING=1`;
@@ -5069,6 +7350,9 @@ async fn handle_catalog_execute(
             return;
         }
     };
+    // Live path, like the plain-text prompt: follow the session so its event
+    // stream pumps while the command runs. Non-fatal by construction.
+    crate::attach::attach_session(&session_id, &worktree);
     let executing =
         crate::commands::render_executing_notice(&format!("{prefix}.executing_prefix"), &name, "");
     reply_list_view(bot, chat_id, &executing, None).await;
@@ -5264,6 +7548,129 @@ async fn handle_mcp_toggle(bot: &teloxide_core::Bot, locale: &str, query: &Callb
     }
 }
 
+/// Best-effort `applyAgentConfiguredSettings` parity (TS
+/// `agent-selection-service.ts:159-212`): when the tapped agent names a
+/// model and/or variant, persist the offered ones and leave the rest as is.
+/// A configured model OpenCode no longer offers falls back to the configured
+/// `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID` env default when offered,
+/// else the selection stays. Failures only log (never values); the agent
+/// confirm stands either way.
+async fn apply_agent_configured_selection(
+    client: &crate::opencode::OpencodeClient,
+    raw_agents: &[serde_json::Value],
+    app_home: &std::path::Path,
+    name: &str,
+) {
+    use otb_core::project_model_persist_gates as persist;
+    let Some(raw) = raw_agents.iter().find(|value| {
+        value
+            .get("name")
+            .and_then(|item| item.as_str())
+            .is_some_and(|item| item == name)
+    }) else {
+        return;
+    };
+    let (provider, model, variant) = crate::commands::agent_configured_selection(raw);
+    let has_model = provider.is_some() && model.is_some();
+    if !has_model {
+        if let Some(variant) = variant.as_deref().filter(|item| !item.is_empty()) {
+            if persist::should_apply_agent_variant_only(false, true) {
+                let current = crate::settings_current::read_settings_current(app_home);
+                if let (Some(provider), Some(model)) = (
+                    current.model_provider.as_deref(),
+                    current.model_id.as_deref(),
+                ) {
+                    if let Err(err) = crate::settings_current::write_current_model(
+                        app_home,
+                        provider,
+                        model,
+                        Some(variant),
+                    ) {
+                        tracing::warn!("[otb-bot] telegram: cannot remember agent variant: {err}");
+                    } else {
+                        tracing::info!("[otb-bot] telegram: agent variant applied");
+                    }
+                }
+            }
+        }
+        return;
+    }
+    let (provider, model) = (provider.unwrap_or_default(), model.unwrap_or_default());
+    let catalog = match client.list_providers().await {
+        Ok(catalog) => catalog,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return;
+        }
+    };
+    let offered = crate::commands::model_list_for_provider(&catalog, &provider)
+        .iter()
+        .any(|item| item.model_id == model);
+    let adopted = if offered {
+        Some((provider.clone(), model.clone()))
+    } else {
+        let env_provider = std::env::var(MODEL_PROVIDER_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let env_model = std::env::var(MODEL_ID_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        match (env_provider, env_model) {
+            (Some(env_provider), Some(env_model))
+                if !(env_provider == provider && env_model == model)
+                    && crate::commands::model_list_for_provider(&catalog, &env_provider)
+                        .iter()
+                        .any(|item| item.model_id == env_model) =>
+            {
+                Some((env_provider, env_model))
+            }
+            _ => None,
+        }
+    };
+    let Some((adopted_provider, adopted_model)) = adopted else {
+        tracing::warn!("[otb-bot] telegram: agent model not offered; selection unchanged");
+        return;
+    };
+    let is_agent_model = adopted_provider == provider && adopted_model == model;
+    let current = crate::settings_current::read_settings_current(app_home);
+    let stored_variant = persist::resolve_agent_applied_variant(
+        is_agent_model,
+        variant.as_deref(),
+        current.model_variant.as_deref(),
+    );
+    // A non-offered variant must not be stored (TS `validateVariantForModel`):
+    // keep the stored/default variant instead.
+    let variants =
+        crate::commands::variant_list_for_model(&catalog, &adopted_provider, &adopted_model);
+    let usable = otb_core::agent_model_variant_gates::is_variant_usable(
+        &variants
+            .iter()
+            .map(|id| otb_core::agent_model_variant_gates::VariantEntry {
+                id: id.clone(),
+                disabled: false,
+            })
+            .collect::<Vec<_>>(),
+        &stored_variant,
+    );
+    let final_variant = if usable || stored_variant == "default" {
+        stored_variant
+    } else {
+        "default".to_string()
+    };
+    if let Err(err) = crate::settings_current::write_current_model(
+        app_home,
+        &adopted_provider,
+        &adopted_model,
+        Some(&final_variant),
+    ) {
+        tracing::warn!("[otb-bot] telegram: cannot remember agent model: {err}");
+    } else {
+        tracing::info!("[otb-bot] telegram: agent model applied");
+    }
+}
+
 /// Handle an `agent:<name>` tap (JS `agent-selection-callback-handler.ts`
 /// parity): persist the tapped agent (`setCurrentAgent` parity) and confirm
 /// with `agent.changed_message`. Unknown names and write failures answer
@@ -5302,8 +7709,8 @@ async fn handle_agent_callback(
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    let items = match client.list_agents(&worktree).await {
-        Ok(raw) => crate::commands::agent_list_from_values(&raw),
+    let raw_agents = match client.list_agents(&worktree).await {
+        Ok(raw) => raw,
         Err(err) => {
             tracing::warn!("[otb-bot] telegram: agents list failed: {err}");
             answer_callback(bot, query, None, false).await;
@@ -5317,6 +7724,7 @@ async fn handle_agent_callback(
             return;
         }
     };
+    let items = crate::commands::agent_list_from_values(&raw_agents);
     if !items.iter().any(|item| item.name == name) {
         answer_callback(
             bot,
@@ -5345,6 +7753,7 @@ async fn handle_agent_callback(
         return;
     }
     tracing::info!("[otb-bot] telegram: agent selected");
+    apply_agent_configured_selection(&client, &raw_agents, &app_home, name).await;
     answer_callback(bot, query, None, false).await;
     let confirmation = crate::commands::render_agent_changed(name, Some(locale));
     if let Err(err) = send_message(bot, chat_id, &confirmation).await {
@@ -5446,13 +7855,15 @@ async fn handle_variant_callback(
     }
 }
 
-/// Handle a `question:*` tap (minimal JS
-/// `question-callback-handler.ts` parity): auth-gate, prefix guard, then
-/// the spinner is always acked. An unparsable action answers the
-/// `question.processing_error_callback` toast; a parsed tap only acks —
-/// the select/submit/custom/toggle/cancel state machine
-/// (`questionManager`, `interactionManager`, `question.reply` /
-/// `question.reject`) needs a dispatcher and stays a follow-up.
+/// Handle a `question:*` tap (JS `question-callback-handler.ts` parity):
+/// auth-gate, prefix guard, then the live-poll gates. A tap with no held
+/// question answers `question.inactive_callback` (the poll already
+/// resolved); a `cancel` tap answers `common.cancelled` and rejects the
+/// held request in the background (`question.reject`), releasing the slot
+/// once OpenCode takes it or reports it gone. Other taps
+/// (select/submit/custom/toggle) only ack — the option-selection state
+/// machine needs poll rendering (`questionManager` + cards) and stays a
+/// dispatcher follow-up.
 async fn handle_question_callback(
     bot: &teloxide_core::Bot,
     allowed_user_id: u64,
@@ -5485,17 +7896,90 @@ async fn handle_question_callback(
         parsed.question_index,
         parsed.action
     );
-    // Ack the spinner so the tap never hangs; full handling (active-poll
-    // gates, message updates, OpenCode reply) lands with the dispatcher.
-    answer_callback(bot, query, None, false).await;
+    let Some(pending) = crate::attach::held_question() else {
+        // No live poll (TS `!questionManager.isActive()`): the tap is stale.
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "question.inactive_callback",
+            )),
+            true,
+        )
+        .await;
+        return;
+    };
+    if parsed.action != otb_core::question_permission_inline_gates::QuestionCallbackAction::Cancel {
+        // Selection-state taps need the poll cards; ack the spinner only.
+        answer_callback(bot, query, None, false).await;
+        return;
+    }
+    // The dismissal is marked as being sent: a lost toast must not keep it
+    // from going out (TS `question-callback-handler.ts` cancel parity).
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(locale, "common.cancelled")),
+        false,
+    )
+    .await;
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let chat_id = callback_chat_id(query);
+    let locale_owned = locale.to_string();
+    let bot_owned = bot.clone();
+    // `safeBackgroundTask` parity: the update that took the tap never
+    // blocks on the reject round-trip.
+    tokio::spawn(async move {
+        match client
+            .reject_question(&pending.session_id, &pending.request_id, &pending.directory)
+            .await
+        {
+            Ok(_) => {
+                tracing::info!("[otb-bot] telegram: question rejected");
+                crate::attach::release_interaction_slot();
+            }
+            Err(err) if crate::opencode::is_not_found_error(&err) => {
+                // Already settled outside Telegram: take the dismissal as
+                // done and free the slot (TS `gone` finish parity).
+                tracing::info!("[otb-bot] telegram: question already settled");
+                crate::attach::release_interaction_slot();
+            }
+            Err(err) => {
+                tracing::warn!("[otb-bot] telegram: question reject failed: {err}");
+                // The poll stays answerable: keep the hold so a retry can
+                // still dismiss it (TS delivery-warning parity), and say so.
+                if let Some(chat_id) = chat_id {
+                    if let Err(err) = send_message(
+                        &bot_owned,
+                        chat_id,
+                        &crate::locale::translate(&locale_owned, "permission.delivery_failed"),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "[otb-bot] telegram: reply failed for chat {chat_id}: {err}"
+                        );
+                    }
+                }
+            }
+        }
+    });
 }
 
-/// Handle a `permission:*` tap (minimal JS
+/// Handle a `permission:*` tap (JS
 /// `permission-callback-handler.ts` parity): auth-gate, prefix guard, then
-/// the spinner is always acked. An unknown action answers the
-/// `permission.processing_error_callback` toast; a known `once` / `always`
-/// / `reject` tap only acks — the `permissionManager.markSending` +
-/// `permission.reply` round-trip needs a dispatcher and stays a follow-up.
+/// the live-request gates. A tap with no held permission answers
+/// `permission.inactive_callback`; a known `once` / `always` / `reject`
+/// tap answers its `permission.reply.*` toast at once and replies to every
+/// request the held prompt covers in the background (`permission.reply`),
+/// releasing the slot once OpenCode takes them or reports them gone. A
+/// transport failure keeps the hold answerable and sends the
+/// `permission.delivery_failed` notice (TS `failSending` parity: the
+/// accepted-share nuance needs per-request prompt state and stays a
+/// follow-up).
 async fn handle_permission_callback(
     bot: &teloxide_core::Bot,
     allowed_user_id: u64,
@@ -5524,9 +8008,92 @@ async fn handle_permission_callback(
         return;
     };
     tracing::debug!("[otb-bot] telegram: permission callback reply={:?}", reply);
-    // Ack the spinner so the tap never hangs; full handling (request-ID
-    // lookup, markSending, OpenCode reply) lands with the dispatcher.
-    answer_callback(bot, query, None, false).await;
+    let Some(pending) = crate::attach::held_permission() else {
+        // No live request (TS `!permissionManager.isActive()`): stale tap.
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "permission.inactive_callback",
+            )),
+            true,
+        )
+        .await;
+        return;
+    };
+    let wire = match reply {
+        otb_core::question_permission_inline_gates::PermissionReply::Once => "once",
+        otb_core::question_permission_inline_gates::PermissionReply::Always => "always",
+        otb_core::question_permission_inline_gates::PermissionReply::Reject => "reject",
+    };
+    // The answer is marked as being sent: a lost toast must not keep it
+    // from going out (TS `markSending` parity, minus the in-flight swallow
+    // — a double tap replays idempotently and settles as `gone`).
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(
+            locale,
+            &format!("permission.reply.{wire}"),
+        )),
+        false,
+    )
+    .await;
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let chat_id = callback_chat_id(query);
+    let locale_owned = locale.to_string();
+    let bot_owned = bot.clone();
+    // `safeBackgroundTask` parity: the update that took the tap never
+    // blocks on the reply round-trip. On V2 a reject settles every pending
+    // request of the session (TS `settlesSession`); the release below
+    // already drops the whole hold, so no extra pass is needed.
+    tokio::spawn(async move {
+        let mut failed = false;
+        for request_id in &pending.request_ids {
+            match client
+                .reply_permission(
+                    &pending.session_id,
+                    request_id,
+                    &pending.directory,
+                    wire,
+                    None,
+                )
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("[otb-bot] telegram: permission reply sent");
+                }
+                Err(err) if crate::opencode::is_not_found_error(&err) => {
+                    tracing::info!("[otb-bot] telegram: permission already settled");
+                }
+                Err(err) => {
+                    tracing::warn!("[otb-bot] telegram: permission reply failed: {err}");
+                    failed = true;
+                }
+            }
+        }
+        if failed {
+            // At least one answer did not reach OpenCode: keep the hold so
+            // a retry still lands (TS `showPermissionDeliveryWarning`
+            // parity), and say so.
+            if let Some(chat_id) = chat_id {
+                if let Err(err) = send_message(
+                    &bot_owned,
+                    chat_id,
+                    &crate::locale::translate(&locale_owned, "permission.delivery_failed"),
+                )
+                .await
+                {
+                    tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+                }
+            }
+            return;
+        }
+        crate::attach::release_interaction_slot();
+    });
 }
 
 /// Handle a `model:*` tap (JS `model-selection-callback-handler.ts` parity):
@@ -6348,8 +8915,14 @@ async fn handle_rename_cancel_callback(
 /// `common.cancelled` and delete the menu message; `rename:cancel` toasts
 /// `common.cancelled` and confirms with `rename.cancelled` (waiting /
 /// interaction / message gates stay a follow-up); other callback
-/// data and non-message updates are ignored. Non-command text and
-/// unauthorized users are ignored.
+/// data and non-message updates are ignored. Unauthorized users are
+/// ignored. Voice/audio notes enter the STT intake (configured gate,
+/// `stt.recognizing` status, stubbed transcribe with the live POST
+/// deferred, transcript tail shared with the prompt flow). Non-command
+/// text prompts the project session unless the single
+/// interaction slot is held (then it gets the slot's busy hint and no
+/// prompt is sent); attach + event subscription go live with the prompt;
+/// keyboard refresh stays a dispatcher follow-up).
 /// Unknown `/commands` get a minimal English notice. `/status`
 /// renders the live JS-parity template from a fresh health probe plus the
 /// `settings.json` `current*` view (agent/project/session fall back to
@@ -6378,8 +8951,10 @@ async fn handle_rename_cancel_callback(
 /// gate (the interactive objective flow stays a follow-up); `/help` and
 /// `/settings` render their JS-parity texts with no I/O; `/tasklist`
 /// renders the sorted `scheduledTasks` store from `settings.json`
-/// (missing/invalid reads empty); every other command keeps its scaffold
-/// ack.
+/// (missing/invalid reads empty); non-command text reuses the remembered
+/// project session (or creates and remembers one, so a `/new` session is
+/// prompted next) and sends it via `prompt_session`; every other command
+/// keeps its scaffold ack.
 async fn handle_update(
     bot: &teloxide_core::Bot,
     allowed_user_id: u64,
@@ -6463,18 +9038,33 @@ async fn handle_update(
         UpdateKind::Message(message) => message,
         _ => return,
     };
-    let Some(text) = message.text() else {
-        return;
-    };
-    let Some((command, args)) = split_command_args(text) else {
-        return;
-    };
     let user_id = message.from.as_ref().map(|user| user.id.0);
     if !is_authorized(user_id, allowed_user_id) {
         tracing::debug!("[otb-bot] telegram: ignoring update from unauthorized user");
         return;
     }
     let chat_id = message.chat.id.0;
+    // Voice/audio notes enter the STT intake before the text guard (TS
+    // `message-router.ts` voice/audio branch parity): configured gate,
+    // `stt.recognizing` status, stubbed transcribe (live POST deferred),
+    // then the shared transcript-to-prompt tail. Single-slot rule holds.
+    if let Some((file_id, file_size)) = voice_audio_intake_from_message(message) {
+        handle_voice_message(bot, chat_id, locale, &file_id, file_size).await;
+        return;
+    }
+    let Some(text) = message.text() else {
+        return;
+    };
+    let Some((command, args)) = split_command_args(text) else {
+        // Non-command text is a prompt, never an early return (Node
+        // `message-router.ts` parity: the slash guard skips commands, the
+        // rest falls through the question/goal/task/search/rename/catalog
+        // stages to the queue/merge tail). The single-slot busy guard lives
+        // inside `handle_plain_text_prompt`, so every dispatchable text
+        // reaches the prompt flow here.
+        handle_plain_text_prompt(bot, chat_id, locale, text).await;
+        return;
+    };
     if command == "sessions" {
         // A trailing query filters in memory (stateless search follow-up:
         // the search-button prompt asks for the query, which returns as
@@ -6570,6 +9160,7 @@ async fn handle_update(
         return;
     }
     if command == "opencode_start" {
+        // P0-8: container + local-target + already-running gates, spawn deferred.
         let reply = opencode_start_view(locale).await;
         if let Err(err) = send_message(bot, chat_id, &reply).await {
             tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
@@ -6577,6 +9168,7 @@ async fn handle_update(
         return;
     }
     if command == "opencode_stop" {
+        // P0-8: container + local-target + pid gates, health never consulted.
         let reply = opencode_stop_view(locale).await;
         if let Err(err) = send_message(bot, chat_id, &reply).await {
             tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
@@ -6597,6 +9189,17 @@ async fn handle_update(
         }
         return;
     }
+    // Raw slash token for the unknown-command notice (Node
+    // `unknown-command.ts` parity: `text.trim().split(/\s+/)[0]`, case
+    // preserved). `command` above is the bare lowercase name from
+    // `split_command_args` (see also `parse_command_text`, which delegates
+    // to the same split).
+    let raw_token = text
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or(command.as_str());
+    debug_assert_eq!(parse_command_text(text).as_deref(), Some(command.as_str()));
     let reply = if command == "status" {
         status_reply(locale).await
     } else if command == "new" {
@@ -6607,30 +9210,81 @@ async fn handle_update(
         crate::commands::render_settings_view(Some(locale))
     } else if command == "tasklist" {
         tasklist_reply(locale)
+    } else if crate::commands::is_known_command(&command) {
+        crate::commands::dispatch(&command).unwrap_or_else(|| {
+            tracing::debug!("[otb-bot] telegram: unknown slash command received: {raw_token}");
+            unknown_command_reply(locale, raw_token)
+        })
     } else {
-        crate::commands::dispatch(&command)
-            .unwrap_or_else(|| format!("unknown command: {command} (scaffold-wired)"))
+        tracing::debug!("[otb-bot] telegram: unknown slash command received: {raw_token}");
+        unknown_command_reply(locale, raw_token)
     };
     if let Err(err) = send_message(bot, chat_id, &reply).await {
         tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
     }
 }
 
+/// Map a polling `get_updates` failure onto the startup fatal-code gate
+/// (pure; testable). TS `TELEGRAM_FATAL_TOKEN_CODES = {401, 404}`
+/// (`start-bot-app.ts`): teloxide surfaces both shapes as
+/// `ApiError::InvalidToken` (`"Unauthorized"` / `"Not Found"`), reported
+/// here as `401` so
+/// [`otb_core::stores_runtime::is_fatal_token_code`] decides.
+pub fn poll_error_code(err: &teloxide_core::RequestError) -> Option<u16> {
+    match err {
+        teloxide_core::RequestError::Api(teloxide_core::ApiError::InvalidToken) => Some(401),
+        _ => None,
+    }
+}
+
+/// `retry_after` hint carried by a polling failure, in millis (pure;
+/// testable). `RetryAfter(seconds)` mirrors the TS `retry_after` seconds
+/// field honoured by `nextTelegramStartupRetryDelayMs`.
+pub fn poll_retry_after_ms(err: &teloxide_core::RequestError) -> Option<u64> {
+    match err {
+        teloxide_core::RequestError::RetryAfter(secs) => {
+            Some(u64::from(secs.seconds()).saturating_mul(1000))
+        }
+        _ => None,
+    }
+}
+
 /// Long-poll forever with `get_updates` (offset ack + 30s timeout).
 /// Only called when [`polling_enabled`]; never called from tests.
+///
+/// Node parity (`start-bot-app.ts` `callTelegramAtStartup`): transient
+/// failures retry with a growing delay capped at 60s
+/// ([`otb_core::stores_runtime::next_startup_retry_delay_ms`]); a rejected
+/// token (401/404, surfaced as `ApiError::InvalidToken`) logs and exits
+/// the process with code 1 so a supervisor can restart it.
 pub async fn run_polling(bot: teloxide_core::Bot, allowed_user_id: u64, locale: &str) {
     let mut offset: i32 = 0;
+    let mut attempt: u32 = 0;
     loop {
         match bot.get_updates().offset(offset).timeout(30).await {
             Ok(batch) => {
+                attempt = 0;
                 for update in &batch {
                     offset = update.id.0.wrapping_add(1) as i32;
                     handle_update(&bot, allowed_user_id, locale, update).await;
                 }
             }
             Err(err) => {
-                tracing::warn!("[otb-bot] telegram: getUpdates failed: {err}; retrying in 1s");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if otb_core::stores_runtime::is_fatal_token_code(poll_error_code(&err)) {
+                    tracing::error!(
+                        "[otb-bot] telegram: getUpdates rejected the bot token; exiting"
+                    );
+                    std::process::exit(1);
+                }
+                attempt = attempt.saturating_add(1);
+                let delay_ms = otb_core::stores_runtime::next_startup_retry_delay_ms(
+                    attempt,
+                    poll_retry_after_ms(&err),
+                );
+                tracing::warn!(
+                    "[otb-bot] telegram: getUpdates failed (attempt {attempt}): {err}; retrying in {delay_ms}ms"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
         }
     }
@@ -6640,6 +9294,9 @@ pub async fn run_polling(bot: teloxide_core::Bot, allowed_user_id: u64, locale: 
 /// Call only when [`polling_enabled`]; performs network I/O. The token
 /// value is never logged (only its length); `start` awaits this so the
 /// process stays alive instead of exiting 0.
+///
+/// The attach SSE pump shares the process-wide `Send` aggregator (see
+/// `attach.rs`), so plain `tokio::spawn` suffices — no `LocalSet` needed.
 pub async fn run_telegram_from_env() {
     let token = token_from_env();
     let allowed = allowed_user_id_from_env();
@@ -6651,6 +9308,13 @@ pub async fn run_telegram_from_env() {
     tracing::info!(
         "[otb-bot] telegram: polling started (token_len={} allowed_user_id={allowed})",
         token.len()
+    );
+    install_card_hooks(&bot, i64::try_from(allowed).unwrap_or(0), &locale);
+    install_session_idle_footer_hook(
+        &bot,
+        i64::try_from(allowed).unwrap_or(0),
+        &locale,
+        otb_core::types_config::default_show_assistant_run_footer(),
     );
     run_polling(bot, allowed, &locale).await;
 }
@@ -6669,6 +9333,34 @@ mod tests {
         assert!(!polling_enabled_from(
             std::env::var(POLLING_ENV).ok().as_deref()
         ));
+    }
+
+    #[test]
+    fn poll_error_mapping_feeds_startup_fatal_gate() {
+        // Invalid token (TS 401/404) is fatal; everything else retries.
+        let fatal = teloxide_core::RequestError::Api(teloxide_core::ApiError::InvalidToken);
+        assert_eq!(poll_error_code(&fatal), Some(401));
+        assert!(otb_core::stores_runtime::is_fatal_token_code(
+            poll_error_code(&fatal)
+        ));
+        let transient = teloxide_core::RequestError::Api(teloxide_core::ApiError::BotBlocked);
+        assert_eq!(poll_error_code(&transient), None);
+        assert!(!otb_core::stores_runtime::is_fatal_token_code(
+            poll_error_code(&transient)
+        ));
+        // Backoff grows 1s, 2s, 4s … and caps at 60s (TS parity).
+        assert_eq!(
+            otb_core::stores_runtime::next_startup_retry_delay_ms(1, None),
+            1000
+        );
+        assert_eq!(
+            otb_core::stores_runtime::next_startup_retry_delay_ms(2, None),
+            2000
+        );
+        assert_eq!(
+            otb_core::stores_runtime::next_startup_retry_delay_ms(10, None),
+            60_000
+        );
     }
 
     #[test]
@@ -6764,6 +9456,43 @@ mod tests {
         );
         assert_eq!(split_command_args("hello"), None);
         assert_eq!(split_command_args("/"), None);
+    }
+
+    #[test]
+    fn plain_text_routes_to_merge_before_queue() {
+        // Failing-test-first for the dispatch gap: non-command text must
+        // not miss — the `message_router_text_gates` ordering (input, no
+        // slash, no blocking interaction, no stage handled, no busy queue)
+        // resolves to the prompt tail (`Merge`).
+        assert_eq!(
+            plain_text_prompt_route(),
+            otb_core::message_router_text_gates::MessageRouterTextRoute::Merge
+        );
+        assert_eq!(
+            otb_core::message_router_text_gates::select_message_router_text_route(
+                true, false, false, false, false, false, false, false, false, false, false,
+            ),
+            otb_core::message_router_text_gates::MessageRouterTextRoute::Merge
+        );
+    }
+
+    #[test]
+    fn plain_text_dispatch_needs_non_blank_text() {
+        // `prompt.ts` empty-prompt guard parity: blank text sends nothing,
+        // dispatchable text prompts the remembered/new session.
+        assert!(should_dispatch_plain_text("fix the login bug"));
+        assert!(!should_dispatch_plain_text(""));
+        assert!(!should_dispatch_plain_text("   "));
+    }
+
+    #[test]
+    fn agent_button_press_matches_bottom_keyboard_only() {
+        // `message-router.ts` agent hears parity: bottom-keyboard agent
+        // labels open the agents view, typed prompts do not.
+        assert!(is_agent_button_press("🛠️ Build Agent"));
+        assert!(is_agent_button_press("🤖 Sisyphus (Ultraworker) Mode"));
+        assert!(!is_agent_button_press("fix the login bug"));
+        assert!(!is_agent_button_press(""));
     }
 
     #[test]
@@ -7230,6 +9959,41 @@ mod tests {
     }
 
     #[test]
+    fn latest_assistant_text_skips_non_assistant_and_summary() {
+        // `loadLatestAssistantResponse` parity: user roles and summary
+        // entries never win; text parts join; the greatest `created` wins
+        // with `>=` keeping the later entry on ties.
+        let user = serde_json::json!({
+            "info": { "role": "user", "time": { "created": 99 } },
+            "parts": [{ "type": "text", "text": "ignore me" }]
+        });
+        let summary = serde_json::json!({
+            "info": { "role": "assistant", "summary": true, "time": { "created": 100 } },
+            "parts": [{ "type": "text", "text": "compacted" }]
+        });
+        let old = serde_json::json!({
+            "info": { "role": "assistant", "time": { "created": 3 } },
+            "parts": [{ "type": "text", "text": "first " }, { "type": "text", "text": "draft" }]
+        });
+        let tie_a = serde_json::json!({
+            "info": { "role": "assistant", "time": { "created": 7 } },
+            "parts": [{ "type": "text", "text": "tie one" }]
+        });
+        let tie_b = serde_json::json!({
+            "info": { "role": "assistant", "time": { "created": 7 } },
+            "parts": [{ "type": "text", "text": "tie two" }]
+        });
+        let rows = vec![user, summary, old, tie_a, tie_b];
+        assert_eq!(latest_assistant_text(&rows).as_deref(), Some("tie two"));
+        assert_eq!(latest_assistant_text(&[]), None);
+        let blank = vec![serde_json::json!({
+            "info": { "role": "assistant", "time": { "created": 1 } },
+            "parts": [{ "type": "text", "text": "   " }]
+        })];
+        assert_eq!(latest_assistant_text(&blank), None);
+    }
+
+    #[test]
     fn page_callbacks_round_trip_through_parsers() {
         // Every pager button's `callback_data` parses back to its page.
         assert_eq!(parse_session_page_callback("session:page:1"), Some(1));
@@ -7323,6 +10087,239 @@ mod tests {
         );
         assert_eq!(classify_permission_callback("permission:bogus"), None);
         assert_eq!(classify_permission_callback("question:cancel:0"), None);
+    }
+
+    #[test]
+    fn poll_card_text_lists_headers_with_progress() {
+        // `formatQuestionDetailsPart` fallback-text parity: one `❓ n/total
+        // header` line per prepped header, joined with a blank line.
+        let card = crate::attach::PollCardData {
+            request_id: "req_1".to_string(),
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            question_count: 2,
+            headers: vec!["Pick a model".to_string(), "Pick an agent".to_string()],
+        };
+        assert_eq!(
+            build_poll_card_text(&card, "en"),
+            "❓ 1/2 Pick a model\n\n❓ 2/2 Pick an agent"
+        );
+    }
+
+    #[test]
+    fn poll_card_text_falls_back_to_emoji_without_headers() {
+        // The prep can carry zero headers (no `questions`/`fields` in the
+        // envelope): the card still renders instead of going out empty.
+        let card = crate::attach::PollCardData {
+            request_id: "req_1".to_string(),
+            session_id: "ses_1".to_string(),
+            directory: String::new(),
+            question_count: 0,
+            headers: Vec::new(),
+        };
+        assert_eq!(build_poll_card_text(&card, "en"), "❓");
+    }
+
+    #[test]
+    fn poll_card_keyboard_carries_custom_and_cancel() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+        // Localized labels with the exact `question:*` callbacks; option
+        // rows stay a dispatcher follow-up (no option state in the prep).
+        let keyboard = build_poll_card_keyboard("en");
+        let rows = &keyboard.inline_keyboard;
+        assert_eq!(rows.len(), 2);
+        match &rows[0][0].kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "question:custom:0"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        match &rows[1][0].kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "question:cancel:0"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        assert!(!rows[0][0].text.is_empty());
+        assert!(!rows[1][0].text.is_empty());
+    }
+
+    #[test]
+    fn permission_card_text_uses_localized_kind_name() {
+        // `formatPermissionText` header parity: emoji + localized name
+        // through the `permission.header` template.
+        let card = crate::attach::PermissionCardData {
+            request_ids: vec!["perm_1".to_string()],
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            permission: "bash".to_string(),
+            pattern_count: 3,
+        };
+        assert_eq!(
+            build_permission_card_text(&card, "en"),
+            "⚡ Permission request: Bash\n\n"
+        );
+        // Unknown kinds fall back to the raw id (TS `|| request.permission`).
+        let unknown = crate::attach::PermissionCardData {
+            permission: "mystery-tool".to_string(),
+            ..card
+        };
+        assert_eq!(
+            build_permission_card_text(&unknown, "en"),
+            "🔐 Permission request: mystery-tool\n\n"
+        );
+    }
+
+    #[test]
+    fn permission_card_text_groups_multiple_requests() {
+        // One prompt answering several pending requests carries the
+        // `grouped_count` line (TS parity), exactly like the visible prompt.
+        let card = crate::attach::PermissionCardData {
+            request_ids: vec!["perm_1".to_string(), "perm_2".to_string()],
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            permission: "edit".to_string(),
+            pattern_count: 1,
+        };
+        let text = build_permission_card_text(&card, "en");
+        assert!(text.starts_with("✏️ Permission request: Edit\n\n"));
+        assert!(text.contains("2 identical requests"));
+    }
+
+    #[test]
+    fn permission_card_keyboard_carries_localized_replies() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+        // `buildPermissionKeyboard` parity: the three exact callbacks with
+        // localized labels.
+        let keyboard = build_permission_card_keyboard("en");
+        let rows = &keyboard.inline_keyboard;
+        assert_eq!(rows.len(), 3);
+        for (row, expected) in
+            rows.iter()
+                .zip(["permission:once", "permission:always", "permission:reject"])
+        {
+            match &row[0].kind {
+                InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, expected),
+                other => panic!("expected callback data, got {other:?}"),
+            }
+        }
+        assert_eq!(rows[0][0].text, "✅ Allow once");
+        assert_eq!(rows[1][0].text, "🔓 Allow always");
+        assert_eq!(rows[2][0].text, "❌ Reject");
+    }
+
+    #[test]
+    fn card_builders_cover_all_twelve_locales() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+        // Jev coverage gap: card builders were en-tested only. Every
+        // supported locale renders non-empty text plus labeled buttons
+        // (missing keys fall back to `en`, so labels stay non-empty);
+        // callbacks stay locale-independent.
+        assert_eq!(crate::locale::SUPPORTED_LOCALES.len(), 12);
+        for locale in crate::locale::SUPPORTED_LOCALES {
+            let poll = crate::attach::PollCardData {
+                request_id: "req_1".to_string(),
+                session_id: "ses_1".to_string(),
+                directory: "/work".to_string(),
+                question_count: 1,
+                headers: vec!["Pick a model".to_string()],
+            };
+            assert!(
+                !build_poll_card_text(&poll, locale).is_empty(),
+                "poll text empty for {locale}"
+            );
+            let poll_keyboard = build_poll_card_keyboard(locale);
+            assert_eq!(poll_keyboard.inline_keyboard.len(), 2);
+            for (row, expected) in poll_keyboard
+                .inline_keyboard
+                .iter()
+                .zip(["question:custom:0", "question:cancel:0"])
+            {
+                match &row[0].kind {
+                    InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, expected),
+                    other => panic!("expected callback data, got {other:?}"),
+                }
+                assert!(
+                    !row[0].text.is_empty(),
+                    "poll button unlabeled for {locale}"
+                );
+            }
+            let perm = crate::attach::PermissionCardData {
+                request_ids: vec!["perm_1".to_string()],
+                session_id: "ses_1".to_string(),
+                directory: "/work".to_string(),
+                permission: "bash".to_string(),
+                pattern_count: 1,
+            };
+            let perm_text = build_permission_card_text(&perm, locale);
+            assert!(!perm_text.is_empty(), "permission text empty for {locale}");
+            assert!(
+                !perm_text.contains("{emoji}") && !perm_text.contains("{name}"),
+                "unreplaced template in permission text for {locale}"
+            );
+            let perm_keyboard = build_permission_card_keyboard(locale);
+            assert_eq!(perm_keyboard.inline_keyboard.len(), 3);
+            for (row, expected) in perm_keyboard.inline_keyboard.iter().zip([
+                "permission:once",
+                "permission:always",
+                "permission:reject",
+            ]) {
+                match &row[0].kind {
+                    InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, expected),
+                    other => panic!("expected callback data, got {other:?}"),
+                }
+                assert!(
+                    !row[0].text.is_empty(),
+                    "permission button unlabeled for {locale}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn install_card_hooks_zero_chat_id_installs_nothing() {
+        // Guard parity: the deny-all sentinel (no DM target) installs
+        // neither hook, so no card send can spawn without a target chat.
+        crate::attach::set_poll_card_hook(None);
+        crate::attach::set_permission_card_hook(None);
+        let bot = create_bot(DUMMY_TOKEN);
+        install_card_hooks(&bot, 0, "en");
+        assert!(!crate::attach::has_poll_card_hook());
+        assert!(!crate::attach::has_permission_card_hook());
+    }
+
+    #[test]
+    fn card_long_text_truncates_on_char_boundary() {
+        // Multibyte filler forces both the char-based question cut and the
+        // byte-based Telegram cap to engage: the card must fit the byte
+        // limit without splitting a character (walk-back is at most 3
+        // bytes for a 4-byte char).
+        let poll = crate::attach::PollCardData {
+            request_id: "req_1".to_string(),
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            question_count: 1,
+            headers: vec!["é".repeat(5000)],
+        };
+        let poll_text = build_poll_card_text(&poll, "en");
+        assert!(poll_text.len() <= TELEGRAM_TEXT_LIMIT);
+        assert!(
+            TELEGRAM_TEXT_LIMIT - poll_text.len() < 4,
+            "poll card not capped at a char boundary: {} bytes",
+            poll_text.len()
+        );
+        // Unknown permission kinds fall back to the raw id, so a long id
+        // exercises the same byte cap on the permission path.
+        let perm = crate::attach::PermissionCardData {
+            request_ids: vec!["perm_1".to_string()],
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            permission: "é".repeat(5000),
+            pattern_count: 0,
+        };
+        let perm_text = build_permission_card_text(&perm, "en");
+        assert!(perm_text.len() <= TELEGRAM_TEXT_LIMIT);
+        assert!(
+            TELEGRAM_TEXT_LIMIT - perm_text.len() < 4,
+            "permission card not capped at a char boundary: {} bytes",
+            perm_text.len()
+        );
     }
 
     #[test]
@@ -8241,5 +11238,428 @@ mod tests {
                 "inline:cancel:ls".to_string(),
             ]
         );
+    }
+
+    // -- Attach quote/reply surface (telegram-ux slice) --
+
+    fn attach_user_value(id: &str, text: &str, created: i64) -> serde_json::Value {
+        serde_json::json!({
+            "info": { "id": id, "role": "user", "time": { "created": created } },
+            "parts": [{ "type": "text", "text": text }],
+        })
+    }
+
+    fn attach_assistant_value(
+        id: &str,
+        text: &str,
+        created: i64,
+        parent: Option<&str>,
+        completed: bool,
+    ) -> serde_json::Value {
+        let mut info =
+            serde_json::json!({ "id": id, "role": "assistant", "time": { "created": created } });
+        if let Some(parent) = parent {
+            info["parentID"] = serde_json::Value::String(parent.to_string());
+        }
+        if completed {
+            info["time"]["completed"] = serde_json::json!(created + 1);
+        }
+        serde_json::json!({ "info": info, "parts": [{ "type": "text", "text": text }] })
+    }
+
+    fn attach_pick_messages(
+        values: &[serde_json::Value],
+    ) -> Vec<otb_core::session_pick_catalog_gates::SessionPickMessage> {
+        values
+            .iter()
+            .filter_map(session_pick_message_from_value)
+            .collect()
+    }
+
+    #[test]
+    fn attach_pick_converter_reads_pick_shape() {
+        let values = vec![
+            attach_user_value("user_1", "do the thing", 1),
+            attach_assistant_value("asst_1", "done", 2, Some("user_1"), true),
+            serde_json::json!({
+                "info": { "id": "user_2", "role": "user", "time": { "created": 3 } },
+                "parts": [{ "type": "file", "filename": "pic.png" }],
+            }),
+        ];
+        let messages = attach_pick_messages(&values);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].info.role.as_deref(), Some("user"));
+        assert_eq!(messages[1].info.parent_id.as_deref(), Some("user_1"));
+        assert_eq!(messages[1].info.completed, Some(3));
+        assert_eq!(messages[2].parts[0].kind, "file");
+        // Entries without an `info` object never reach the pickers.
+        assert!(session_pick_message_from_value(&serde_json::json!({})).is_none());
+        assert!(
+            session_pick_message_from_value(&serde_json::json!({ "info": "user_1" })).is_none()
+        );
+        // Untyped parts are skipped; the message itself still converts.
+        let untyped = serde_json::json!({
+            "info": { "id": "user_3", "role": "user" },
+            "parts": [{ "text": "hi" }, { "type": "text", "text": "hi" }],
+        });
+        let message = session_pick_message_from_value(&untyped).expect("converts");
+        assert_eq!(message.parts.len(), 1);
+    }
+
+    #[test]
+    fn attach_busy_reads_map_and_list_shapes() {
+        let busy_map = serde_json::json!({ "ses_1": { "type": "busy" } });
+        assert!(attach_session_is_busy(&busy_map, "ses_1"));
+        let idle_map = serde_json::json!({ "ses_1": { "type": "idle" } });
+        assert!(!attach_session_is_busy(&idle_map, "ses_1"));
+        assert!(!attach_session_is_busy(&busy_map, "ses_9"));
+        assert!(!attach_session_is_busy(&busy_map, ""));
+        let array = serde_json::json!(["ses_1"]);
+        assert!(attach_session_is_busy(&array, "ses_1"));
+        assert!(!attach_session_is_busy(&array, "ses_9"));
+        let active_key = serde_json::json!({ "active": ["ses_1"] });
+        assert!(attach_session_is_busy(&active_key, "ses_1"));
+    }
+
+    #[test]
+    fn attach_missing_parent_only_when_absent() {
+        let with_parent = attach_pick_messages(&[
+            attach_user_value("user_1", "do the thing", 1),
+            attach_assistant_value("asst_1", "done", 2, Some("user_1"), true),
+        ]);
+        assert_eq!(missing_attach_parent_id(&with_parent, false), None);
+        let orphan = attach_pick_messages(&[attach_assistant_value(
+            "asst_1",
+            "done",
+            2,
+            Some("user_9"),
+            true,
+        )]);
+        assert_eq!(
+            missing_attach_parent_id(&orphan, false),
+            Some("user_9".to_string())
+        );
+        let no_reply = attach_pick_messages(&[attach_user_value("user_1", "hi", 1)]);
+        assert_eq!(missing_attach_parent_id(&no_reply, false), None);
+    }
+
+    #[test]
+    fn attach_quote_carries_title_and_blockquote() {
+        let messages = attach_pick_messages(&[attach_user_value("user_1", "do the thing", 1)]);
+        let quote = build_attach_quote_text(&messages[0], "en").expect("quotes text input");
+        assert!(quote.contains("Last user input:"));
+        assert!(quote.contains("> do the thing"));
+        assert!(quote.chars().count() <= TELEGRAM_TEXT_LIMIT);
+        // A file-only input quotes its attachment line instead of text.
+        let file_only = attach_pick_messages(&[serde_json::json!({
+            "info": { "id": "user_2", "role": "user", "time": { "created": 2 } },
+            "parts": [{ "type": "file", "filename": "pic.png" }],
+        })]);
+        let file_quote = build_attach_quote_text(&file_only[0], "en").expect("quotes file input");
+        assert!(file_quote.contains("pic.png"));
+        // Blank inputs quote nothing.
+        let blank = attach_pick_messages(&[attach_user_value("user_3", "   ", 3)]);
+        assert_eq!(build_attach_quote_text(&blank[0], "en"), None);
+    }
+
+    #[test]
+    fn attach_reply_chunks_split_rarely_and_cleanly() {
+        assert!(build_attach_reply_chunks("   ").is_empty());
+        let short = build_attach_reply_chunks("done");
+        assert_eq!(short, vec!["done".to_string()]);
+        // Markdown normalization applies (headings render bold).
+        let headed = build_attach_reply_chunks("# Title\n\nbody");
+        assert_eq!(headed, vec!["**Title**\n\nbody".to_string()]);
+        // Over the native budget the reply splits, never inside a word, and
+        // rejoins exactly.
+        let long = "word ".repeat(7_000);
+        assert!(long.chars().count() > ATTACH_REPLY_CHUNK_LIMIT);
+        let chunks = build_attach_reply_chunks(&long);
+        assert_eq!(chunks.len(), 2);
+        for chunk in &chunks {
+            assert!(chunk.chars().count() <= ATTACH_REPLY_CHUNK_LIMIT);
+        }
+        let normalized =
+            otb_core::markdown_normalizer::normalize_markdown_for_telegram_rendering(&long);
+        assert_eq!(chunks.join(""), normalized);
+    }
+
+    #[test]
+    fn attach_transcript_quotes_reply_and_waiting_input() {
+        let messages = attach_pick_messages(&[
+            attach_user_value("user_1", "do the thing", 1),
+            attach_assistant_value("asst_1", "done", 2, Some("user_1"), true),
+            attach_user_value("user_2", "and another", 3),
+        ]);
+        let transcript = build_attach_transcript(&messages, false, "en");
+        let quote = transcript
+            .quote
+            .as_deref()
+            .expect("quotes the parent input");
+        assert!(quote.contains("> do the thing"));
+        assert_eq!(transcript.reply_chunks, vec!["done".to_string()]);
+        let waiting = transcript
+            .waiting
+            .as_deref()
+            .expect("quotes the waiting input");
+        assert!(waiting.contains("> and another"));
+        assert!(!should_send_attach_empty(&transcript));
+        assert!(should_show_attach_waiting(&transcript));
+    }
+
+    #[test]
+    fn attach_transcript_without_reply_quotes_latest_prompt() {
+        let messages = attach_pick_messages(&[attach_user_value("user_1", "hello?", 1)]);
+        let transcript = build_attach_transcript(&messages, false, "en");
+        assert!(transcript
+            .quote
+            .as_deref()
+            .is_some_and(|quote| quote.contains("> hello?")));
+        assert!(transcript.reply_chunks.is_empty());
+        assert_eq!(transcript.waiting, None);
+        assert!(!should_send_attach_empty(&transcript));
+        assert!(!should_show_attach_waiting(&transcript));
+    }
+
+    #[test]
+    fn attach_transcript_empty_without_messages() {
+        let transcript = build_attach_transcript(&[], false, "en");
+        assert_eq!(transcript.quote, None);
+        assert!(transcript.reply_chunks.is_empty());
+        assert!(should_send_attach_empty(&transcript));
+        assert!(!should_show_attach_waiting(&transcript));
+        assert_eq!(
+            build_attach_empty_text("en"),
+            crate::locale::translate("en", "sessions.preview.empty")
+        );
+    }
+
+    #[test]
+    fn attach_busy_session_skips_incomplete_reply() {
+        let messages = attach_pick_messages(&[
+            attach_user_value("user_1", "do the thing", 1),
+            attach_assistant_value("asst_1", "partial…", 2, Some("user_1"), false),
+        ]);
+        // Busy: the still-running reply is not shown as the full reply.
+        let busy = build_attach_transcript(&messages, true, "en");
+        assert!(busy.reply_chunks.is_empty());
+        // Idle: the same transcript resolves normally.
+        let idle = build_attach_transcript(&messages, false, "en");
+        assert_eq!(idle.reply_chunks, vec!["partial…".to_string()]);
+    }
+
+    fn footer_completed_run() -> RunCloseCompletedRun {
+        RunCloseCompletedRun {
+            has_completed_response: true,
+            suppress_footer: false,
+            configured_agent: Some("build".to_string()),
+            configured_provider_id: Some("openai".to_string()),
+            configured_model_id: Some("gpt-5".to_string()),
+            actual_agent: None,
+            actual_provider_id: None,
+            actual_model_id: None,
+            started_at_ms: 1_000,
+            steps: vec![],
+            interrupted: false,
+        }
+    }
+
+    #[test]
+    fn run_close_footer_needs_setting_response_and_identity() {
+        // Failing-test-first for the unwired footer: setting on, answered
+        // turn, full identity builds the line (TS `run-close.ts:31-61`).
+        let footer = resolve_run_close_footer(true, Some(&footer_completed_run()), 5_000, "en")
+            .expect("footer");
+        assert!(footer.contains("Build"), "agent display missing: {footer}");
+        assert!(footer.contains("openai/gpt-5"), "model missing: {footer}");
+        // Disabled setting, missing run, aborted turn, suppressed turn, and
+        // incomplete identity all stay footerless (TS `run-close.ts:31-44`).
+        assert_eq!(
+            resolve_run_close_footer(false, Some(&footer_completed_run()), 5_000, "en"),
+            None
+        );
+        assert_eq!(resolve_run_close_footer(true, None, 5_000, "en"), None);
+        let mut aborted = footer_completed_run();
+        aborted.has_completed_response = false;
+        assert_eq!(
+            resolve_run_close_footer(true, Some(&aborted), 5_000, "en"),
+            None
+        );
+        let mut suppressed = footer_completed_run();
+        suppressed.suppress_footer = true;
+        assert_eq!(
+            resolve_run_close_footer(true, Some(&suppressed), 5_000, "en"),
+            None
+        );
+        let mut nameless = footer_completed_run();
+        nameless.configured_agent = Some("  ".to_string());
+        assert_eq!(
+            resolve_run_close_footer(true, Some(&nameless), 5_000, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn run_close_footer_prefers_actual_identity_and_marks_interruption() {
+        // `actual || configured` wins when set (TS `run-close.ts:39-41`);
+        // a client stop after the reply marks the interruption.
+        let mut run = footer_completed_run();
+        run.actual_agent = Some("plan".to_string());
+        run.actual_provider_id = Some("anthropic".to_string());
+        run.actual_model_id = Some("claude-x".to_string());
+        run.interrupted = true;
+        let footer = resolve_run_close_footer(true, Some(&run), 5_000, "en").expect("footer");
+        assert!(footer.contains("Plan"), "actual agent should win: {footer}");
+        assert!(
+            footer.contains("anthropic/claude-x"),
+            "actual model should win: {footer}"
+        );
+        assert!(
+            footer.contains("interrupted"),
+            "interrupted mark missing: {footer}"
+        );
+        // Elapsed saturates instead of going negative on clock skew.
+        let zeroed = resolve_run_close_footer(true, Some(&run), 500, "en").expect("footer");
+        assert!(zeroed.contains("0s"), "elapsed should saturate: {zeroed}");
+    }
+
+    #[test]
+    fn session_idle_footer_keeps_shutdown_and_suppressed_turns_footerless() {
+        // Failing-test-first: TS `session-lifecycle-handler.ts:70-91` keeps
+        // shutdown, suppressed, and interrupted-without-response idles
+        // footerless even with a completed snapshot; the surviving path
+        // matches the run-close gate.
+        let run = footer_completed_run();
+        assert_eq!(
+            resolve_session_idle_footer(true, Some(&run), 5_000, "en", true, false, false),
+            None
+        );
+        assert_eq!(
+            resolve_session_idle_footer(true, Some(&run), 5_000, "en", false, true, false),
+            None
+        );
+        assert_eq!(
+            resolve_session_idle_footer(true, Some(&run), 5_000, "en", false, false, true),
+            None
+        );
+        assert!(
+            resolve_session_idle_footer(true, Some(&run), 5_000, "en", false, false, false)
+                .is_some()
+        );
+        assert_eq!(
+            resolve_session_idle_footer(false, Some(&run), 5_000, "en", false, false, false),
+            None
+        );
+    }
+
+    #[test]
+    fn install_idle_footer_hook_zero_chat_id_installs_nothing() {
+        // Guard parity with `install_card_hooks`: the deny-all sentinel (no
+        // DM target) installs no hook, so no footer send can spawn without
+        // a target chat.
+        crate::attach::set_session_idle_footer_hook(None);
+        let bot = create_bot(DUMMY_TOKEN);
+        install_session_idle_footer_hook(&bot, 0, "en", true);
+        assert!(!crate::attach::has_session_idle_footer_hook());
+        install_session_idle_footer_hook(&bot, 7, "en", true);
+        assert!(crate::attach::has_session_idle_footer_hook());
+        crate::attach::set_session_idle_footer_hook(None);
+    }
+
+    fn pinned_test_data() -> PinnedDashboardData {
+        PinnedDashboardData {
+            session_title: "Fix login".to_string(),
+            goal_status: None,
+            goal_objective: None,
+            project_path: "/repo".to_string(),
+            branch: None,
+            worktree_path: None,
+            is_linked_worktree: false,
+            provider_id: Some("openai".to_string()),
+            model_id: Some("gpt-5".to_string()),
+            variant: None,
+            tokens_used: 100,
+            tokens_limit: Some(200_000),
+            cost: Some(1.5),
+            changed_files: vec![PinnedChangedFile {
+                file: "/repo/a.ts".to_string(),
+                additions: 3,
+                deletions: 1,
+            }],
+        }
+    }
+
+    #[test]
+    fn pinned_patch_is_additive_and_keeps_last_on_failed_refresh() {
+        // Tokens replace (`input + cacheRead`); cost deltas add; a failed
+        // diff refresh (`None`) keeps the last good list while an empty one
+        // removes the section (TS `onSessionDiff` / `applyDirtyFileRefresh`).
+        let mut data = pinned_test_data();
+        let changed = apply_pinned_patch(
+            &mut data,
+            &PinnedDashboardPatch {
+                tokens_used: Some(500),
+                cost_delta: Some(2.25),
+                changed_files: None,
+                ..Default::default()
+            },
+        );
+        assert!(changed);
+        assert_eq!(data.tokens_used, 500);
+        assert_eq!(data.cost, Some(3.75));
+        assert_eq!(data.changed_files.len(), 1);
+        // Zero and NaN deltas cannot change the total (TS cost gate).
+        let files = data.changed_files.clone();
+        let unchanged = apply_pinned_patch(
+            &mut data,
+            &PinnedDashboardPatch {
+                cost_delta: Some(0.0),
+                changed_files: Some(files),
+                session_title: Some(String::new()),
+                ..Default::default()
+            },
+        );
+        assert!(!unchanged);
+        assert_eq!(data.cost, Some(3.75));
+        assert_eq!(data.session_title, "Fix login");
+        let cleared = apply_pinned_patch(
+            &mut data,
+            &PinnedDashboardPatch {
+                changed_files: Some(vec![]),
+                session_title: Some("Fix login v2".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(cleared);
+        assert!(data.changed_files.is_empty());
+        assert_eq!(data.session_title, "Fix login v2");
+    }
+
+    #[test]
+    fn resolve_pinned_text_gates_disabled_and_stateless() {
+        // Disabled dashboard or no message state never draws (TS
+        // `updatePinnedMessage` early return); a merged snapshot renders.
+        let data = pinned_test_data();
+        assert_eq!(resolve_pinned_text(&data, false, true, "en"), None);
+        assert_eq!(resolve_pinned_text(&data, true, false, "en"), None);
+        let text = resolve_pinned_text(&data, true, true, "en").expect("text");
+        assert!(text.contains("Fix login"), "title missing: {text}");
+        assert!(!should_send_pinned_edit(Some(&text), &text));
+        assert!(should_send_pinned_edit(None, &text));
+        assert!(!should_send_pinned_edit(Some("old"), "  "));
+    }
+
+    #[test]
+    fn install_pinned_hook_zero_chat_id_installs_nothing() {
+        // Guard parity with `install_session_idle_footer_hook`: the
+        // deny-all sentinel installs no hook, so no dashboard send can
+        // spawn without a target chat.
+        crate::attach::set_pinned_dashboard_hook(None);
+        let bot = create_bot(DUMMY_TOKEN);
+        install_pinned_dashboard_hook(&bot, 0, "en", true);
+        assert!(!crate::attach::has_pinned_dashboard_hook());
+        install_pinned_dashboard_hook(&bot, 7, "en", true);
+        assert!(crate::attach::has_pinned_dashboard_hook());
+        crate::attach::set_pinned_dashboard_hook(None);
     }
 }

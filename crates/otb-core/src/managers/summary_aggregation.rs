@@ -195,13 +195,13 @@ pub enum AggregatorEvent {
 }
 
 /// Fired when the aggregator is cleared (TS: `ClearedCallback`).
-pub type ClearedCallback = Box<dyn FnMut()>;
+pub type ClearedCallback = Box<dyn FnMut() + Send>;
 /// Fired for a tool part (TS: `ToolCallback`).
-pub type ToolCallback = Box<dyn FnMut(ToolInfo)>;
+pub type ToolCallback = Box<dyn FnMut(ToolInfo) + Send>;
 /// Fired for a root-session tool update (TS: `RootToolUpdateCallback`).
-pub type RootToolUpdateCallback = Box<dyn FnMut(ToolInfo)>;
+pub type RootToolUpdateCallback = Box<dyn FnMut(ToolInfo) + Send>;
 /// Fired with the live subagent cards (TS: `SubagentCallback`; slice 2).
-pub type SubagentCallback = Box<dyn FnMut(String, Vec<SubagentInfo>)>;
+pub type SubagentCallback = Box<dyn FnMut(String, Vec<SubagentInfo>) + Send>;
 
 /// Summary event aggregator (TS: `SummaryAggregator`; slices 1-2).
 pub struct SummaryAggregator {
@@ -336,6 +336,14 @@ impl Default for SummaryAggregator {
         Self::new()
     }
 }
+
+// The live SSE pump runs on `tokio::spawn` (multi-thread); the aggregator
+// crosses that `Send` boundary, so its TS-parity `FnMut` callbacks carry
+// `+ Send` (tests capture via `Arc<Mutex<..>>`).
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<SummaryAggregator>();
+};
 
 impl SummaryAggregator {
     /// Create an aggregator (TS: `new SummaryAggregator()`).
@@ -1448,10 +1456,10 @@ pub struct SessionRetryInfo {
 }
 
 /// Fired when the followed session goes idle (TS: `SessionIdleCallback`).
-pub type SessionIdleCallback = Box<dyn FnMut(String, SessionIdleInfo)>;
+pub type SessionIdleCallback = Box<dyn FnMut(String, SessionIdleInfo) + Send>;
 /// Fired on a `session.status` retry for the followed session
 /// (TS: `SessionRetryCallback`).
-pub type SessionRetryCallback = Box<dyn FnMut(SessionRetryInfo)>;
+pub type SessionRetryCallback = Box<dyn FnMut(SessionRetryInfo) + Send>;
 
 impl SummaryAggregator {
     /// Register the session-idle callback (TS: `setOnSessionIdle`).
@@ -1956,11 +1964,11 @@ pub struct TodoItem {
 
 /// Fired with token totals and the completed flag (TS: `TokensCallback`;
 /// slice 11).
-pub type TokensCallback = Box<dyn FnMut(String, TokensInfo, bool)>;
+pub type TokensCallback = Box<dyn FnMut(String, TokensInfo, bool) + Send>;
 /// Fired with the message cost (TS: `CostCallback`; slice 11).
-pub type CostCallback = Box<dyn FnMut(String, f64)>;
+pub type CostCallback = Box<dyn FnMut(String, f64) + Send>;
 /// Fired when a run ends (TS: `SessionRunEndedCallback`; slice 11).
-pub type RunEndedCallback = Box<dyn FnMut(String)>;
+pub type RunEndedCallback = Box<dyn FnMut(String) + Send>;
 
 impl SummaryAggregator {
     /// Register the tokens callback (TS: `setOnTokens`; slice 11).

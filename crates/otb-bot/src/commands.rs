@@ -1591,6 +1591,34 @@ pub fn agent_list_from_values(values: &[serde_json::Value]) -> Vec<AgentListItem
     items
 }
 
+/// Configured model/variant an agent names (TS `applyAgentConfiguredSettings`
+/// field reads): `model.providerID` / `model.modelID` / `variant`, each
+/// trimmed with blanks dropped (`configuredField` parity). A field the agent
+/// does not name reads as `None` and is left as it is by the caller. Pure.
+pub fn agent_configured_selection(
+    value: &serde_json::Value,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let configured = |text: Option<&str>| {
+        text.map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    };
+    let provider_id = value
+        .get("model")
+        .and_then(|model| model.get("providerID"))
+        .and_then(|id| id.as_str());
+    let model_id = value
+        .get("model")
+        .and_then(|model| model.get("modelID"))
+        .and_then(|id| id.as_str());
+    let variant = value.get("variant").and_then(|variant| variant.as_str());
+    (
+        configured(provider_id),
+        configured(model_id),
+        configured(variant),
+    )
+}
+
 /// Render the agent-changed confirm (JS `agent.changed_message` parity).
 /// Pure.
 pub fn render_agent_changed(name: &str, locale: Option<&str>) -> String {
@@ -2549,5 +2577,30 @@ mod tests {
             "goal.arguments_not_supported"
         );
         assert_eq!(goal_entry_key(true, true, true, false), "goal.input.prompt");
+    }
+
+    #[test]
+    fn agent_configured_selection_trims_and_drops_blanks() {
+        let value = serde_json::json!({
+            "model": { "providerID": " openai ", "modelID": "gpt-4o" },
+            "variant": " high ",
+        });
+        assert_eq!(
+            agent_configured_selection(&value),
+            (
+                Some("openai".to_string()),
+                Some("gpt-4o".to_string()),
+                Some("high".to_string()),
+            )
+        );
+        let blank = serde_json::json!({
+            "model": { "providerID": "  ", "modelID": "" },
+            "variant": "  ",
+        });
+        assert_eq!(agent_configured_selection(&blank), (None, None, None));
+        assert_eq!(
+            agent_configured_selection(&serde_json::json!({ "name": "build" })),
+            (None, None, None)
+        );
     }
 }

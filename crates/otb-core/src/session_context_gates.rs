@@ -13,8 +13,9 @@
 //! - `src/app/services/missing-folder-notice-service.ts`
 //!   (`checkFolderPresence(...) !== "missing"` null gate, worktree-owner
 //!   key choice)
-//! - `src/app/services/folder-presence-service.ts` decision subset
-//!   (`FolderPresence` `"missing"` equality used by the notice gate)
+//! - `src/app/services/folder-presence-service.ts` full decision core
+//!   (`FolderPresence` verdicts, listing classification, path math,
+//!   ancestor-walk decision, refill gate, ask-once dedupe; slice 174)
 //! - `src/app/services/prompt-inbox-service.ts` (`withdrawInboxPrompt`
 //!   no-inbox / list-error / not-included / cancel-error / removed
 //!   precedence, `reconcileInboxPrompts` empty-mirror skip and
@@ -39,7 +40,14 @@
 //! `0` context limit counts as a miss (JS falsy); `[].every(...)` is
 //! `true` for the empty provider list.
 //!
+//! Slice 174 adds the folder-gone detector (`folder-presence-service.ts`
+//! full decision core: listing classification, path math, walk verdict,
+//! refill gate, ask-once dedupe); its own deviations are documented on the
+//! section below.
+//!
 //! Step 2 (GREEN): pure ports of the TS gates below.
+
+use std::collections::HashSet;
 
 /// Default context window when the provider list has no limit
 /// (TS: `DEFAULT_CONTEXT_LIMIT`).
@@ -223,4 +231,258 @@ pub fn should_drop_attachment_when_too_large(size_allowed: bool) -> bool {
 /// (TS: `if (!(await isWithinProjectRootSafe(...)))`).
 pub fn should_drop_attachment_when_outside_root(inside_root: bool) -> bool {
     !inside_root
+}
+
+// ---------------------------------------------------------------------------
+// Folder-gone detector (slice 174, GREEN).
+//
+// Rust port of the pure remainder in
+// `src/app/services/folder-presence-service.ts`:
+// - `GLOBAL_PROJECT_FOLDER` (the global project never vanishes);
+// - the V2-only probe gate (any other version answers `"unknown"` before
+//   listing);
+// - `listFolder` answer classification (entries count as listed, a 500 as
+//   the server failing to resolve the folder, anything else as another
+//   failure);
+// - `pathStyleOf` / `namesMatch` / `basename` / `dirname` path math, with
+//   the ancestor-walk climbing while `parent !== child`;
+// - the `checkFolderPresence` walk decision (a listed folder is present; a
+//   listed ancestor still naming the child is unknown; a listed ancestor
+//   missing the child is missing; any other non-500 answer is unknown);
+// - the `collectFromPresentFolders` refill gate and the
+//   `findMissingFolders` ask-once dedupe.
+//
+// Impure work stays with the caller: `file.list` network reads (one per
+// probed folder, via the read-only `list_folder_entries` client), the walk
+// loop itself, and logging.
+//
+// Deviations:
+// 1. The TS `ClientError` name / `UnexpectedStatus` reason taxonomy
+//    collapses to the HTTP status: only a 500 counts as `ServerError`.
+// 2. `namesMatch` lowercases with Unicode `to_lowercase`, mirroring TS
+//    `toLowerCase`.
+// 3. `path_parent` expects the absolute server folders the detector probes
+//    (relative inputs without a separator yield `"."` like Node posix);
+//    Windows roots map to themselves so the walk terminates.
+// ---------------------------------------------------------------------------
+
+/// The global project of non-git folders; it is never a folder that can
+/// vanish (TS: `GLOBAL_PROJECT_FOLDER`).
+pub const GLOBAL_PROJECT_FOLDER: &str = "/";
+
+/// `true` for the global project, which is always present (TS:
+/// `if (folder === GLOBAL_PROJECT_FOLDER) return "present"`).
+pub fn is_global_project_folder(folder: &str) -> bool {
+    folder == GLOBAL_PROJECT_FOLDER
+}
+
+/// `true` when the server is asked about the folder at all: presence
+/// probing is V2-only (TS: any other `opencodeServerVersion` answers
+/// `"unknown"` before listing).
+pub fn is_presence_checkable(server_version: &str) -> bool {
+    server_version == "v2"
+}
+
+/// One folder listing as the detector reads it (TS: `FolderListing`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderListing {
+    /// The folder lists (even empty): it exists.
+    Listed,
+    /// The listing failed with a 500: the server cannot resolve it.
+    ServerError,
+    /// Any other answer, including a transport failure.
+    OtherFailure,
+}
+
+/// Classify one `file.list` answer (TS: `listFolder`). `listed_ok` is
+/// `true` when the request answered 2xx with entries; otherwise the HTTP
+/// status decides between a 500 the server failed on and anything else.
+pub fn classify_listing_result(listed_ok: bool, http_status: Option<u16>) -> FolderListing {
+    if listed_ok {
+        return FolderListing::Listed;
+    }
+    if http_status == Some(500) {
+        return FolderListing::ServerError;
+    }
+    FolderListing::OtherFailure
+}
+
+/// One ancestor answer on the walk to the filesystem root (TS: the
+/// `listFolder(parent)` branch inside `checkFolderPresence`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AncestorListing {
+    /// The parent lists and still names the child on the way down.
+    ContainsChild,
+    /// The parent lists but no longer names the child: the folder is gone.
+    WithoutChild,
+    /// The parent listing failed with a 500; the walk climbs on.
+    ServerError,
+    /// Any other answer; the walk stops without a verdict.
+    OtherFailure,
+}
+
+/// Presence verdict for a folder (TS: `FolderPresence`; `"unknown"`
+/// covers every answer that is not a confirmed absence, and callers treat
+/// it as present).
+pub fn classify_folder_presence(own: FolderListing, ancestors: &[AncestorListing]) -> &'static str {
+    match own {
+        FolderListing::Listed => "present",
+        FolderListing::OtherFailure => "unknown",
+        FolderListing::ServerError => {
+            for step in ancestors {
+                match step {
+                    AncestorListing::ContainsChild | AncestorListing::OtherFailure => {
+                        return "unknown";
+                    }
+                    AncestorListing::WithoutChild => return "missing",
+                    AncestorListing::ServerError => {}
+                }
+            }
+            "unknown"
+        }
+    }
+}
+
+/// `true` for server paths in the Windows style (TS: `pathStyleOf`:
+/// a drive-letter root or a UNC prefix; server paths arrive in the
+/// server's style, which may differ from the bot's).
+pub fn is_windows_style_path(folder: &str) -> bool {
+    let bytes = folder.as_bytes();
+    let drive_root = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    drive_root || folder.starts_with("\\\\")
+}
+
+/// Trailing `/`/`\` stripped (TS: `entry.replace(/[\\/]+$/, "")`).
+pub fn strip_trailing_separators(entry: &str) -> &str {
+    entry.trim_end_matches(['/', '\\'])
+}
+
+/// Entry-name match (TS: `namesMatch`: case-insensitive on win32, exact
+/// otherwise).
+pub fn folder_names_equal(windows_style: bool, left: &str, right: &str) -> bool {
+    if windows_style {
+        left.to_lowercase() == right.to_lowercase()
+    } else {
+        left == right
+    }
+}
+
+/// Last segment with trailing separators stripped (TS: `basename` per path
+/// style; win32 splits on both separators, posix on `/` only).
+pub fn path_basename(path: &str, windows_style: bool) -> &str {
+    let stripped = strip_trailing_separators(path);
+    if windows_style {
+        if stripped.len() == 2
+            && stripped.as_bytes()[0].is_ascii_alphabetic()
+            && stripped.as_bytes()[1] == b':'
+        {
+            return "";
+        }
+        match stripped.rfind(['/', '\\']) {
+            Some(idx) => &stripped[idx + 1..],
+            None => stripped,
+        }
+    } else {
+        match stripped.rfind('/') {
+            Some(idx) => &stripped[idx + 1..],
+            None => stripped,
+        }
+    }
+}
+
+/// Parent folder (TS: `dirname` per path style). Roots map to themselves
+/// so the ancestor walk terminates (`parent !== child` ends the loop).
+pub fn path_parent(path: &str, windows_style: bool) -> String {
+    if !windows_style {
+        if path == "/" {
+            return "/".to_string();
+        }
+        match strip_trailing_separators(path).rfind('/') {
+            None => ".".to_string(),
+            Some(0) => "/".to_string(),
+            Some(idx) => strip_trailing_separators(path)[..idx].to_string(),
+        }
+    } else {
+        windows_path_parent(path)
+    }
+}
+
+/// Win32 `dirname` for the absolute folders the detector probes.
+fn windows_path_parent(path: &str) -> String {
+    let bytes = path.as_bytes();
+    if bytes.len() == 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return format!("{}:\\", &path[..1]);
+    }
+    let stripped = strip_trailing_separators(path);
+    if let Some(rest) = stripped.strip_prefix("\\\\") {
+        let parts: Vec<&str> = rest
+            .split(['/', '\\'])
+            .filter(|part| !part.is_empty())
+            .collect();
+        if parts.len() <= 2 {
+            return stripped.to_string();
+        }
+    }
+    match stripped.rfind(['/', '\\']) {
+        None => ".".to_string(),
+        Some(idx) => {
+            let parent = &stripped[..idx];
+            if parent.len() == 2
+                && parent.as_bytes()[0].is_ascii_alphabetic()
+                && parent.as_bytes()[1] == b':'
+            {
+                format!("{parent}\\")
+            } else if parent.is_empty() {
+                "\\".to_string()
+            } else {
+                parent.to_string()
+            }
+        }
+    }
+}
+
+/// `true` when a parent listing still names the child on the way down
+/// (TS: the `entries.some(...)` in `checkFolderPresence`: trailing
+/// separators stripped, basename compared, case-insensitive on win32).
+/// `child_name` is the basename of the child folder.
+pub fn ancestor_lists_child(windows_style: bool, entries: &[&str], child_name: &str) -> bool {
+    entries.iter().any(|entry| {
+        folder_names_equal(
+            windows_style,
+            path_basename(entry, windows_style),
+            child_name,
+        )
+    })
+}
+
+/// `true` while the present-folder collector reads another page (TS:
+/// `collectFromPresentFolders`: stops once `wanted` items remain or the
+/// source is exhausted; otherwise the limit doubles and it reads again).
+/// The surviving rows keep source order; the missing-folder cache stays
+/// with the caller.
+pub fn should_refetch_present_items(
+    visible_count: usize,
+    wanted: usize,
+    fetched_count: usize,
+    limit: usize,
+) -> bool {
+    visible_count < wanted && fetched_count >= limit
+}
+
+/// Folders in first-seen order, each once (TS: `[...new Set(folders)]` in
+/// `findMissingFolders`: every folder is asked about once).
+pub fn dedupe_folders<'a>(folders: &[&'a str]) -> Vec<&'a str> {
+    let mut seen = HashSet::new();
+    folders
+        .iter()
+        .filter(|folder| seen.insert(**folder))
+        .copied()
+        .collect()
 }

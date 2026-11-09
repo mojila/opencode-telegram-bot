@@ -350,3 +350,52 @@ pub fn format_executable_mismatch_message(
          the first one on PATH."
     )
 }
+
+// ---------------------------------------------------------------------------
+// Unavailable-server resolution guards (slice 174, GREEN).
+//
+// Rust port of the pure remainder in `src/opencode/local-start.ts` beyond
+// slice 50: the registered-server lookup skips (non-V2 or standalone never
+// adopts; a registered server on the target port is not a switch
+// candidate) and the executable-version block (a missing version read
+// passes; a matching API version passes; anything else refuses).
+//
+// Probing, switching, and starting servers need network/child processes
+// and stay with the caller; outcomes arrive as explicit snapshots (the
+// registered URL port via [`get_url_port`], the executable API version via
+// `local_process_gates::get_opencode_api_version`).
+//
+// Deviations: none intended. `getUrlPort(...) === target.port` never
+// matches a missing/default/unparseable port (`None`), mirroring
+// `null === port` being false.
+// ---------------------------------------------------------------------------
+
+/// `true` when the registered-server lookup is skipped: only a V2
+/// non-standalone setup adopts the background server (TS:
+/// `findRegisteredServerOnAnotherPort` early `none`: `version !== "v2"`
+/// or `serverMode === "standalone"`, which must not discover, adopt, or
+/// refuse because of a registered server).
+pub fn should_skip_registered_lookup(server_version: &str, server_mode: &str) -> bool {
+    server_version != "v2" || server_mode == "standalone"
+}
+
+/// `true` when the registered server listens on the target port and is not
+/// a switch candidate (TS: `getUrlPort(registered.url) === target.port`
+/// yields `none`).
+pub fn is_registered_on_target_port(registered_port: Option<u16>, target_port: u16) -> bool {
+    registered_port == Some(target_port)
+}
+
+/// `true` when the local `opencode` executable is a release of the other
+/// API version and the resolution refuses instead of spawning (TS:
+/// `isBlockedByExecutableVersion`). The executable version arrives as its
+/// API version (`"v1"` / `"v2"`); an unreadable executable passes.
+pub fn is_blocked_by_executable_version(
+    executable_api_version: Option<&str>,
+    configured_version: &str,
+) -> bool {
+    match executable_api_version {
+        Some(api) => api != configured_version,
+        None => false,
+    }
+}
