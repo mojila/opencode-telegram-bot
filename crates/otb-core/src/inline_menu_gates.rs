@@ -141,7 +141,7 @@ pub fn cancel_button_key(menu_kind: &str) -> &'static str {
 pub fn resolve_inline_cancel_kind(data: Option<&str>) -> Option<&str> {
     match data {
         None => None,
-        Some(payload) if payload.is_empty() => None,
+        Some("") => None,
         Some(payload) if payload == LEGACY_CONTEXT_CANCEL_CALLBACK => Some("context"),
         Some(payload) => match payload.strip_prefix(INLINE_MENU_CANCEL_PREFIX) {
             Some(kind) if is_inline_menu_kind(kind) => Some(kind),
