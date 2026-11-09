@@ -306,6 +306,57 @@ while let Some(event) = stream.next().await {
 Full behavior: `src/opencode/*` TS parity source + `otb-core` `server_target_gates`,
 `v2_client_gates`, `v2_event_translator_gates`, `event_transport_gates`.
 
+## Deployment
+
+Proven 0.1.2 -> 0.1.3 release flow (macOS, user-space, no sudo).
+Orchestrator never commits/deploys silently; qa owns test evidence.
+
+1. Version bump: edit `version` in `crates/otb-bot/Cargo.toml` +
+   `crates/otb-core/Cargo.toml` (patch only), then let cargo refresh the lockfile:
+
+```sh
+cargo check -p otb-bot
+cargo fmt --check
+```
+
+Never hand-edit `Cargo.lock`; verify it changed via `git diff --stat`.
+
+2. Commit only when the user explicitly asks
+   (e.g. "bump version patch, commit, push, deploy").
+   Stage explicit paths; leave unrelated files unstaged unless requested:
+
+```sh
+git add AGENTS.md crates/otb-bot/Cargo.toml crates/otb-core/Cargo.toml Cargo.lock <changed sources/tests>
+git status --short
+git commit -m "otb-bot 0.1.3: <what changed>"
+```
+
+3. Push via the `my-fork` remote (`origin` https push fails — username required):
+
+```sh
+git push my-fork main
+```
+
+Remote: `my-fork` = `git@github.com:mojila/opencode-telegram-bot.git`.
+
+4. Deploy the binary and restart the launchd service:
+
+```sh
+cargo install --path crates/otb-bot --force
+launchctl bootout gui/$UID/bot.opencode-telegram
+cp ~/.cargo/bin/otb-bot /opt/homebrew/bin/opencode-telegram
+ls -l ~/.cargo/bin/otb-bot /opt/homebrew/bin/opencode-telegram
+~/.cargo/bin/otb-bot --version && /opt/homebrew/bin/opencode-telegram --version
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/bot.opencode-telegram.plist
+launchctl list | grep opencode-telegram
+tail ~/Library/Application\ Support/opencode-telegram-bot/logs/launchd.log
+```
+
+5. Verify: plist `~/Library/LaunchAgents/bot.opencode-telegram.plist`, log
+   `~/Library/Application Support/opencode-telegram-bot/logs/launchd.log`.
+   Expect startup line `api_url=http://127.0.0.1:49374 server=v2/service locale=en`
+   and 0 getUpdates failures post-restart.
+
 ## Workflow
 
 1. Read [PRODUCT.md](./PRODUCT.md) to understand scope and status.

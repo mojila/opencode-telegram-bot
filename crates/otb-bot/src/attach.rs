@@ -41,13 +41,16 @@
 //!
 //! Still deferred (dispatcher follow-ups, no new deps): reconnect run-ending
 //! (`endRunLostWithServer` / `forgetLiveTurn` / inbox reconciliation),
-//! goal-service follow/refresh, server-side session-cache chain resolve,
-//! pending question/permission list reload, missed-turn start, main-keyboard
-//! refresh, and Telegram sends from the pump (the aggregator tracks state;
-//! poll/permission card draws stay behind the telegram-ux hooks
-//! [`set_poll_card_hook`] / [`set_permission_card_hook`], and the idle
-//! footer behind [`set_session_idle_footer_hook`]; completed-run hydration
-//! for that footer stays a dispatcher follow-up).
+//! goal-service follow/refresh, server-side session-cache chain resolve
+//! (the restore filter only knows the attached session plus seen child
+//! links; unknown subagent links skip with a log until the dispatcher
+//! resolves the parent chain server-side), missed-turn start,
+//! main-keyboard refresh, and Telegram sends from the pump (the aggregator
+//! tracks state; poll/permission card draws stay behind the telegram-ux hooks
+//! [`set_poll_card_hook`] / [`set_permission_card_hook`], settled/stale
+//! card-close copy stays a telegram-ux hook follow-up, and the idle
+//! footer stays behind [`set_session_idle_footer_hook`]; completed-run
+//! hydration for that footer stays a dispatcher follow-up).
 //! The pump triages every reconnect through [`reconnect_restore_plan`] and
 //! [`should_restore_pending_now`] (trace-only; the slot stays the single
 //! gate), records the mark via [`mark_reconnect_for_restore`], and registers
@@ -55,6 +58,7 @@
 //! mark with [`drain_reconnect_restore`] once the session busy state is
 //! known.
 
+use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde_json::Value;
@@ -77,6 +81,8 @@ struct AttachRuntime {
     pending_question: Option<PendingQuestion>,
     pending_permission: Option<PendingPermission>,
     pending_reconnect_restart: Option<bool>,
+    waiting_questions: VecDeque<QueuedQuestion>,
+    waiting_permissions: VecDeque<QueuedPermission>,
 }
 
 impl AttachRuntime {
@@ -88,6 +94,8 @@ impl AttachRuntime {
             pending_question: None,
             pending_permission: None,
             pending_reconnect_restart: None,
+            waiting_questions: VecDeque::new(),
+            waiting_permissions: VecDeque::new(),
         }
     }
 }
@@ -147,6 +155,25 @@ pub struct PendingPermission {
     pub request_ids: Vec<String>,
     pub session_id: String,
     pub directory: String,
+}
+
+/// A question waiting behind the single slot (TS:
+/// `interactionManager.waitQuestion` queue entry): the pending identity plus
+/// the prepped card the poll hook shows when the slot frees. `atHead`
+/// keeps a released poll's turn (TS `waitQuestion(..., { atHead })`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedQuestion {
+    pub pending: PendingQuestion,
+    pub card: PollCardData,
+}
+
+/// A permission waiting behind the single slot (TS:
+/// `interactionManager.waitPermission` queue entry): same shape as the
+/// question queue, shown only while no question is active (Q-over-P).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedPermission {
+    pub pending: PendingPermission,
+    pub card: PermissionCardData,
 }
 
 /// Hold the single slot for a question (TS: `questionManager.startQuestions`
@@ -215,9 +242,166 @@ pub fn held_question() -> Option<PendingQuestion> {
     runtime().lock().ok()?.pending_question.clone()
 }
 
+/// Whether the held question belongs to another session (TS
+/// `resetInteractions("session_switched")` re-validation half): a late
+/// `question.asked` event from the previous session landing after a switch
+/// must not swallow the next prompt. A blank current id never matches a
+/// real hold. Permission holds are untouched (single-slot hint parity).
+pub fn is_question_hold_stale(current_session_id: &str) -> bool {
+    runtime()
+        .lock()
+        .ok()
+        .and_then(|rt| rt.pending_question.clone())
+        .is_some_and(|pending| pending.session_id != current_session_id)
+}
+
 /// The permission requests the slot currently holds taps for, if any.
 pub fn held_permission() -> Option<PendingPermission> {
     runtime().lock().ok()?.pending_permission.clone()
+}
+
+/// Whether the held permission belongs to another session (symmetric to
+/// [`is_question_hold_stale`): a late `permission.asked` event from the
+/// previous session landing after a switch must not keep blocking the next
+/// prompt. A blank current id never matches a real hold.
+pub fn is_permission_hold_stale(current_session_id: &str) -> bool {
+    runtime()
+        .lock()
+        .ok()
+        .and_then(|rt| rt.pending_permission.clone())
+        .is_some_and(|pending| pending.session_id != current_session_id)
+}
+
+/// Queue a question behind the single slot (TS:
+/// `interactionManager.waitQuestion`). Shown requests are never re-queued
+/// (TS `isQuestionTracked` shown half); already-queued requests keep their
+/// place. `at_head` keeps a released poll's turn at the front (TS
+/// `waitQuestion(..., { atHead })`). Blank request identities never queue.
+pub fn wait_question(pending: PendingQuestion, card: PollCardData, at_head: bool) {
+    if pending.request_id.trim().is_empty() {
+        tracing::warn!("[otb-bot] attach: refusing blank queued question");
+        return;
+    }
+    if let Ok(mut rt) = runtime().lock() {
+        let shown_matches = rt
+            .pending_question
+            .as_ref()
+            .is_some_and(|held| held.request_id == pending.request_id);
+        let queued = rt
+            .waiting_questions
+            .iter()
+            .any(|queued| queued.pending.request_id == pending.request_id);
+        if otb_core::attach_restore_gates::is_question_tracked(shown_matches, queued) {
+            tracing::debug!("[otb-bot] attach: question already tracked, not queued");
+            return;
+        }
+        let queued_item = QueuedQuestion { pending, card };
+        if at_head {
+            rt.waiting_questions.push_front(queued_item);
+        } else {
+            rt.waiting_questions.push_back(queued_item);
+        }
+    }
+    tracing::info!("[otb-bot] attach: question queued behind interaction slot");
+}
+
+/// Queue a permission behind the single slot (TS:
+/// `interactionManager.waitPermission`). Shown, settled-known, or queued
+/// requests are never re-queued (TS `isPermissionTracked`; the resolved-set
+/// half stays a dispatcher follow-up — the single slot holds at most one
+/// prompt, so `is_resolved` reads `false` here). `at_head` keeps a released
+/// prompt's turn at the front. Blank session identities and empty request
+/// lists never queue.
+pub fn wait_permission(pending: PendingPermission, card: PermissionCardData, at_head: bool) {
+    if pending.session_id.trim().is_empty()
+        || pending.request_ids.iter().all(|id| id.trim().is_empty())
+    {
+        tracing::warn!("[otb-bot] attach: refusing blank queued permission");
+        return;
+    }
+    if let Ok(mut rt) = runtime().lock() {
+        let has_request = rt.pending_permission.as_ref().is_some_and(|held| {
+            pending
+                .request_ids
+                .iter()
+                .any(|id| held.request_ids.contains(id))
+        });
+        let queued = rt.waiting_permissions.iter().any(|queued| {
+            pending
+                .request_ids
+                .iter()
+                .any(|id| queued.pending.request_ids.contains(id))
+        });
+        if otb_core::attach_restore_gates::is_permission_tracked(has_request, false, queued) {
+            tracing::debug!("[otb-bot] attach: permission already tracked, not queued");
+            return;
+        }
+        let queued_item = QueuedPermission { pending, card };
+        if at_head {
+            rt.waiting_permissions.push_front(queued_item);
+        } else {
+            rt.waiting_permissions.push_back(queued_item);
+        }
+    }
+    tracing::info!("[otb-bot] attach: permission queued behind interaction slot");
+}
+
+/// Whether a question is already on screen or waiting, so a restore or a
+/// live re-ask must not show it again (TS `isQuestionTracked`: shown
+/// request ID OR waiting-or-releasing).
+pub fn is_question_tracked(request_id: &str) -> bool {
+    let snapshot = runtime().lock().ok().and_then(|rt| {
+        let shown_matches = rt
+            .pending_question
+            .as_ref()
+            .is_some_and(|held| held.request_id == request_id);
+        let waiting = rt
+            .waiting_questions
+            .iter()
+            .any(|queued| queued.pending.request_id == request_id);
+        Some((shown_matches, waiting))
+    });
+    snapshot.is_some_and(|(shown_matches, waiting)| {
+        otb_core::attach_restore_gates::is_question_tracked(shown_matches, waiting)
+    })
+}
+
+/// Whether a permission request is already on screen or waiting, so a
+/// restore or a live re-ask must not show it again (TS
+/// `isPermissionTracked`; the resolved-set half stays a dispatcher
+/// follow-up, see [`wait_permission`]).
+pub fn is_permission_tracked(request_id: &str) -> bool {
+    let snapshot = runtime().lock().ok().and_then(|rt| {
+        let has_request = rt
+            .pending_permission
+            .as_ref()
+            .is_some_and(|held| held.request_ids.iter().any(|id| id == request_id));
+        let waiting = rt
+            .waiting_permissions
+            .iter()
+            .any(|queued| queued.pending.request_ids.iter().any(|id| id == request_id));
+        Some((has_request, waiting))
+    });
+    snapshot.is_some_and(|(has_request, waiting)| {
+        otb_core::attach_restore_gates::is_permission_tracked(has_request, false, waiting)
+    })
+}
+
+/// Whether a pending request belongs to the followed session or one of its
+/// known subagents (TS `belongsToFollowedSession` sync half: the attached
+/// session itself plus child links registered via
+/// [`ingest_restored_child`]). Unknown subagent links skip the restore with
+/// a log: the server parent-chain resolve (`resolveSessionParentChain`
+/// parity) stays a dispatcher follow-up.
+pub fn belongs_to_followed_session(request_session_id: &str) -> bool {
+    if envelope_session_followed(request_session_id) {
+        return true;
+    }
+    tracing::info!(
+        "[otb-bot] attach: pending request outside followed session skipped \
+         (TODO: resolveSessionParentChain server-chain parity)"
+    );
+    false
 }
 
 /// Poll card data prepped from a live `question.asked` / V2 `form.created`
@@ -793,18 +977,47 @@ pub fn drain_reconnect_restore(busy: bool) -> Option<ReconnectRestore> {
     Some(plan)
 }
 
-/// Release the single slot and forget both pending identities (TS:
+/// Release the single slot and move the next waiting interaction in (TS:
 /// `clearQuestionInteraction` / `clearPermissionInteraction` plus the
-/// manager `clear`). Called once OpenCode resolves the held request —
-/// accepted or already-settled (`gone`) — so a waiting interaction can move
-/// in. Lock failure still clears the slot first so prompts never wedge.
+/// manager `clear`, then the waiting queue). Called once OpenCode resolves
+/// the held request — accepted or already-settled (`gone`) — or when a
+/// stale/settled-outside hold is dropped. Q-over-P priority (TS
+/// `restorePendingPermissions` wait branch + `presentPermission` wait
+/// branch): a queued question shows next; else a queued permission shows
+/// only while no question is active. Lock failure still clears the slot
+/// first so prompts never wedge.
 pub fn release_interaction_slot() {
     if let Ok(mut slot) = slot().lock() {
         slot.clear();
     }
-    if let Ok(mut rt) = runtime().lock() {
+    let next_question = runtime().lock().ok().and_then(|mut rt| {
         rt.pending_question = None;
         rt.pending_permission = None;
+        rt.waiting_questions.pop_front()
+    });
+    if let Some(queued) = next_question {
+        hold_question_slot(
+            &queued.pending.request_id,
+            &queued.pending.session_id,
+            &queued.pending.directory,
+        );
+        tracing::info!("[otb-bot] attach: slot released, next queued question shown");
+        emit_poll_card(queued.card);
+        return;
+    }
+    let next_permission = runtime()
+        .lock()
+        .ok()
+        .and_then(|mut rt| rt.waiting_permissions.pop_front());
+    if let Some(queued) = next_permission {
+        hold_permission_slot(
+            &queued.pending.request_ids,
+            &queued.pending.session_id,
+            &queued.pending.directory,
+        );
+        tracing::info!("[otb-bot] attach: slot released, next queued permission shown");
+        emit_permission_card(queued.card);
+        return;
     }
     tracing::info!("[otb-bot] attach: interaction slot released");
 }
@@ -831,6 +1044,282 @@ fn with_aggregator<R>(f: impl FnOnce(&mut SummaryAggregator) -> R) -> Option<R> 
     aggregator().lock().ok().map(|mut agg| f(&mut agg))
 }
 
+/// Parse one raw pending-list row into its slot identity plus prepped card
+/// (TS `restorePendingQuestions` list shape: V1 `question.list` rows
+/// `{id, sessionID, questions[]}` and V2 `form.list` rows mapped through
+/// `toV1Question` — `{id, sessionID, fields[]/title}` — both admitted
+/// here). Returns `None` when the row carries no usable request/session
+/// identity.
+fn pending_question_from_list_row(
+    row: &Value,
+    directory: &str,
+) -> Option<(PendingQuestion, PollCardData)> {
+    let request_id = str_field_any(row, &["id", "requestID", "requestId"])?;
+    let session_id = str_field_any(row, &["sessionID", "session_id"])?;
+    let dir = if directory.is_empty() {
+        str_field_any(row, &["directory"]).unwrap_or_default()
+    } else {
+        directory.to_string()
+    };
+    let items = row
+        .get("questions")
+        .or_else(|| row.get("fields"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut headers = Vec::new();
+    for item in &items {
+        if let Some(header) = str_field_any(item, &["header", "question", "title", "key"]) {
+            headers.push(header);
+        }
+    }
+    let fallback_title = str_field_any(row, &["title"]).unwrap_or_default();
+    if headers.is_empty() && !fallback_title.is_empty() {
+        headers.push(fallback_title);
+    }
+    let pending = PendingQuestion {
+        request_id: request_id.clone(),
+        session_id: session_id.clone(),
+        directory: dir.clone(),
+    };
+    let card = PollCardData {
+        request_id,
+        session_id,
+        directory: dir,
+        question_count: items.len(),
+        headers,
+    };
+    Some((pending, card))
+}
+
+/// Parse one raw pending-permission row into its slot identity plus prepped
+/// card (TS `restorePendingPermissions` list shape: V1 `permission.list`
+/// rows `{id, sessionID, permission, patterns[]}` and V2
+/// `permission.request.list` rows mapped through `toV1Permission` —
+/// `{id, sessionID, action, resources[]}` — both admitted here). Returns
+/// `None` when the row carries no usable request/session identity.
+fn pending_permission_from_list_row(
+    row: &Value,
+    directory: &str,
+) -> Option<(PendingPermission, PermissionCardData)> {
+    let request_id = str_field_any(row, &["id", "requestID", "requestId"])?;
+    let session_id = str_field_any(row, &["sessionID", "session_id"])?;
+    let dir = if directory.is_empty() {
+        str_field_any(row, &["directory"]).unwrap_or_default()
+    } else {
+        directory.to_string()
+    };
+    let permission = str_field_any(row, &["permission", "action"]).unwrap_or_default();
+    let pattern_count = row
+        .get("patterns")
+        .or_else(|| row.get("resources"))
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let pending = PendingPermission {
+        request_ids: vec![request_id.clone()],
+        session_id: session_id.clone(),
+        directory: dir.clone(),
+    };
+    let card = PermissionCardData {
+        request_ids: vec![request_id],
+        session_id,
+        directory: dir,
+        permission,
+        pattern_count,
+    };
+    Some((pending, card))
+}
+
+/// Reconcile held and waiting interactions against fresh pending-list id
+/// sets (TS `settleRequestsGoneWhileDisconnected` backend half): waiting
+/// requests OpenCode no longer lists leave the queue
+/// (`should_drop_waiting_while_gone`), and a held request gone from the
+/// lists releases the slot so the next queued interaction shows (the
+/// settled-outside / not-answered card-close copy stays a telegram-ux hook
+/// follow-up — only the release plus this log land here). Runs only on
+/// successful list loads, never on transport errors: a `None` side (that
+/// list's load failed) skips that side's reconcile entirely (TS
+/// `if (error || !data)` skip via
+/// [`otb_core::attach_restore_gates::should_skip_pending_restore`), so a
+/// failed load's empty id set never drops waiters or releases the hold.
+fn reconcile_against_pending_lists(
+    question_ids: Option<&[String]>,
+    permission_ids: Option<&[String]>,
+) {
+    let skip_questions = otb_core::attach_restore_gates::should_skip_pending_restore(
+        question_ids.is_none(),
+        question_ids.is_some(),
+    );
+    let skip_permissions = otb_core::attach_restore_gates::should_skip_pending_restore(
+        permission_ids.is_none(),
+        permission_ids.is_some(),
+    );
+    if skip_questions && skip_permissions {
+        tracing::debug!("[otb-bot] attach: pending restore failed, skipping reconcile");
+        return;
+    }
+    let dropped_questions = if skip_questions {
+        Some(0)
+    } else {
+        let ids = question_ids.unwrap_or_default();
+        runtime().lock().ok().map(|mut rt| {
+            let before = rt.waiting_questions.len();
+            rt.waiting_questions.retain(|queued| {
+                let gone = otb_core::attach_restore_gates::should_drop_waiting_while_gone(
+                    ids.contains(&queued.pending.request_id),
+                );
+                !gone
+            });
+            before.saturating_sub(rt.waiting_questions.len())
+        })
+    };
+    let dropped_permissions = if skip_permissions {
+        Some(0)
+    } else {
+        let ids = permission_ids.unwrap_or_default();
+        runtime().lock().ok().map(|mut rt| {
+            let before = rt.waiting_permissions.len();
+            rt.waiting_permissions.retain(|queued| {
+                let still_listed = queued.pending.request_ids.iter().any(|id| ids.contains(id));
+                !otb_core::attach_restore_gates::should_drop_waiting_while_gone(still_listed)
+            });
+            before.saturating_sub(rt.waiting_permissions.len())
+        })
+    };
+    if dropped_questions == Some(0) && dropped_permissions == Some(0) {
+        return;
+    }
+    tracing::info!(
+        "[otb-bot] attach: dropped gone-while-disconnected waits (questions={}, permissions={}; settled card-close stays a telegram-ux follow-up)",
+        dropped_questions.unwrap_or(0),
+        dropped_permissions.unwrap_or(0),
+    );
+    let held_gone = runtime().lock().ok().is_some_and(|rt| {
+        if !skip_questions {
+            if let Some(held) = rt.pending_question.clone() {
+                if !question_ids.unwrap_or_default().contains(&held.request_id) {
+                    return true;
+                }
+            }
+        }
+        if !skip_permissions {
+            if let Some(held) = rt.pending_permission.clone() {
+                let still_listed = held
+                    .request_ids
+                    .iter()
+                    .any(|id| permission_ids.unwrap_or_default().contains(id));
+                if !still_listed {
+                    return true;
+                }
+            }
+        }
+        false
+    });
+    if held_gone {
+        tracing::info!(
+            "[otb-bot] attach: held request settled outside Telegram while disconnected; releasing (card-close copy stays a telegram-ux follow-up)"
+        );
+        release_interaction_slot();
+    }
+}
+
+/// Reload pending questions/permissions after attach and restore them
+/// through the single slot (TS `attachToSession:382-412`: first question
+/// shown via the poll hook, rest queued; permissions queued while a question
+/// is active, else shown). All failures log-and-continue — attach never
+/// fails by construction.
+async fn restore_pending_lists_task(session_id: &str, directory: &str) {
+    tracing::debug!("[otb-bot] attach: reloading pending lists for session {session_id}");
+    let client = crate::opencode::OpencodeClient::from_env();
+    let mut question_ids: Option<Vec<String>> = None;
+    match client.list_pending_questions(directory).await {
+        Err(err) => {
+            tracing::warn!("[otb-bot] attach: pending question reload failed, skipping: {err}");
+        }
+        Ok(rows) => {
+            let mut ids = Vec::new();
+            let mut shown = false;
+            for row in &rows {
+                let Some((pending, card)) = pending_question_from_list_row(row, directory) else {
+                    continue;
+                };
+                ids.push(pending.request_id.clone());
+                if is_question_tracked(&pending.request_id) {
+                    continue;
+                }
+                if !belongs_to_followed_session(&pending.session_id) {
+                    continue;
+                }
+                if !shown && interaction_slot_kind().is_none() {
+                    hold_question_slot(
+                        &pending.request_id,
+                        &pending.session_id,
+                        &pending.directory,
+                    );
+                    tracing::info!("[otb-bot] attach: restored pending question shown");
+                    emit_poll_card(card);
+                    shown = true;
+                } else {
+                    wait_question(pending, card, false);
+                }
+            }
+            if shown || !ids.is_empty() {
+                tracing::info!("[otb-bot] attach: pending question restore done (shown={shown})");
+            }
+            question_ids = Some(ids);
+        }
+    }
+    let mut permission_ids: Option<Vec<String>> = None;
+    match client.list_pending_permissions(directory).await {
+        Err(err) => {
+            tracing::warn!("[otb-bot] attach: pending permission reload failed, skipping: {err}");
+        }
+        Ok(rows) => {
+            let mut ids = Vec::new();
+            for row in &rows {
+                let Some((pending, card)) = pending_permission_from_list_row(row, directory) else {
+                    continue;
+                };
+                ids.extend(pending.request_ids.clone());
+                if pending
+                    .request_ids
+                    .iter()
+                    .any(|id| is_permission_tracked(id))
+                {
+                    continue;
+                }
+                if !belongs_to_followed_session(&pending.session_id) {
+                    continue;
+                }
+                // Q-over-P (TS `restorePendingPermissions` wait branch and
+                // `presentPermission` wait branch): permissions wait while
+                // any interaction is active, else show.
+                if interaction_slot_kind().is_some() {
+                    wait_permission(pending, card, false);
+                } else {
+                    hold_permission_slot(
+                        &pending.request_ids,
+                        &pending.session_id,
+                        &pending.directory,
+                    );
+                    tracing::info!("[otb-bot] attach: restored pending permission shown");
+                    emit_permission_card(card);
+                }
+            }
+            if !ids.is_empty() {
+                tracing::info!("[otb-bot] attach: pending permission restore done");
+            }
+            permission_ids = Some(ids);
+        }
+    }
+    // Transport-error contract: each side reconciles only on its own
+    // successful load (`None` = that load failed, skip its side via
+    // `should_skip_pending_restore`), so a failed load never drops waiters
+    // or releases the hold with an empty id set.
+    reconcile_against_pending_lists(question_ids.as_deref(), permission_ids.as_deref());
+}
+
 /// Follow a session and make sure its event stream pumps (TS: `attachToSession`
 /// core chain minus presentation/restore).
 ///
@@ -839,6 +1328,16 @@ fn with_aggregator<R>(f: impl FnOnce(&mut SummaryAggregator) -> R) -> Option<R> 
 /// subscription for the directory. Never fails: subscription errors stay
 /// inside the spawned pump task (TS: `.catch(log)`).
 pub fn attach_session(session_id: &str, directory: &str) {
+    attach_session_with_restore(session_id, directory, false);
+}
+
+/// [`attach_session`] plus the pending question/permission list reload (TS:
+/// `attachToSession:382-412` `(!alreadyAttached || forceFullRestore) &&
+/// !questionManager.isActive() && !permissionManager.isActive()` gate).
+/// The reload runs as a spawned best-effort task — attach itself never
+/// blocks on it — and every list failure logs-and-continues. Outside a
+/// tokio runtime (unit tests) the restore is skipped with a log.
+pub fn attach_session_with_restore(session_id: &str, directory: &str, force_full_restore: bool) {
     let already_attached = runtime()
         .lock()
         .ok()
@@ -854,11 +1353,22 @@ pub fn attach_session(session_id: &str, directory: &str) {
         });
     }
     tracing::info!("[otb-bot] attach: following session {session_id}");
-    // Trace-only restore gate (TS `attachToSession` pending-load guard):
-    // the pending list reload itself stays a dispatcher follow-up, so a
-    // held slot keeps blocking per the single-slot rule.
-    if should_restore_pending_now(already_attached, false) {
-        tracing::debug!("[otb-bot] attach: slot free, pending restore may run");
+    // Pending-list reload (TS `attachToSession` restore gate): a held slot
+    // keeps blocking per the single-slot rule; only a free slot reloads.
+    if should_restore_pending_now(already_attached, force_full_restore) {
+        tracing::debug!("[otb-bot] attach: slot free, reloading pending lists");
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                let owned_session = session_id.to_string();
+                let owned_dir = directory.to_string();
+                handle.spawn(async move {
+                    restore_pending_lists_task(&owned_session, &owned_dir).await;
+                });
+            }
+            Err(_) => {
+                tracing::debug!("[otb-bot] attach: no tokio runtime, pending restore skipped");
+            }
+        }
     } else {
         tracing::debug!("[otb-bot] attach: skipping pending restore (attached or slot held)");
     }
@@ -974,18 +1484,39 @@ fn handle_live_envelope(event_type: &str, payload: &Value, directory: &str) {
             tracing::debug!("[otb-bot] attach: ignoring question for unfollowed session");
             return;
         }
+        if is_question_tracked(&pending.request_id) {
+            tracing::debug!("[otb-bot] attach: ignoring duplicate question ask");
+            return;
+        }
         let dir = if pending.directory.is_empty() {
             directory.to_string()
         } else {
             pending.directory.clone()
         };
+        let card = poll_card_from_envelope(event_type, payload).map(|card| PollCardData {
+            directory: dir.clone(),
+            ..card
+        });
+        // Occupied slot queues behind (TS `waitQuestion` parity); release
+        // shows the next waiter. A free slot holds and presents at once.
+        if interaction_slot_kind().is_some() {
+            if let Some(card) = card {
+                wait_question(
+                    PendingQuestion {
+                        directory: dir,
+                        ..pending
+                    },
+                    card,
+                    false,
+                );
+            } else {
+                tracing::warn!("[otb-bot] attach: question card unpreppable while slot held");
+            }
+            return;
+        }
         with_aggregator(|agg| agg.open_question(&pending.session_id, &pending.request_id));
         hold_question_slot(&pending.request_id, &pending.session_id, &dir);
-        if let Some(card) = poll_card_from_envelope(event_type, payload) {
-            let card = PollCardData {
-                directory: dir,
-                ..card
-            };
+        if let Some(card) = card {
             tracing::info!("[otb-bot] attach: question asked, poll card prepped");
             emit_poll_card(card);
         }
@@ -996,19 +1527,46 @@ fn handle_live_envelope(event_type: &str, payload: &Value, directory: &str) {
             tracing::debug!("[otb-bot] attach: ignoring permission for unfollowed session");
             return;
         }
+        let dominated = pending
+            .request_ids
+            .iter()
+            .any(|id| is_permission_tracked(id));
+        if dominated {
+            tracing::debug!("[otb-bot] attach: ignoring duplicate permission ask");
+            return;
+        }
         let dir = if pending.directory.is_empty() {
             directory.to_string()
         } else {
             pending.directory.clone()
         };
+        let card =
+            permission_card_from_envelope(event_type, payload).map(|card| PermissionCardData {
+                directory: dir.clone(),
+                ..card
+            });
+        // Q-over-P (TS `presentPermission` wait branch): any held
+        // interaction queues the permission; release shows it once no
+        // question is active.
+        if interaction_slot_kind().is_some() {
+            if let Some(card) = card {
+                wait_permission(
+                    PendingPermission {
+                        directory: dir,
+                        ..pending
+                    },
+                    card,
+                    false,
+                );
+            } else {
+                tracing::warn!("[otb-bot] attach: permission card unpreppable while slot held");
+            }
+            return;
+        }
         let request_id = pending.request_ids.first().cloned().unwrap_or_default();
         with_aggregator(|agg| agg.request_permission(&pending.session_id, &request_id, ""));
         hold_permission_slot(&pending.request_ids, &pending.session_id, &dir);
-        if let Some(card) = permission_card_from_envelope(event_type, payload) {
-            let card = PermissionCardData {
-                directory: dir,
-                ..card
-            };
+        if let Some(card) = card {
             tracing::info!("[otb-bot] attach: permission asked, card prepped");
             emit_permission_card(card);
         }
@@ -1269,6 +1827,8 @@ mod tests {
             rt.pending_question = None;
             rt.pending_permission = None;
             rt.pending_reconnect_restart = None;
+            rt.waiting_questions.clear();
+            rt.waiting_permissions.clear();
         }
         guard
     }
@@ -1660,6 +2220,318 @@ mod tests {
         };
         assert!(should_emit_session_idle(&other));
         note_live_activity();
+    }
+
+    /// Hold identities used by the queue-order tests below.
+    fn test_pending_question(request_id: &str) -> PendingQuestion {
+        PendingQuestion {
+            request_id: request_id.to_string(),
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+        }
+    }
+
+    fn test_poll_card(request_id: &str) -> PollCardData {
+        PollCardData {
+            request_id: request_id.to_string(),
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            question_count: 1,
+            headers: vec!["Pick?".to_string()],
+        }
+    }
+
+    fn test_pending_permission(request_id: &str) -> PendingPermission {
+        PendingPermission {
+            request_ids: vec![request_id.to_string()],
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+        }
+    }
+
+    fn test_perm_card(request_id: &str) -> PermissionCardData {
+        PermissionCardData {
+            request_ids: vec![request_id.to_string()],
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+            permission: "bash".to_string(),
+            pattern_count: 1,
+        }
+    }
+
+    #[test]
+    fn wait_question_dedupes_shown_and_queued_and_at_head_leads() {
+        // Arrange: a shown poll plus one waiter.
+        let _guard = lock_slot_tests();
+        release_interaction_slot();
+        hold_question_slot("req_1", "ses_1", "/work");
+        // Act: re-queue the shown request, then the same waiter twice.
+        wait_question(
+            test_pending_question("req_1"),
+            test_poll_card("req_1"),
+            false,
+        );
+        wait_question(
+            test_pending_question("req_2"),
+            test_poll_card("req_2"),
+            false,
+        );
+        wait_question(
+            test_pending_question("req_2"),
+            test_poll_card("req_2"),
+            false,
+        );
+        // Assert: shown/duplicate requests never queue.
+        let queued: Vec<String> = runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_questions
+            .iter()
+            .map(|queued| queued.pending.request_id.clone())
+            .collect();
+        assert_eq!(queued, vec!["req_2".to_string()]);
+        // Act: a released poll rejoins at the head of the queue.
+        wait_question(
+            test_pending_question("req_3"),
+            test_poll_card("req_3"),
+            true,
+        );
+        // Assert: the head waiter leads.
+        let queued: Vec<String> = runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_questions
+            .iter()
+            .map(|queued| queued.pending.request_id.clone())
+            .collect();
+        assert_eq!(queued, vec!["req_3".to_string(), "req_2".to_string()]);
+        release_interaction_slot();
+        release_interaction_slot();
+        release_interaction_slot();
+    }
+
+    #[test]
+    fn wait_permission_dedupes_shown_and_queued_and_at_head_leads() {
+        // Arrange: a shown permission plus one waiter.
+        let _guard = lock_slot_tests();
+        release_interaction_slot();
+        hold_permission_slot(&["perm_1".to_string()], "ses_1", "/work");
+        // Act: re-queue the shown request, then the same waiter twice.
+        wait_permission(
+            test_pending_permission("perm_1"),
+            test_perm_card("perm_1"),
+            false,
+        );
+        wait_permission(
+            test_pending_permission("perm_2"),
+            test_perm_card("perm_2"),
+            false,
+        );
+        wait_permission(
+            test_pending_permission("perm_2"),
+            test_perm_card("perm_2"),
+            false,
+        );
+        // Assert: shown/duplicate requests never queue.
+        let queued: Vec<Vec<String>> = runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_permissions
+            .iter()
+            .map(|queued| queued.pending.request_ids.clone())
+            .collect();
+        assert_eq!(queued, vec![vec!["perm_2".to_string()]]);
+        // Act: a released prompt rejoins at the head of the queue.
+        wait_permission(
+            test_pending_permission("perm_3"),
+            test_perm_card("perm_3"),
+            true,
+        );
+        // Assert: the head waiter leads.
+        let queued: Vec<Vec<String>> = runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_permissions
+            .iter()
+            .map(|queued| queued.pending.request_ids.clone())
+            .collect();
+        assert_eq!(
+            queued,
+            vec![vec!["perm_3".to_string()], vec!["perm_2".to_string()]]
+        );
+        release_interaction_slot();
+        release_interaction_slot();
+        release_interaction_slot();
+    }
+
+    #[test]
+    fn release_interaction_slot_shows_queued_question_before_permission() {
+        // Arrange: a held poll with one queued question and one queued
+        // permission.
+        let _guard = lock_slot_tests();
+        release_interaction_slot();
+        hold_question_slot("req_1", "ses_1", "/work");
+        wait_question(
+            test_pending_question("req_2"),
+            test_poll_card("req_2"),
+            false,
+        );
+        wait_permission(
+            test_pending_permission("perm_1"),
+            test_perm_card("perm_1"),
+            false,
+        );
+        // Act: release the held poll.
+        release_interaction_slot();
+        // Assert: Q-over-P — the queued question shows before the permission.
+        assert_eq!(
+            held_question()
+                .as_ref()
+                .map(|held| held.request_id.as_str()),
+            Some("req_2")
+        );
+        assert_eq!(held_permission(), None);
+        // Act: release the restored question.
+        release_interaction_slot();
+        // Assert: the queued permission shows once no question is active.
+        assert_eq!(held_question(), None);
+        assert_eq!(
+            held_permission().map(|held| held.request_ids),
+            Some(vec!["perm_1".to_string()])
+        );
+        release_interaction_slot();
+    }
+
+    #[test]
+    fn stale_hold_checks_follow_session_switches() {
+        // Arrange: a question hold owned by the previous session.
+        let _guard = lock_slot_tests();
+        release_interaction_slot();
+        hold_question_slot("req_1", "ses_1", "/work");
+        // Act + Assert: the owning session matches; anything else is stale
+        // (a blank current id never matches a real hold).
+        assert!(!is_question_hold_stale("ses_1"));
+        assert!(is_question_hold_stale("ses_2"));
+        assert!(is_question_hold_stale(""));
+        assert!(!is_permission_hold_stale("ses_1"));
+        // Arrange: the symmetric permission hold.
+        hold_permission_slot(&["perm_1".to_string()], "ses_1", "/work");
+        // Act + Assert: same switch rule for permissions.
+        assert!(!is_permission_hold_stale("ses_1"));
+        assert!(is_permission_hold_stale("ses_2"));
+        assert!(is_permission_hold_stale(""));
+        release_interaction_slot();
+    }
+
+    #[test]
+    fn belongs_to_followed_session_matches_attached_and_known_children() {
+        // Arrange: a detached runtime follows nothing.
+        let _guard = lock_slot_tests();
+        runtime().lock().unwrap_or_else(|e| e.into_inner()).attached = None;
+        // Act + Assert: no attached session means not followed.
+        assert!(!belongs_to_followed_session("ses_1"));
+        // Arrange: follow ses_1.
+        runtime().lock().unwrap_or_else(|e| e.into_inner()).attached = Some(AttachedSession {
+            session_id: "ses_1".to_string(),
+            directory: "/work".to_string(),
+        });
+        // Act + Assert: the attached session follows; unknown sessions and
+        // blank ids skip (server parent-chain resolve stays a follow-up).
+        assert!(belongs_to_followed_session("ses_1"));
+        assert!(!belongs_to_followed_session("ses_2"));
+        assert!(!belongs_to_followed_session(""));
+        // Act: register a seen child link, like the restore ingest does.
+        ingest_restored_child("ses_child", "ses_1");
+        // Assert: the known child follows too.
+        assert!(belongs_to_followed_session("ses_child"));
+        // Cleanup: detach so no session leaks into other tests.
+        runtime().lock().unwrap_or_else(|e| e.into_inner()).attached = None;
+    }
+
+    #[test]
+    fn reconcile_skips_failed_list_loads_and_drops_on_successful_empty() {
+        // Arrange: a held poll plus one waiter per queue. Defect: a failed
+        // load's empty id set dropped waiters and released the hold.
+        let _guard = lock_slot_tests();
+        release_interaction_slot();
+        hold_question_slot("req_held", "ses_1", "/work");
+        wait_question(
+            test_pending_question("req_wait"),
+            test_poll_card("req_wait"),
+            false,
+        );
+        wait_permission(
+            test_pending_permission("perm_wait"),
+            test_perm_card("perm_wait"),
+            false,
+        );
+        // Act: both list loads failed.
+        reconcile_against_pending_lists(None, None);
+        // Assert: nothing drops and the hold stays.
+        assert_eq!(
+            held_question()
+                .as_ref()
+                .map(|held| held.request_id.as_str()),
+            Some("req_held")
+        );
+        assert_eq!(
+            runtime()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .waiting_questions
+                .len(),
+            1
+        );
+        assert_eq!(
+            runtime()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .waiting_permissions
+                .len(),
+            1
+        );
+        // Act: the question load succeeded with both ids still listed.
+        let listed = vec!["req_held".to_string(), "req_wait".to_string()];
+        reconcile_against_pending_lists(Some(listed.as_slice()), None);
+        // Assert: the failed permission side still skips; nothing drops.
+        assert_eq!(
+            held_question()
+                .as_ref()
+                .map(|held| held.request_id.as_str()),
+            Some("req_held")
+        );
+        assert_eq!(held_permission().map(|held| held.request_ids), None);
+        assert_eq!(
+            runtime()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .waiting_permissions
+                .len(),
+            1
+        );
+        // Act: the question load succeeded empty while permissions still
+        // list theirs.
+        let empty: Vec<String> = Vec::new();
+        let perms = vec!["perm_wait".to_string()];
+        reconcile_against_pending_lists(Some(empty.as_slice()), Some(perms.as_slice()));
+        // Assert: the gone question waiter drops and the orphaned hold
+        // releases into the waiting permission (Q-over-P release chain).
+        assert_eq!(held_question(), None);
+        assert_eq!(
+            held_permission().map(|held| held.request_ids),
+            Some(vec!["perm_wait".to_string()])
+        );
+        assert!(runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_questions
+            .is_empty());
+        assert!(runtime()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .waiting_permissions
+            .is_empty());
+        release_interaction_slot();
     }
 
     #[test]

@@ -2479,6 +2479,12 @@ async fn handle_messages_fork(bot: &teloxide_core::Bot, locale: &str, query: &Ca
         id.chars().take(8).collect::<String>(),
         id.len()
     );
+    // TS `session_forked` parity (`message-history-callback-handler.ts`):
+    // the fork replaces the current session, so the previous session's held
+    // question/permission must not block its prompts; follow the forked
+    // session so its event stream pumps (non-fatal by construction).
+    crate::attach::release_interaction_slot();
+    crate::attach::attach_session(&id, &context.directory);
     let confirmation =
         crate::locale::translate(locale, "messages.fork_success").replace("{text}", &target.text);
     reply_list_view(bot, chat_id, &confirmation, None).await;
@@ -5712,10 +5718,14 @@ pub fn parse_confirm_pick_name(text: &str) -> Option<String> {
     None
 }
 
-/// Ensure a session exists in the project worktree for a catalog execute:
-/// the remembered session wins when it still belongs to the worktree,
-/// otherwise a fresh session is created and remembered (JS
-/// `ensureSessionForProject` parity in `command-callback-handler.ts`).
+/// Ensure a session exists in the project worktree for a prompt or catalog
+/// execute: the remembered session wins when it still belongs to the
+/// worktree; a remembered session from another folder resets
+/// (`processUserPrompt:219-226` parity — clears `currentSession` plus the
+/// interaction slot and reports `bot.session_reset_project_mismatch`,
+/// never a silent brand-new session); otherwise a fresh session is created
+/// and remembered (JS `ensureSessionForProject` /
+/// `new-command.ts` `setCurrentSession` parity).
 /// Returns `(id, directory)` or the i18n key for the failure reply.
 async fn ensure_execute_session(worktree: &str) -> Result<(String, String), &'static str> {
     let app_home = crate::config::resolve_app_home();
@@ -5730,6 +5740,12 @@ async fn ensure_execute_session(worktree: &str) -> Result<(String, String), &'st
         if dir == worktree {
             return Ok((id, dir));
         }
+        tracing::warn!("[otb-bot] telegram: session/project mismatch, resetting session context");
+        if let Err(err) = crate::settings_current::clear_current_session(&app_home) {
+            tracing::warn!("[otb-bot] telegram: cannot reset mismatched session: {err}");
+        }
+        crate::attach::release_interaction_slot();
+        return Err("bot.session_reset_project_mismatch");
     }
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
@@ -7069,6 +7085,47 @@ async fn handle_plain_text_prompt(
     // A held question instead takes the text as its custom answer (TS
     // `handleQuestionTextAnswer` parity, minus the custom-input affordance:
     // with no poll cards rendered, the hold itself is the prompt).
+    // Stale-hold re-validation (TS `resetInteractions("session_switched")`
+    // half): a late `question.asked` event from the previous session landing
+    // after a switch must not swallow the next prompt. A stale hold is
+    // dropped with a visible notice, so the text below dispatches as a fresh
+    // prompt; permission holds keep the blocked-hint path untouched.
+    if crate::attach::held_question().is_some() || crate::attach::held_permission().is_some() {
+        let current_id =
+            crate::settings_current::read_settings_current(&crate::config::resolve_app_home())
+                .session_id
+                .unwrap_or_default();
+        if crate::attach::is_question_hold_stale(&current_id) {
+            crate::attach::release_interaction_slot();
+            tracing::info!("[otb-bot] telegram: dropped stale question hold from previous session");
+            if let Err(err) = send_message(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "question.inactive_callback"),
+            )
+            .await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+        } else if crate::attach::is_permission_hold_stale(&current_id) {
+            // Symmetric stale-hold re-validation for permissions: a late
+            // `permission.asked` event from the previous session landing
+            // after a switch must not keep blocking the next prompt either.
+            crate::attach::release_interaction_slot();
+            tracing::info!(
+                "[otb-bot] telegram: dropped stale permission hold from previous session"
+            );
+            if let Err(err) = send_message(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "permission.inactive_callback"),
+            )
+            .await
+            {
+                tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+            }
+        }
+    }
     if let Some(pending) = crate::attach::held_question() {
         tracing::info!("[otb-bot] telegram: plain-text answer routed to held question");
         let client = crate::config::AppConfig::load()
@@ -7099,12 +7156,21 @@ async fn handle_plain_text_prompt(
                 }
                 Err(err) => {
                     tracing::warn!("[otb-bot] telegram: question answer failed: {err}");
-                    // Keep the hold so a retry still lands (TS
-                    // delivery-warning parity), and say so.
+                    // Keep the hold so a retry still lands, and say so.
+                    // NOTE (TS parity flag for telegram-ux): the TS poll
+                    // reuses `permission.delivery_failed` copy for the
+                    // question delivery warning
+                    // (`question-menu.ts:showQuestionDeliveryWarning`);
+                    // the Rust side answers the question-scoped
+                    // `question.processing_error_callback` key instead —
+                    // confirm the intended copy before unifying.
                     if let Err(err) = send_message(
                         &bot_owned,
                         chat_id,
-                        &crate::locale::translate(&locale_owned, "permission.delivery_failed"),
+                        &crate::locale::translate(
+                            &locale_owned,
+                            "question.processing_error_callback",
+                        ),
                     )
                     .await
                     {
@@ -7152,10 +7218,11 @@ async fn handle_plain_text_prompt(
         }
     };
     // TS `processUserPrompt:219-226` mismatch reset parity:
-    // `ensure_execute_session` already recreates the session when the
-    // remembered directory drifts from the project worktree, so a hit
-    // here only traces (a future drift surfaces instead of prompting the
-    // wrong folder silently).
+    // `ensure_execute_session` already resets (with the visible
+    // `bot.session_reset_project_mismatch` reply) when the remembered
+    // directory drifts from the project worktree, so a hit here is a
+    // defensive invariant only — the prompt below always targets the
+    // project folder, never a stale foreign session.
     if otb_core::prompt_request_gates::is_session_project_mismatch(
         Some(session_dir.as_str()),
         &worktree,
@@ -7998,12 +8065,16 @@ async fn handle_question_callback(
             Err(err) => {
                 tracing::warn!("[otb-bot] telegram: question reject failed: {err}");
                 // The poll stays answerable: keep the hold so a retry can
-                // still dismiss it (TS delivery-warning parity), and say so.
+                // still dismiss it, and say so (same TS-parity copy flag as
+                // the question answer failure above).
                 if let Some(chat_id) = chat_id {
                     if let Err(err) = send_message(
                         &bot_owned,
                         chat_id,
-                        &crate::locale::translate(&locale_owned, "permission.delivery_failed"),
+                        &crate::locale::translate(
+                            &locale_owned,
+                            "question.processing_error_callback",
+                        ),
                     )
                     .await
                     {

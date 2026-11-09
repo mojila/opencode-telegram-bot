@@ -358,6 +358,34 @@ pub fn question_reply_payload(answers: &[Vec<String>]) -> Value {
     serde_json::json!({ "answers": answers })
 }
 
+/// Pending-question list path per server version (Node `question.list`
+/// parity: V1 SDK `question.list` is `GET /question` with `?directory=`;
+/// V2 fans out over `form.list` in `src/opencode/v2/client.ts:704-712`,
+/// whose native route is assumed `GET /api/form` with `?directory=` like
+/// the other V2 `api/` paths, see header item 2). Pure; testable.
+pub fn question_list_path(server_version: &str) -> &'static str {
+    if server_version == "v2" {
+        "api/form"
+    } else {
+        "question"
+    }
+}
+
+/// Pending-permission list path per server version (Node
+/// `permission.list` parity: V1 SDK `permission.list` is
+/// `GET /permission` with `?directory=`; V2 fans out over
+/// `permission.request.list` in `src/opencode/v2/client.ts:776-785`,
+/// whose native route is `GET /api/permission/request` with `?directory=`
+/// (vendored SDK service-timing chunk: `permission.request.list` lives at
+/// the `request` query location). Pure; testable.
+pub fn permission_list_path(server_version: &str) -> &'static str {
+    if server_version == "v2" {
+        "api/permission/request"
+    } else {
+        "permission"
+    }
+}
+
 /// Permission reply body per server version (pure; testable). `reply` is
 /// `once` / `always` / `reject` on both versions (V1 `permission.reply`,
 /// V2 `PermissionV2Reply`); `message` rides only when non-blank (TS passes
@@ -1454,6 +1482,48 @@ impl OpencodeClient {
         Ok(response.status().is_success())
     }
 
+    /// Pending questions (read-only; JS `question.list` parity in
+    /// `attach-service.ts:117-132`: V1 `GET /question?directory=`, V2
+    /// `GET /api/form?directory=` fanned out from
+    /// `src/opencode/v2/client.ts:704-712`). Returns raw rows (`id`,
+    /// `sessionID`, `questions`/`fields`); V1/V2 shaping stays with the
+    /// caller. Accepts a bare array or a `{"data":[...]}` envelope;
+    /// anything else yields an empty list. Any non-2xx is a request error
+    /// (the caller logs and continues without restore — attach never
+    /// fails by construction).
+    pub async fn list_pending_questions(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<Value>, reqwest::Error> {
+        let mut request = self.get(question_list_path(&self.server_version));
+        if !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request.send().await?.error_for_status()?;
+        let body: Value = response.json().await?;
+        Ok(session_list_from_body(&body))
+    }
+
+    /// Pending permissions (read-only; JS `permission.list` parity in
+    /// `attach-service.ts:134-149`: V1 `GET /permission?directory=`, V2
+    /// `GET /api/permission/request?directory=` fanned out from
+    /// `src/opencode/v2/client.ts:776-785` (`permission.request.list`).
+    /// Returns raw rows (`id`,
+    /// `sessionID`, `permission`/`action`); shaping stays with the caller.
+    /// Same envelope/error contract as [`list_pending_questions`].
+    pub async fn list_pending_permissions(
+        &self,
+        directory: &str,
+    ) -> Result<Vec<Value>, reqwest::Error> {
+        let mut request = self.get(permission_list_path(&self.server_version));
+        if !directory.is_empty() {
+            request = request.query(&[("directory", directory)]);
+        }
+        let response = request.send().await?.error_for_status()?;
+        let body: Value = response.json().await?;
+        Ok(session_list_from_body(&body))
+    }
+
     /// Subscribe to the SSE event stream with reconnect backoff (read-only).
     ///
     /// Mirrors `subscribeToEvents`: drops (errors, idle timeouts, clean
@@ -2031,6 +2101,18 @@ mod tests {
             question_reject_path("v2", "ses_1", "req_1"),
             "api/session/ses_1/question/req_1/reject"
         );
+    }
+
+    #[test]
+    fn pending_list_paths_follow_sdk_service_shapes() {
+        // Arrange: V1 global lists vs V2 fanned-out service routes.
+        // Act + Assert: `form.list` → GET /api/form stays (confirmed PASS).
+        assert_eq!(question_list_path("v1"), "question");
+        assert_eq!(question_list_path("v2"), "api/form");
+        // V2 `permission.request.list` → GET /api/permission/request
+        // (query location, vendored SDK service-timing chunk parity).
+        assert_eq!(permission_list_path("v1"), "permission");
+        assert_eq!(permission_list_path("v2"), "api/permission/request");
     }
 
     #[test]
