@@ -45,6 +45,15 @@ PRODUCT.md is still the source of truth for scope and milestones.
 - `cargo clippy -- -D warnings`
 - Rust edition 2021, strict warnings deny
 
+### Build cache hygiene
+
+- Workspace uses a single gitignored workspace-root `target/` (no per-crate targets).
+- Safe clean (default, no confirmation needed): `rm -rf target/debug/incremental target/tmp` (~2+ GB freed, rebuilds automatically).
+- Destructive cleans need explicit user confirmation via the `question` tool: full `cargo clean` (~5.5 GB: `debug` ~3.3 GB + `release` ~0.5 GB) forces a full rebuild, and `~/.cargo/registry` prune (~1.0 GB) forces re-download.
+- Never delete `Cargo.lock`, `target/debug/deps`, or `target/release` without confirmation.
+- Do not clean while `cargo build` / `cargo test` is running (incremental regrows and `rm` races).
+- After cleaning, verify with `cargo fmt --check`; hand build/test runs to qa-automation.
+
 ## Architecture
 
 ### Main components
