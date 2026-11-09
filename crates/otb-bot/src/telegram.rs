@@ -9249,6 +9249,120 @@ pub fn poll_retry_after_ms(err: &teloxide_core::RequestError) -> Option<u64> {
     }
 }
 
+/// Full source chain of a polling `get_updates` failure, joined
+/// outwards-in (pure; testable). Token-safe by construction: teloxide rewrites
+/// the token inside the stored `reqwest::Error` URL to `token:redacted` (or
+/// strips the URL) before wrapping it, and the chained sources
+/// (hyper/rustls/io) never carry the URL — only the token length is ever
+/// logged (see [`run_telegram_from_env`]). Today's `{err}` Display only shows
+/// the outer `error sending request for url (...)` line, which hides whether
+/// the process is dying on DNS, TLS, proxy, or connect.
+pub fn poll_error_chain(err: &teloxide_core::RequestError) -> String {
+    use std::error::Error as _;
+    const MAX_LINKS: usize = 8;
+    let mut parts = vec![err.to_string()];
+    let mut next = err.source();
+    while let Some(source) = next {
+        if parts.len() > MAX_LINKS {
+            parts.push("…".to_string());
+            break;
+        }
+        parts.push(source.to_string());
+        next = source.source();
+    }
+    parts.join(" <- caused by: ")
+}
+
+/// Best-effort transport hint for a polling failure (pure; testable): the
+/// lowercased [`poll_error_chain`] is scanned for DNS/TLS/proxy/timeout
+/// markers so the WARN line names where egress dies. Unknown shapes stay
+/// `"network"`.
+pub fn poll_error_hint(err: &teloxide_core::RequestError) -> &'static str {
+    match err {
+        teloxide_core::RequestError::Api(teloxide_core::ApiError::InvalidToken) => "token-rejected",
+        teloxide_core::RequestError::Api(_) => "api",
+        teloxide_core::RequestError::RetryAfter(_) => "retry-after",
+        teloxide_core::RequestError::MigrateToChatId(_) => "migrated",
+        teloxide_core::RequestError::InvalidJson { .. } => "invalid-json",
+        teloxide_core::RequestError::Io(_) => "io",
+        teloxide_core::RequestError::Network(_) => {
+            classify_network_hint(&poll_error_chain(err).to_lowercase())
+        }
+    }
+}
+
+/// Substring classifier over a lowercased error chain (pure; testable).
+fn classify_network_hint(lowered: &str) -> &'static str {
+    if lowered.contains("timed out") || lowered.contains("timeout") || lowered.contains("deadline")
+    {
+        "network-timeout"
+    } else if lowered.contains("certificate")
+        || lowered.contains("tls")
+        || lowered.contains("ssl")
+        || lowered.contains("verify")
+        || lowered.contains("handshake")
+    {
+        "network-tls"
+    } else if lowered.contains("proxy") {
+        "network-proxy"
+    } else if lowered.contains("dns")
+        || lowered.contains("resolve")
+        || lowered.contains("name or service not known")
+        || lowered.contains("nodename nor servname")
+        || lowered.contains("no such host")
+    {
+        "network-dns"
+    } else if lowered.contains("refused")
+        || lowered.contains("reset")
+        || lowered.contains("unreachable")
+        || lowered.contains("not permitted")
+        || lowered.contains("permission denied")
+    {
+        "network-connect"
+    } else {
+        "network"
+    }
+}
+
+/// Proxy env presence for the polling client (pure; testable). Only
+/// set/unset is reported — values may carry credentials and are never
+/// logged. `reqwest` (used inside `teloxide_core::Bot`) honours these
+/// automatically; the summary exists so the startup line shows whether the
+/// service process even sees a proxy (a shell-set proxy missing from the
+/// service env is the classic "curl works, service fails" shape).
+pub fn format_proxy_summary(https: bool, http: bool, all: bool, no_proxy: bool) -> String {
+    fn flag(set: bool) -> &'static str {
+        if set {
+            "set"
+        } else {
+            "unset"
+        }
+    }
+    format!(
+        "https_proxy={} http_proxy={} all_proxy={} no_proxy={}",
+        flag(https),
+        flag(http),
+        flag(all),
+        flag(no_proxy)
+    )
+}
+
+/// Thin env reader for [`format_proxy_summary`] (reads env only; the value
+/// itself is never logged).
+pub fn proxy_env_summary() -> String {
+    fn set(names: &[&str]) -> bool {
+        names
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    }
+    format_proxy_summary(
+        set(&["HTTPS_PROXY", "https_proxy"]),
+        set(&["HTTP_PROXY", "http_proxy"]),
+        set(&["ALL_PROXY", "all_proxy"]),
+        set(&["NO_PROXY", "no_proxy"]),
+    )
+}
+
 /// Long-poll forever with `get_updates` (offset ack + 30s timeout).
 /// Only called when [`polling_enabled`]; never called from tests.
 ///
@@ -9282,7 +9396,9 @@ pub async fn run_polling(bot: teloxide_core::Bot, allowed_user_id: u64, locale: 
                     poll_retry_after_ms(&err),
                 );
                 tracing::warn!(
-                    "[otb-bot] telegram: getUpdates failed (attempt {attempt}): {err}; retrying in {delay_ms}ms"
+                    "[otb-bot] telegram: getUpdates failed (attempt {attempt}): {err}; hint={}; chain={}; retrying in {delay_ms}ms",
+                    poll_error_hint(&err),
+                    poll_error_chain(&err),
                 );
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
@@ -9306,8 +9422,9 @@ pub async fn run_telegram_from_env() {
         .unwrap_or_else(|_| crate::locale::FALLBACK_LOCALE.to_string());
     let bot = create_bot(&token);
     tracing::info!(
-        "[otb-bot] telegram: polling started (token_len={} allowed_user_id={allowed})",
-        token.len()
+        "[otb-bot] telegram: polling started (token_len={} allowed_user_id={allowed} proxy[{}])",
+        token.len(),
+        proxy_env_summary()
     );
     install_card_hooks(&bot, i64::try_from(allowed).unwrap_or(0), &locale);
     install_session_idle_footer_hook(
@@ -9360,6 +9477,69 @@ mod tests {
         assert_eq!(
             otb_core::stores_runtime::next_startup_retry_delay_ms(10, None),
             60_000
+        );
+    }
+
+    #[test]
+    fn poll_error_chain_starts_with_outer_display() {
+        // Chain keeps the (already token-redacted) outer Display first, so
+        // the WARN line stays greppable while gaining the hidden causes.
+        let fatal = teloxide_core::RequestError::Api(teloxide_core::ApiError::InvalidToken);
+        let chain = poll_error_chain(&fatal);
+        assert!(chain.starts_with(&fatal.to_string()));
+        assert_eq!(poll_error_hint(&fatal), "token-rejected");
+        let retry_after =
+            teloxide_core::RequestError::RetryAfter(teloxide_core::types::Seconds::from_seconds(3));
+        assert_eq!(poll_error_hint(&retry_after), "retry-after");
+    }
+
+    #[test]
+    fn poll_error_hint_classifies_transport_failures() {
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: certificate verify failed"),
+            "network-tls"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: tls handshake failure"),
+            "network-tls"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: operation timed out"),
+            "network-timeout"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: proxy connect failed"),
+            "network-proxy"
+        );
+        assert_eq!(
+            classify_network_hint(
+                "error sending request <- caused by: failed to resolve host: name or service not known"
+            ),
+            "network-dns"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: connection refused"),
+            "network-connect"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request <- caused by: operation not permitted"),
+            "network-connect"
+        );
+        assert_eq!(
+            classify_network_hint("error sending request for url (https://api.telegram.org/...)"),
+            "network"
+        );
+    }
+
+    #[test]
+    fn proxy_summary_reports_presence_only() {
+        assert_eq!(
+            format_proxy_summary(true, false, false, true),
+            "https_proxy=set http_proxy=unset all_proxy=unset no_proxy=set"
+        );
+        assert_eq!(
+            format_proxy_summary(false, false, false, false),
+            "https_proxy=unset http_proxy=unset all_proxy=unset no_proxy=unset"
         );
     }
 
