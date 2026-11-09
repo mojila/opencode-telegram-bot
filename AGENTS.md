@@ -7,56 +7,80 @@ Instructions for AI agents working on this project.
 **opencode-telegram-bot** is a Telegram bot that acts as a mobile client for OpenCode.
 It lets a user run and monitor coding tasks on a local machine through Telegram.
 
+The implementation is now a **Rust workspace**: `otb-core` (pure logic, parity
+gates, formatters, managers) plus `otb-bot` (thin binary wiring: CLI, Telegram,
+health, store). The TypeScript `src/` tree is frozen and serves as parity source only.
+
 Functional requirements, features, and development status are in [PRODUCT.md](./PRODUCT.md).
+PRODUCT.md is still the source of truth for scope and milestones.
 
 ## Technology stack
 
-- **Language:** TypeScript 5.x
-- **Runtime:** Node.js 22.14+
-- **Package manager:** npm
-- **Configuration:** environment variables (`.env`)
-- **Logging:** custom logger with levels (`debug`, `info`, `warn`, `error`)
+- **Language:** Rust, edition 2021
+- **Workspace:** `Cargo.toml` with `resolver = "2"`, members `crates/otb-core` + `crates/otb-bot`
+- **Configuration:** environment variables (`.env` via `dotenvy`)
+- **Logging:** `tracing` with levels (`debug`, `info`, `warn`, `error`)
 
 ### Core dependencies
 
-- `grammy` - Telegram Bot API framework (https://grammy.dev/)
-- `@grammyjs/menu` - inline keyboards and menus
-- `@opencode-ai/sdk` - official OpenCode Server SDK
-- `dotenv` - environment variable loading
+- `tokio` (full) - async runtime
+- `teloxide-core` 0.11 - thin Telegram Bot API client only (no dispatcher yet)
+- `reqwest` (features `json` + `stream`) - OpenCode V1/V2 HTTP + SSE client
+- `rusqlite` (bundled) - session/project directory cache on an isolated path only
+- `axum` 0.7 - loopback health endpoint
+- `clap` (derive) - CLI (`start` / `status`)
+- `tracing` + `tracing-subscriber` - structured logging
+- `dotenvy` - `.env` loading
+- `serde` / `serde_json` - config and payload (de)serialization
+- `anyhow` / `thiserror` - error handling (`anyhow` at boundaries, `thiserror` for library types)
 
 ### Test dependencies
 
-- Vitest
-- Mocks/stubs via `vi.mock()`
+- `cargo test` (unit tests inline + `crates/otb-core/tests/`)
+- No external test runner; OpenCode HTTP interaction is covered with mocks/stubs
 
 ### Code quality
 
-- ESLint + Prettier
-- TypeScript strict mode
+- `cargo fmt`
+- `cargo clippy -- -D warnings`
+- Rust edition 2021, strict warnings deny
 
 ## Architecture
 
 ### Main components
 
-1. **Bot Layer** - grammY setup, middleware, commands, callback handlers
-2. **OpenCode Client Layer** - SDK wrapper and SSE event subscription
-3. **State Managers** - session/project/settings/question/permission/model/agent/variant/keyboard/pinned
-4. **Summary Pipeline** - event aggregation and Telegram-friendly formatting
-5. **Process Manager** - local OpenCode server process start, stop, and status
-6. **Runtime/CLI Layer** - runtime mode, config bootstrap, CLI commands
-7. **I18n Layer** - localized bot and CLI strings to multiple languages
+1. **otb-core (pure logic)** - `*_gates.rs` parity modules (slices 1-172), plus:
+   `formatters/`, `render/`, `keyboards.rs`, `streaming.rs`, `interaction_state.rs`,
+   `event_subscription.rs`, `prompt_queue_events.rs`, `scheduled_tasks.rs`,
+   `types_config.rs`, `i18n_full.rs` + `locale_*_gates.rs`, `managers/`
+2. **otb-bot (thin binary)** - `main.rs` + `cli.rs` / `commands.rs` (23) /
+   `menus.rs` (19) / `config.rs` / `guard.rs` / `health.rs` / `locale.rs` /
+   `logging.rs` / `media.rs` / `opencode.rs` (read-only) / `settings_current.rs` /
+   `store.rs` / `telegram.rs` (polling gated)
+3. **OpenCode Client Layer** - `reqwest` V1/V2 clients, `event_subscription` SSE
+   stream, `v2_mappers` V2-to-core translation, `server_target` / `server_health` /
+   `process` parity
+4. **State Managers** - `otb-core/src/managers/` (session/project/settings/question/
+   permission/model/agent/variant/keyboard/pinned parity)
+5. **Summary Pipeline** - event aggregation and Telegram-friendly formatting
+   (`formatters/`, `render/`, `streaming.rs`, `rich_blocks.rs`, `rich_message.rs`,
+   `markdown_normalizer.rs`)
+6. **Process Manager** - local OpenCode server process start, stop, and status
+   (`local_process_gates`, `server_command_gates`, `server_target_gates` parity)
+7. **Runtime/CLI Layer** - `cli.rs`, `config.rs` bootstrap, `start`/`status` commands
+8. **I18n Layer** - `i18n_full.rs` + `locale_*_gates.rs` (en + 11 locales parity)
 
 ### Data flow
 
 ```text
 Telegram User
-  -> Telegram Bot (grammY)
-  -> Managers + OpenCodeClient
+  -> Telegram Bot (teloxide-core, thin client)
+  -> Managers + OpenCode reqwest client
   -> OpenCode Server
 
 OpenCode Server
   -> SSE Events
-  -> Event Listener
+  -> event_subscription / v2_mappers
   -> Summary Aggregator / Tool Managers
   -> Telegram Bot
   -> Telegram User
@@ -64,10 +88,14 @@ OpenCode Server
 
 ### State management
 
-- Persistent state is stored in `settings.json`.
+- Persistent selected-project/session context is read through a `settings.json`
+  `current*` view (`settings_current.rs`, read-only).
+- Session/project directory cache lives in `rusqlite` on an isolated path only
+  (`store.rs`); not wired into live flows yet.
 - Active runtime state is kept in dedicated in-memory managers.
 - Session/project/model/agent context is synchronized through OpenCode API calls.
 - The app is currently single-user by design.
+- `OTB_ENABLE_POLLING=1` gates real Telegram polling; default stays scaffold-only.
 
 ## AI agent behavior rules
 
@@ -146,60 +174,48 @@ If your shell runs on Windows:
 ### Language
 
 - Code, identifiers, comments, and in-code documentation must be in English.
-- User-facing Telegram messages should be localized through i18n.
+- User-facing Telegram messages should be localized through i18n (`i18n_full` + locales).
 
 ### Code style
 
-- Use TypeScript strict mode.
-- Use ESLint + Prettier.
-- Prefer `const` over `let`.
-- Use clear names and avoid unnecessary abbreviations.
+- Rust edition 2021; run `cargo fmt` before finishing.
+- Keep warnings clean: `cargo clippy -- -D warnings`.
 - Keep functions small and focused.
-- Prefer `async/await` over chained `.then()`.
+- Use clear names and avoid unnecessary abbreviations.
+- Prefer `async/await` with `tokio`; no blocking calls on the async runtime.
 
 ### Error handling
 
-- Use `try/catch` around async operations.
-- Log errors with context (session ID, operation type, etc.).
-- Send understandable error messages to users.
-- Never expose stack traces to users.
+- Use `anyhow` at binary boundaries and `thiserror` for library error types in `otb-core`.
+- Add context with `.context(...)` (session ID, operation type, etc.).
+- Use `tracing` for diagnostics; send understandable error messages to users.
+- Never expose stack traces or internals to users.
+- No `unwrap()` / `expect()` in library code paths; handle `Result`/`Option` explicitly.
 
 ### Cross-platform
 
 - The bot runs on Linux, macOS, and Windows; CI runs tests on Linux.
 - Code must work on all three regardless of the OS you develop on: passing checks locally does not prove it works elsewhere.
-- Code that touches paths, processes, shells, or the filesystem must work on all three: no hardcoded `\` or `/` separators, no assumptions about line endings or path case.
-- Windows-only logic runs behind a `process.platform` check. A test for it either passes on every OS or is skipped outside Windows.
+- Code that touches paths, processes, shells, or the filesystem must work on all three: no hardcoded `\` or `/` separators (use `std::path`), no assumptions about line endings or path case.
+- Windows-only logic runs behind `cfg(windows)` gating. A test for it either passes on every OS or is skipped outside Windows.
 
 ### Bot commands
 
-The command list is centralized in `src/bot/commands/definitions.ts`.
-
-```typescript
-const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
-  { command: "status", descriptionKey: "cmd.description.status" },
-  { command: "new", descriptionKey: "cmd.description.new" },
-  { command: "abort", descriptionKey: "cmd.description.stop" },
-  { command: "sessions", descriptionKey: "cmd.description.sessions" },
-  { command: "projects", descriptionKey: "cmd.description.projects" },
-  { command: "rename", descriptionKey: "cmd.description.rename" },
-  { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
-  { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
-  { command: "help", descriptionKey: "cmd.description.help" },
-];
-```
+The command registry lives in `crates/otb-bot/src/commands.rs` (23 commands) with
+menus in `crates/otb-bot/src/menus.rs` (19 menus). Both are structure-only: no
+Telegram API calls yet.
 
 Important:
 
-- When adding a command, update `definitions.ts` only.
+- When adding a command, update `commands.rs` only (and `menus.rs` for menus).
 - The same source is used for Telegram `setMyCommands` and help/docs.
 - Do not duplicate command lists elsewhere.
 
 ### Logging
 
-The project uses `src/utils/logger.ts` with level-based logging.
+The project uses `tracing`, initialized via `init_logging(log_level)` in `otb-bot`.
 
-Log files:
+Log files (conventions carried over from TS):
 
 - In source mode logs are stored `<project root>/logs` by default.
 - Each source-mode bot run writes to a separate file named `bot-YYYY-MM-DD_HH-MM-SS_<pid>.log`.
@@ -215,18 +231,17 @@ Levels:
 
 Use:
 
-```typescript
-import { logger } from "../utils/logger.js";
-
-logger.debug("[Component] Detailed operation", details);
-logger.info("[Component] Important event occurred");
-logger.warn("[Component] Recoverable problem", error);
-logger.error("[Component] Critical failure", error);
+```rust
+tracing::debug!("[Component] Detailed operation {}", details);
+tracing::info!("[Component] Important event occurred");
+tracing::warn!("[Component] Recoverable problem: {}", err);
+tracing::error!("[Component] Critical failure: {}", err);
 ```
 
 Important:
 
-- Do not use raw `console.log` / `console.error` directly in feature code; use `logger`.
+- Do not use raw `println!` / `eprintln!` in library code; use `tracing`.
+  (`println!` only in the `cli` status scaffold.)
 - Put internal diagnostics under `debug`.
 - Keep important operational events under `info`.
 - Default level is `info`.
@@ -235,53 +250,64 @@ Important:
 
 ### What to test
 
-- Unit tests for business logic, formatters, managers, runtime helpers
-- Integration-style tests around OpenCode SDK interaction using mocks
-- Focus on critical paths; avoid over-testing trivial code
+- Unit tests for parity gates, formatters, managers, render, runtime helpers
+- Integration-style tests around OpenCode HTTP interaction using mocks/stubs
+- Focus on parity gates + critical paths; avoid over-testing trivial code
 
 ### Test structure
 
-- Tests live in `tests/` (organized by module)
+- `cargo test` runs `otb-core/tests/` plus inline `#[cfg(test)]` modules
+- Use `cargo test -p otb-core -p otb-bot` to cover both crates
 - Use descriptive test names
 - Follow Arrange-Act-Assert
-- Use `vi.mock()` for external dependencies
+- For bugs: reproduce as a failing test first, then make it pass
 
-## OpenCode SDK quick reference
+## OpenCode client quick reference
 
-The example below is the V1 client. OpenCode V2 goes through `@opencode/client`, wrapped in `src/opencode/v2/`.
+V1/V2 go through `reqwest` (no TS SDK as primary). SSE streams through
+`otb-core::event_subscription`, V2 shapes are normalized by `v2_mappers`, and
+server targeting/health/process follow `server_target_gates` / `session_health_gates` /
+`local_process_gates` parity.
 
-```typescript
-import { createOpencodeClient } from "@opencode-ai/sdk";
+```rust
+// Health + project/session calls (V1 shape; V2 via v2_mappers).
+let http = reqwest::Client::new();
+let base = "http://127.0.0.1:4096";
 
-const client = createOpencodeClient({ baseUrl: "http://localhost:4096" });
+// GET /global/health
+let health: serde_json::Value =
+    http.get(format!("{base}/global/health")).send().await?.json().await?;
 
-await client.global.health();
+// GET /project/list, GET /project/current
+// GET /session/list, POST /session (title), POST /session/:id/prompt,
+// POST /session/:id/abort
 
-await client.project.list();
-await client.project.current();
-
-await client.session.list();
-await client.session.create({ body: { title: "My session" } });
-await client.session.prompt({
-  path: { id: "session-id" },
-  body: { parts: [{ type: "text", text: "Implement feature X" }] },
-});
-await client.session.abort({ path: { id: "session-id" } });
-
-const events = await client.event.subscribe();
-for await (const event of events.stream) {
-  // handle SSE event
+// SSE: GET /event/subscribe -> event_subscription stream
+let stream = otb_core::event_subscription::subscribe(&http, base).await?;
+while let Some(event) = stream.next().await {
+    let core_event = otb_core::v2_mappers::map_event(&event);
+    // handle core event (aggregator / tool managers)
 }
 ```
 
-Full docs: https://opencode.ai/docs/sdk
+Full behavior: `src/opencode/*` TS parity source + `otb-core` `server_target_gates`,
+`v2_client_gates`, `v2_event_translator_gates`, `event_transport_gates`.
 
 ## Workflow
 
 1. Read [PRODUCT.md](./PRODUCT.md) to understand scope and status.
-2. Inspect existing code before adding or changing components.
-3. Align major architecture changes (including new dependencies) with the user first.
+2. Inspect existing crates (`crates/otb-core`, `crates/otb-bot`) before adding or changing components.
+3. Align major architecture changes (including new dependencies) and milestones with the user first.
 4. Add or update tests for new functionality.
-5. After code changes, run quality checks: `npm run build`, `npm run lint`, `npm run typecheck`, and `npm test`.
+5. After code changes, run quality checks: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo build`, and `cargo test`.
 6. Update checkboxes in `PRODUCT.md` when relevant tasks are completed.
 7. Keep code clean, consistent, and maintainable.
+
+## Legacy TypeScript reference (frozen)
+
+- `src/` holds 282 TS files (145 under `src/bot/`, 19 menus, 12 locales + index).
+- Stack: `grammy`, `@grammyjs/menu`, `@opencode-ai/sdk` (V1) + `@opencode/client` (V2), Vitest + `vi.mock()`, ESLint + Prettier.
+- Command list was centralized in `src/bot/commands/definitions.ts` (23 commands).
+- OpenCode layer: `src/opencode/{client,events}.ts` + `src/opencode/v2/*` (client, events, mappers, goal-message); shared `server-target/health/process/local-start/auto-restart/ready-*`.
+- Session cache used `better-sqlite3` via `src/app/services/session-cache-service.ts`.
+- Frozen: do not extend. Parity source only for the Rust rewrite.
