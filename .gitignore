@@ -23,7 +23,9 @@ Thumbs.db
 .claude/
 .codex/
 .kilocode/
-.opencode/
+.opencode/*
+!.opencode/agents/
+!.opencode/agents/*.md
 opencode.json
 .pi/
 .omp/
