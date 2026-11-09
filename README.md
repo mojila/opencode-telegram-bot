@@ -78,7 +78,7 @@ Run the OpenCode server on the same machine where the bot runs:
 opencode serve
 ```
 
-> The bot connects to the local OpenCode API at `http://localhost:4096` by default. For OpenCode V2, see [Old and New OpenCode Versions](#old-and-new-opencode-versions).
+> The bot connects to the local OpenCode API at `http://localhost:4096` by default. For OpenCode V2, connect to the V2 service (`opencode serve --service`) at `http://127.0.0.1:49374` (see [Old and New OpenCode Versions](#old-and-new-opencode-versions)).
 
 > After the bot is configured, you can also start and stop the local OpenCode server from Telegram with `/opencode_start` and `/opencode_stop`.
 
@@ -211,7 +211,35 @@ Set `OPENCODE_API_URL` (host and port, no `/api` suffix) if the server runs else
 
 `/opencode_start` and auto-restart run `opencode serve --port <port>` on V1 and, on V2, the background server (`opencode serve --service --port <port>`) unless `OPENCODE_SERVER_MODE=standalone`. Standalone runs `opencode serve --port <port>` without `--service` on an explicit `OPENCODE_API_URL` and does not connect to a registered server on another port. The port is taken from `OPENCODE_API_URL`. The bot refuses to start a server and logs the reason if the password is rejected, if the server or the local `opencode` is the other version, or, in service mode, if another V2 background server already runs on a different port. An unknown mode, or standalone without `OPENCODE_API_URL`, refuses bot startup instead. With both versions installed, the bot starts whichever one the `opencode` command runs. V1 ignores `OPENCODE_SERVER_MODE`.
 
-## Configuration
+## OpenCode client quick reference
+
+Use V2 OpenCode API as authoritative: https://opencode.ai/docs/api (all routes
+under `/api/*`). Default `OPENCODE_SERVER_VERSION=v2`, fallback to V1 bare
+routes only when the server does not answer V2 (`GET /api/info` -> `GET
+/global/health`).
+
+V1/V2 go through `reqwest` (no TS SDK as primary). SSE streams through
+`otb-core::event_subscription`, V2 shapes are normalized by `v2_mappers`, and
+server targeting/health/process follow `server_target_gates` / `session_health_gates` /
+`local_process_gates` parity.
+
+```rust
+// Health + project/session calls (V2 shape authoritative; V1 fallback in comments).
+let http = reqwest::Client::new();
+let base = "http://127.0.0.1:49374"; // V2 service default; V1 fallback http://127.0.0.1:4096
+// GET /api/info (V1: /global/health)
+let health: serde_json::Value =
+    http.get(format!("{base}/api/info")).send().await?.json().await?;
+
+// SSE: GET /api/event -> event_subscription stream (V1: /event)
+let stream = otb_core::event_subscription::subscribe(&http, base).await?;
+while let Some(event) = stream.next().await {
+    let core_event = otb_core::v2_mappers::map_event(&event);
+    // handle core event (aggregator / tool managers)
+}
+```
+
+### Environment Variables
 
 ### Localization
 
@@ -249,7 +277,7 @@ Configuration can be provided through process environment variables or an `.env`
 | `TELEGRAM_API_ROOT`                        | Custom Telegram Bot API root URL (e.g. nginx reverse-proxying `api.telegram.org`); applied to API calls and file downloads | No | `https://api.telegram.org` |
 | `TELEGRAM_PROXY_SECRET`                    | Shared secret sent as `X-Proxy-Secret` header on every Bot API request and file download (used with `TELEGRAM_API_ROOT`) | No | —                        |
 | `TELEGRAM_FORCE_IPV4`                      | Force IPv4 for direct Telegram API and file requests; useful when IPv6 DNS works but outbound IPv6 is broken           |    No    | `false`                  |
-| `OPENCODE_SERVER_VERSION`                  | OpenCode server API version: `v1` or `v2`; must match the server you run; set by the setup wizard                     |    No    | `v1`                     |
+| `OPENCODE_SERVER_VERSION`                  | OpenCode server API version: explicit `v1`/`1` (trim/case-insensitive) -> `v1`, else `v2`. V2 is the authoritative default: missing, empty, `v2`/`2`, and any unknown value all resolve to `v2`. Only an explicit V1 pin opts back to the legacy API.                     |    No    | `v1`                     |
 | `OPENCODE_SERVER_MODE`                     | V2 only: `service` (default) or `standalone`. Standalone needs `OPENCODE_API_URL` and does not follow a registered server. V1 ignores it. An unknown value refuses startup |    No    | `service`                |
 | `OPENCODE_BIN_PATH`                        | Absolute executable path for OpenCode on Linux/macOS; takes precedence over PATH and standard install-directory discovery |    No    | —                        |
 | `OPENCODE_API_URL`                         | OpenCode server URL                                                                                                   |    No    | `http://localhost:4096` (V1), `http://127.0.0.1:49374` (V2) |
@@ -257,6 +285,7 @@ Configuration can be provided through process environment variables or an `.env`
 | `OPENCODE_MONITOR_INTERVAL_SEC`            | Health monitor interval in seconds when OpenCode auto-restart is enabled                                              |    No    | `300`                    |
 | `OPENCODE_SERVER_USERNAME`                 | Server auth username                                                                                                  |    No    | `opencode`               |
 | `OPENCODE_SERVER_PASSWORD`                 | Server auth password (needed for V2, see [Old and New OpenCode Versions](#old-and-new-opencode-versions))                                   |    No    | —                        |
+| `OPENCODE_PASSWORD`                        | Server password for V2 (in addition to `OPENCODE_SERVER_PASSWORD`); used for V2 authentication                              |    No    | —                        |
 | `OPENCODE_MODEL_PROVIDER`                  | Default model provider                                                                                                |   Yes    | `opencode`               |
 | `OPENCODE_MODEL_ID`                        | Default model ID                                                                                                      |   Yes    | `big-pickle`             |
 | `BOT_LOCALE`                               | Bot UI language (supported locale code, e.g. `en`, `ar`, `de`, `es`, `fr`, `id`, `it`, `ko`, `pt`, `ru`, `tr`, `zh`)  |    No    | `en`                     |
@@ -600,8 +629,8 @@ Port 4096 is **not** exposed by the bot image; it belongs to the OpenCode server
 
 **"OpenCode server is not available"**
 
-- Ensure an OpenCode server is running at the configured `OPENCODE_API_URL` (default: `http://localhost:4096` on V1, `http://127.0.0.1:49374` on V2)
-- Check that `OPENCODE_SERVER_VERSION` matches the server you run, and on V2 that `OPENCODE_SERVER_PASSWORD` is correct (an authentication error in the bot log means a wrong password)
+- Ensure an OpenCode server is running at the configured `OPENCODE_API_URL` (default: `http://localhost:4096` on V1; for V2 use `http://127.0.0.1:49374`)
+- Check that `OPENCODE_SERVER_VERSION` matches the server you run, and on V2 that `OPENCODE_SERVER_PASSWORD` or `OPENCODE_PASSWORD` is correct (an authentication error in the bot log means a wrong password)
 - For a local setup, you can start it with `opencode serve` or use `/opencode_start` in Telegram
 - For VPS/systemd setups with scheduled tasks, enable `OPENCODE_AUTO_RESTART_ENABLED=true` to let the bot restart a local OpenCode server when health-checks fail
 - If `OPENCODE_API_URL` points to a remote server, verify that the address is reachable from the bot machine and that the remote server is healthy

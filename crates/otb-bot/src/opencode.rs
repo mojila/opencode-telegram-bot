@@ -1127,10 +1127,14 @@ impl OpencodeClient {
     /// the text is wrapped in default `PromptOptions` (no agent/model, no
     /// files) and sent through [`OpencodeClient::admit_prompt`], so the
     /// wire body is `{"text":..., "delivery":"queue"}` with no `files`
-    /// key. V1 keeps the legacy [`prompt_payload`] `parts[]` shape.
+    /// key. `directory` travels in the assembled options (TS
+    /// `buildPromptOptions` parity, `prompt.ts:535-540`) and on the wire
+    /// as `?directory=` when non-empty (TS always sends
+    /// `currentSession.directory`). V1 keeps the legacy
+    /// [`prompt_payload`] `parts[]` shape.
     ///
-    /// Scope note: text-only (no agent/model/variant, no `directory`
-    /// query, no files, no `system` preface). The full TS assembly
+    /// Scope note: text-only (no agent/model/variant, no files, no
+    /// `system` preface). The full TS assembly
     /// (`processUserPrompt` in `src/bot/handlers/prompt.ts:180-391`:
     /// mismatch reset, folder-notice gate, `buildPromptOptions` parts +
     /// selection, busy check, `attachToSession`, `ensureEventSubscription`,
@@ -1140,12 +1144,13 @@ impl OpencodeClient {
     pub async fn prompt_session(
         &self,
         session_id: &str,
+        directory: &str,
         text: &str,
     ) -> Result<Value, reqwest::Error> {
         if self.server_version == "v2" {
             let options = otb_core::prompt_request_gates::build_prompt_options(
                 session_id,
-                "",
+                directory,
                 text,
                 0,
                 false,
@@ -1257,12 +1262,11 @@ impl OpencodeClient {
         if self.server_version == "v2" {
             self.apply_selection(options).await?;
             let payload = prompt_payload_from_options(options, system, delivery);
-            let response = self
-                .post(&prompt_path(&self.server_version, &options.session_id))
-                .json(&payload)
-                .send()
-                .await?
-                .error_for_status()?;
+            let mut request = self.post(&prompt_path(&self.server_version, &options.session_id));
+            if !options.directory.is_empty() {
+                request = request.query(&[("directory", options.directory.as_str())]);
+            }
+            let response = request.json(&payload).send().await?.error_for_status()?;
             return response.json().await;
         }
         let text = options
@@ -1276,12 +1280,11 @@ impl OpencodeClient {
             .join("\n\n");
         let path = prompt_path(&self.server_version, &options.session_id);
         let payload = prompt_payload(&self.server_version, &text);
-        let response = self
-            .post(&path)
-            .json(&payload)
-            .send()
-            .await?
-            .error_for_status()?;
+        let mut request = self.post(&path);
+        if !options.directory.is_empty() {
+            request = request.query(&[("directory", options.directory.as_str())]);
+        }
+        let response = request.json(&payload).send().await?.error_for_status()?;
         response.json().await
     }
 

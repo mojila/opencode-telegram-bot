@@ -1778,6 +1778,10 @@ async fn handle_session_callback(
         item.id.len()
     );
     answer_callback(bot, query, None, false).await;
+    // RC-1 (TS `resetInteractions("session_switched")` parity): clear the
+    // stale interaction slot before following the newly selected session so
+    // the old session's held question/permission never blocks its prompts.
+    crate::attach::release_interaction_slot();
     // Live path (TS `selectSessionById` → `attachToSession` core chain
     // parity): follow the session so its event stream pumps and the
     // assistant answer arrives over SSE. Non-fatal by construction.
@@ -2203,6 +2207,10 @@ async fn handle_recent_callback(
         item.id.len()
     );
     answer_callback(bot, query, None, false).await;
+    // RC-1 (TS `resetInteractions("session_switched")` parity): clear the
+    // stale interaction slot before following the newly selected session so
+    // the old session's held question/permission never blocks its prompts.
+    crate::attach::release_interaction_slot();
     // Live path (TS background/`recent` select → `attachToSession` core
     // chain parity): follow the session so its event stream pumps.
     // Non-fatal by construction.
@@ -2504,7 +2512,7 @@ async fn handle_messages_fork(bot: &teloxide_core::Bot, locale: &str, query: &Ca
 
 /// Live `/new` reply: create a session in the current project directory and
 /// remember it as `currentSession` (JS `new-command.ts` parity, minus the
-/// attach/keyboard side effects that need the dispatcher). Plain-text
+/// keyboard side effects that need the dispatcher). Plain-text
 /// prompts reuse this remembered session via `ensure_execute_session`.
 /// No project → `new.project_not_selected`; create failure (or a bad write
 /// of the remembered session) → `new.create_error`; otherwise `new.created`.
@@ -2535,6 +2543,15 @@ async fn new_reply(locale: &str) -> String {
         tracing::warn!("[otb-bot] telegram: cannot remember new session: {err}");
         return crate::locale::translate(locale, "new.create_error");
     }
+    // RC-1 (TS `resetInteractions("session_created")` parity): drop any stale
+    // held question/permission slot from the previous session so the next
+    // prompt is not wedged by `prompt_blocked_hint`.
+    crate::attach::release_interaction_slot();
+    // RC-2 (TS `new-command.ts:79-84` `attachToSession` parity): follow the
+    // new session so its event stream pumps. Best-effort and non-fatal by
+    // construction (the SSE pump itself stays scaffold-gated until polling
+    // is enabled).
+    crate::attach::attach_session(&id, &worktree);
     crate::commands::render_new_created(&title, Some(locale))
 }
 
@@ -6955,7 +6972,7 @@ async fn handle_voice_transcript(
         }
         return;
     };
-    let (session_id, _) = match ensure_execute_session(&worktree).await {
+    let (session_id, session_dir) = match ensure_execute_session(&worktree).await {
         Ok(session) => session,
         Err(key) => {
             if let Err(err) =
@@ -6966,11 +6983,14 @@ async fn handle_voice_transcript(
             return;
         }
     };
-    crate::attach::attach_session(&session_id, &worktree);
+    crate::attach::attach_session(&session_id, &session_dir);
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    if let Err(err) = client.prompt_session(&session_id, &llm_text).await {
+    if let Err(err) = client
+        .prompt_session(&session_id, &session_dir, &llm_text)
+        .await
+    {
         tracing::warn!("[otb-bot] telegram: voice prompt failed: {err}");
         if let Err(err) = send_message(
             bot,
@@ -7120,7 +7140,7 @@ async fn handle_plain_text_prompt(
         }
         return;
     };
-    let (session_id, _) = match ensure_execute_session(&worktree).await {
+    let (session_id, session_dir) = match ensure_execute_session(&worktree).await {
         Ok(session) => session,
         Err(key) => {
             if let Err(err) =
@@ -7131,14 +7151,42 @@ async fn handle_plain_text_prompt(
             return;
         }
     };
+    // TS `processUserPrompt:219-226` mismatch reset parity:
+    // `ensure_execute_session` already recreates the session when the
+    // remembered directory drifts from the project worktree, so a hit
+    // here only traces (a future drift surfaces instead of prompting the
+    // wrong folder silently).
+    if otb_core::prompt_request_gates::is_session_project_mismatch(
+        Some(session_dir.as_str()),
+        &worktree,
+    ) {
+        tracing::warn!("[otb-bot] telegram: ensured session directory mismatches project");
+    }
     // Live path (TS `processUserPrompt` attach-before-send order):
     // follow the session and make sure its event stream pumps, so the
     // assistant answer arrives over SSE. Non-fatal by construction.
-    crate::attach::attach_session(&session_id, &worktree);
+    crate::attach::attach_session(&session_id, &session_dir);
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    if let Err(err) = client.prompt_session(&session_id, text).await {
+    // Minimal busy guard (TS `prompt.ts:301-306` `isSessionBusy` parity;
+    // a failed status read assumes busy like the attach transcript path).
+    // TODO(prompt-queue-dispatch): route to the inbox/queue tail per
+    // `prompt-queue-dispatch.ts:102-239` instead of sending into a busy
+    // session. No queue system is invented here, so a busy session only
+    // logs and still sends.
+    match client.session_status(&session_dir).await {
+        Ok(status) if !attach_session_is_busy(&status, &session_id) => {}
+        Ok(_) => {
+            tracing::info!(
+                "[otb-bot] telegram: prompting a busy session (queue dispatch follow-up)"
+            );
+        }
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: prompt busy check failed, sending anyway: {err}");
+        }
+    }
+    if let Err(err) = client.prompt_session(&session_id, &session_dir, text).await {
         tracing::warn!("[otb-bot] telegram: plain-text prompt failed: {err}");
         if let Err(err) = send_message(
             bot,
@@ -7343,7 +7391,7 @@ async fn handle_catalog_execute(
         .await;
         return;
     };
-    let (session_id, _) = match ensure_execute_session(&worktree).await {
+    let (session_id, session_dir) = match ensure_execute_session(&worktree).await {
         Ok(session) => session,
         Err(key) => {
             reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
@@ -7352,7 +7400,7 @@ async fn handle_catalog_execute(
     };
     // Live path, like the plain-text prompt: follow the session so its event
     // stream pumps while the command runs. Non-fatal by construction.
-    crate::attach::attach_session(&session_id, &worktree);
+    crate::attach::attach_session(&session_id, &session_dir);
     let executing =
         crate::commands::render_executing_notice(&format!("{prefix}.executing_prefix"), &name, "");
     reply_list_view(bot, chat_id, &executing, None).await;
@@ -7360,7 +7408,7 @@ async fn handle_catalog_execute(
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
     if let Err(err) = client
-        .prompt_session(&session_id, &format!("/{name}"))
+        .prompt_session(&session_id, &session_dir, &format!("/{name}"))
         .await
     {
         tracing::warn!("[otb-bot] telegram: catalog execute prompt failed: {err}");
