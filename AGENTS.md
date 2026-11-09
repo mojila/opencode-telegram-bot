@@ -273,25 +273,29 @@ Important:
 
 ## OpenCode client quick reference
 
+Use V2 OpenCode API as authoritative: https://opencode.ai/docs/api (all routes
+under `/api/*`). Default `OPENCODE_SERVER_VERSION=v2`, fallback to V1 bare
+routes only when the server does not answer V2 (`GET /api/info` -> `GET
+/global/health`).
+
 V1/V2 go through `reqwest` (no TS SDK as primary). SSE streams through
 `otb-core::event_subscription`, V2 shapes are normalized by `v2_mappers`, and
 server targeting/health/process follow `server_target_gates` / `session_health_gates` /
 `local_process_gates` parity.
 
 ```rust
-// Health + project/session calls (V1 shape; V2 via v2_mappers).
+// Health + project/session calls (V2 shape authoritative; V1 fallback in comments).
 let http = reqwest::Client::new();
-let base = "http://127.0.0.1:4096";
+let base = "http://127.0.0.1:49374"; // V2 service default; V1 fallback http://127.0.0.1:4096
 
-// GET /global/health
+// GET /api/info (V1: /global/health)
 let health: serde_json::Value =
-    http.get(format!("{base}/global/health")).send().await?.json().await?;
+    http.get(format!("{base}/api/info")).send().await?.json().await?;
 
-// GET /project/list, GET /project/current
-// GET /session/list, POST /session (title), POST /session/:id/prompt,
-// POST /session/:id/abort
+// GET /api/project, POST /api/session, POST /api/session/{id}/prompt,
+// POST /api/session/{id}/interrupt (V1: /project, /session, /session/:id/message, /session/:id/abort)
 
-// SSE: GET /event/subscribe -> event_subscription stream
+// SSE: GET /api/event -> event_subscription stream (V1: /event)
 let stream = otb_core::event_subscription::subscribe(&http, base).await?;
 while let Some(event) = stream.next().await {
     let core_event = otb_core::v2_mappers::map_event(&event);

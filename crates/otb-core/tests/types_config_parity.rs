@@ -88,19 +88,24 @@ fn slice21b_08_is_same_model() {
 // --- server mode/version (8 its) ---
 
 #[test]
-fn slice21b_09_server_version_default_v1() {
-    assert_eq!(resolve_server_version(None), "v1");
-    assert_eq!(resolve_server_version(Some("")), "v1");
+fn slice21b_09_server_version_default_v2() {
+    assert_eq!(resolve_server_version(None), "v2");
+    assert_eq!(resolve_server_version(Some("")), "v2");
+    assert_eq!(resolve_server_version(Some("   ")), "v2");
 }
 
 #[test]
 fn slice21b_10_server_version_v2_case_insensitive() {
     assert_eq!(resolve_server_version(Some(" V2 ")), "v2");
+    assert_eq!(resolve_server_version(Some("2")), "v2");
+    assert_eq!(resolve_server_version(Some("banana")), "v2");
 }
 
 #[test]
-fn slice21b_11_server_version_fallback_v1() {
-    assert_eq!(resolve_server_version(Some("2")), "v1");
+fn slice21b_11_server_version_explicit_v1_pin() {
+    assert_eq!(resolve_server_version(Some("v1")), "v1");
+    assert_eq!(resolve_server_version(Some(" V1 ")), "v1");
+    assert_eq!(resolve_server_version(Some("1")), "v1");
 }
 
 #[test]

@@ -445,8 +445,16 @@ fn wizard_default_saved_choice_parity() {
         ServerVersion::V1
     );
     assert_eq!(
-        wizard_server_version_default(Some("OTHER=1\n")),
+        wizard_server_version_default(Some("OPENCODE_SERVER_VERSION= 1 \n")),
         ServerVersion::V1
+    );
+    assert_eq!(
+        wizard_server_version_default(Some("OTHER=1\n")),
+        ServerVersion::V2
+    );
+    assert_eq!(
+        wizard_server_version_default(Some("OPENCODE_SERVER_VERSION=banana\n")),
+        ServerVersion::V2
     );
 }
 

@@ -422,11 +422,21 @@ pub fn normalize_locale_tag(raw: Option<&str>, default: &str) -> String {
     default.to_string()
 }
 
-/// Server version: `v2` (case/whitespace-insensitive) else `v1`.
+/// Server version: explicit `v1`/`1` (trim/case-insensitive) -> `v1`,
+/// else `v2`. V2 is the authoritative default: missing, empty, `v2`/`2`,
+/// and any unknown value all resolve to `v2`. Only an explicit V1 pin
+/// opts back to the legacy API.
 pub fn resolve_server_version(raw: Option<&str>) -> &'static str {
     match raw {
-        Some(value) if value.trim().to_lowercase() == "v2" => "v2",
-        _ => "v1",
+        Some(value) => {
+            let normalized = value.trim().to_lowercase();
+            if normalized == "v1" || normalized == "1" {
+                "v1"
+            } else {
+                "v2"
+            }
+        }
+        None => "v2",
     }
 }
 
@@ -450,7 +460,10 @@ pub fn resolve_server_mode(version: &str, raw: Option<&str>) -> Result<&'static 
 
 /// API URL: standalone without explicit URL -> `Err`; else explicit or
 /// version default (`v1` -> `http://localhost:4096`,
-/// `v2` -> `http://127.0.0.1:49374`).
+/// `v2` -> `http://127.0.0.1:49374`). V2 is the default: callers pass
+/// [`resolve_server_version`] output, so a missing/unknown
+/// `OPENCODE_SERVER_VERSION` lands on the V2 service-registry port.
+/// Only an explicit `v1` pin keeps the legacy `localhost:4096` default.
 pub fn resolve_api_url(
     version: &str,
     mode: &str,

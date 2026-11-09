@@ -34,8 +34,9 @@
 //!   line, non-wizard keys fill from existing assignments, custom lines
 //!   appended after one blank separator)
 //! - `getWizardServerVersionDefault` (no existing file -> `v2`; saved
-//!   `OPENCODE_SERVER_VERSION` trimmed + lowercased `=== "v2"` -> `v2`,
-//!   else `v1`)
+//!   `OPENCODE_SERVER_VERSION` trimmed + lowercased `=== "v1"`/`"1"` ->
+//!   `v1`, else `v2`, so an existing file without the key follows the new
+//!   V2 default)
 //! - `pickServerPassword` (`answer || saved || undefined`)
 //!
 //! Already ported elsewhere and NOT re-tested here:
@@ -473,16 +474,24 @@ fn lookup_env_value(content: &str, key: &str) -> Option<String> {
     found
 }
 
-/// `v2` on first setup, else the saved choice (`v2` only when the saved
-/// value trims + lowercases to `"v2"`) (TS:
-/// `getWizardServerVersionDefault`).
+/// `v2` on first setup and whenever the saved value is missing,
+/// blank, or unknown; only an explicit `v1`/`1` (trimmed + lowercased)
+/// opts back to V1 (TS: `getWizardServerVersionDefault`, V2-default
+/// cutover: unknown values no longer fall back to V1).
 pub fn wizard_server_version_default(existing_env_content: Option<&str>) -> ServerVersion {
     let Some(content) = existing_env_content else {
         return ServerVersion::V2;
     };
     match lookup_env_value(content, "OPENCODE_SERVER_VERSION") {
-        Some(saved) if saved.trim().to_ascii_lowercase() == "v2" => ServerVersion::V2,
-        _ => ServerVersion::V1,
+        Some(saved) => {
+            let normalized = saved.trim().to_ascii_lowercase();
+            if normalized == "v1" || normalized == "1" {
+                ServerVersion::V1
+            } else {
+                ServerVersion::V2
+            }
+        }
+        None => ServerVersion::V2,
     }
 }
 

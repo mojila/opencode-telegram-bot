@@ -244,11 +244,12 @@ pub fn unauthorized_health_report_key() -> &'static str {
 }
 
 /// Log line for a wrong-credentials cause (TS: the `unauthorized` branch
-/// of `reportFailedHealthCause`).
+/// of `reportFailedHealthCause`). Names both password vars: V2 reads
+/// `OPENCODE_PASSWORD` with `OPENCODE_SERVER_PASSWORD` still working.
 pub fn format_unauthorized_health_message(server_description: &str) -> String {
     format!(
         "[OpenCode] Authentication failed at {server_description}: \
-         check OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD"
+         check OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD or OPENCODE_PASSWORD"
     )
 }
 
@@ -273,6 +274,43 @@ pub fn format_mismatch_health_message(
          OPENCODE_SERVER_VERSION={other_version} and restart the bot, or run \
          an OpenCode {configured_version} server at this address."
     )
+}
+
+/// Explicit version pin from the raw `OPENCODE_SERVER_VERSION` value:
+/// `v1`/`1` -> `v1`, `v2`/`2` -> `v2` (trim/case-insensitive), anything
+/// else (`None`/empty/unknown) -> `None` (auto-negotiate at boot).
+pub fn explicit_server_version(raw: Option<&str>) -> Option<&'static str> {
+    match raw.map(|value| value.trim().to_lowercase()) {
+        Some(normalized) if normalized == "v1" || normalized == "1" => Some("v1"),
+        Some(normalized) if normalized == "v2" || normalized == "2" => Some("v2"),
+        _ => None,
+    }
+}
+
+/// Boot-time version negotiation (pure decision; network I/O stays with
+/// the caller, and `OpencodeClient::health` stays read-only).
+///
+/// - Explicit pins win: the caller probes only that version (today's
+///   behavior, no fallback).
+/// - Auto (`None`/empty/unknown): probe V2 first (`GET api/info` with a
+///   `version` string + numeric `pid`), then V1 (`GET global/health`
+///   with `healthy: true`); adopt the winner for boot (the caller logs
+///   which probe won). Neither answering falls back to the V2 default.
+pub fn negotiate_server_version(
+    explicit_raw: Option<&str>,
+    v2_probe_ok: bool,
+    v1_probe_ok: bool,
+) -> &'static str {
+    if let Some(pinned) = explicit_server_version(explicit_raw) {
+        return pinned;
+    }
+    if v2_probe_ok {
+        "v2"
+    } else if v1_probe_ok {
+        "v1"
+    } else {
+        "v2"
+    }
 }
 
 // ---------------------------------------------------------------------------

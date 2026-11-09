@@ -2,7 +2,7 @@
 //!
 //! Node parity (`src/config.ts`, `src/utils/logger.ts`, `src/runtime/paths.ts`):
 //! - `.env` keys: `LOG_LEVEL` (default `info`), `LOG_RETENTION` (default 10),
-//!   `OPENCODE_SERVER_VERSION` (default `v1`), `OPENCODE_SERVER_MODE`,
+//!   `OPENCODE_SERVER_VERSION` (default `v2`), `OPENCODE_SERVER_MODE`,
 //!   `OPENCODE_API_URL`, `BOT_LOCALE` (default `en`),
 //!   `BOT_HEALTH_PORT` (default off; 3100 in a container).
 //! - `LOG_LEVEL` mapping: `debug|info|warn|error`, anything else -> `info`.
@@ -69,11 +69,13 @@ pub struct AppConfig {
     pub app_home: PathBuf,
     /// `<app_home>/.env` path (resolved only, never written).
     pub env_file: PathBuf,
-    /// `v1` or `v2` (default `v1`).
+    /// `v1` or `v2` (default `v2`, V2 API authoritative).
     pub opencode_server_version: String,
-    /// `OPENCODE_SERVER_USERNAME` (default `opencode`, Node: `config.opencode.username`).
+    /// `OPENCODE_SERVER_USERNAME` (default `opencode`; forced to `opencode`
+    /// on V2, Node: `config.opencode.username`).
     pub opencode_server_username: String,
-    /// `OPENCODE_SERVER_PASSWORD` (Node: `config.opencode.password`); `None`
+    /// `OPENCODE_SERVER_PASSWORD` else `OPENCODE_PASSWORD` fallback (Node:
+    /// `config.opencode.password`); `None`
     /// when unset or empty. The value itself is never logged.
     pub opencode_server_password: Option<String>,
     /// `service` or `standalone`.

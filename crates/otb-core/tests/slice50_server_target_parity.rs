@@ -295,7 +295,7 @@ fn slice50_38_unauthorized_message() {
     assert_eq!(
         format_unauthorized_health_message("http://localhost:4096"),
         "[OpenCode] Authentication failed at http://localhost:4096: \
-         check OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD"
+         check OPENCODE_SERVER_USERNAME and OPENCODE_SERVER_PASSWORD or OPENCODE_PASSWORD"
     );
 }
 
@@ -402,4 +402,34 @@ fn slice50_48_executable_mismatch_message() {
          OPENCODE_SERVER_VERSION=v2 and restart the bot, or make an \
          OpenCode v1 opencode executable the first one on PATH."
     );
+}
+
+// --- boot-time version negotiation (V2-default cutover) ---
+
+#[test]
+fn slice50_49_negotiate_explicit_pins_skip_fallback() {
+    // Explicit pins probe only that version: probes are ignored.
+    assert_eq!(negotiate_server_version(Some("v1"), true, true), "v1");
+    assert_eq!(negotiate_server_version(Some("v1"), false, false), "v1");
+    assert_eq!(negotiate_server_version(Some(" 1 "), false, true), "v1");
+    assert_eq!(negotiate_server_version(Some("v2"), false, true), "v2");
+    assert_eq!(negotiate_server_version(Some("2"), true, false), "v2");
+}
+
+#[test]
+fn slice50_50_negotiate_auto_probes_v2_first() {
+    // Auto (unset/unknown): V2 `api/info` wins when both answer.
+    assert_eq!(negotiate_server_version(None, true, true), "v2");
+    assert_eq!(negotiate_server_version(Some(""), true, true), "v2");
+    assert_eq!(negotiate_server_version(Some("banana"), true, true), "v2");
+}
+
+#[test]
+fn slice50_51_negotiate_auto_falls_back_to_v1_then_v2_default() {
+    // V2 silent but V1 `global/health` healthy -> adopt V1 for boot.
+    assert_eq!(negotiate_server_version(None, false, true), "v1");
+    assert_eq!(negotiate_server_version(Some("banana"), false, true), "v1");
+    // Neither answers -> V2 default.
+    assert_eq!(negotiate_server_version(None, false, false), "v2");
+    assert_eq!(negotiate_server_version(Some(""), false, false), "v2");
 }

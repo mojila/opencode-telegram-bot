@@ -3,7 +3,9 @@
 //! Node parity (`src/opencode/client.ts`, `src/opencode/events.ts`):
 //! - Health probe: V1 `GET global/health`, V2 `GET api/info`, 5s timeout,
 //!   with Basic auth from `OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD`
-//!   when a password is set (Node: `getAuth`/`probeOpencodeServer`).
+//!   (plus `OPENCODE_PASSWORD` fallback) when a password is set (Node:
+//!   `getAuth`/`probeOpencodeServer`). V2 forces username `opencode`
+//!   (`OPENCODE_SERVER_USERNAME` is ignored on V2).
 //! - Reconnect backoff `1000 * 2^(attempt-1)` capped at 15000ms with a
 //!   `warn` log on every drop (the pure math lives in
 //!   `otb_core::event_transport_gates::get_reconnect_delay_ms`).
@@ -14,7 +16,12 @@
 //!
 //! ASSUMPTIONS (explicit):
 //! 1. Base URL: `OPENCODE_URL` wins (T4), else `OPENCODE_API_URL` (Node
-//!    parity), else `http://127.0.0.1:4096`. Never starts/stops the server.
+//!    parity), else the version default (`v2` ->
+//!    `http://127.0.0.1:49374`, `v1` -> `http://localhost:4096`).
+//!    `AppConfig::opencode_client` (via `resolve_api_url`) is canonical;
+//!    `OpencodeClient::from_env` uses the same version-aware default so
+//!    both paths agree after the V2-default flip. Never starts/stops the
+//!    server.
 //! 2. Only the probe routes are known exactly (`global/health`,
 //!    `api/info`). V1 session/event paths (`session`, `event`) follow the
 //!    SDK method names; V2 paths (`api/session`, `api/event`) additionally
@@ -40,8 +47,16 @@ pub const OPENCODE_URL_ENV: &str = "OPENCODE_URL";
 /// Env var carrying the OpenCode base URL (Node parity fallback).
 pub const OPENCODE_API_URL_ENV: &str = "OPENCODE_API_URL";
 
-/// Default base URL when neither env var is set (T4).
+/// Default base URL when neither env var is set (T4, legacy V1 shape).
+/// Version-aware callers prefer [`resolve_base_url_for_version`]:
+/// `v2` -> `http://127.0.0.1:49374`, `v1` -> `http://localhost:4096`.
 pub const DEFAULT_OPENCODE_URL: &str = "http://127.0.0.1:4096";
+
+/// V2 service-registry default (authoritative V2 API under `/api/*`).
+pub const DEFAULT_OPENCODE_URL_V2: &str = "http://127.0.0.1:49374";
+
+/// V1 legacy default.
+pub const DEFAULT_OPENCODE_URL_V1: &str = "http://localhost:4096";
 
 /// Health-probe timeout (Node: `PROBE_TIMEOUT_MS`).
 pub const PROBE_TIMEOUT: Duration = Duration::from_millis(5_000);
@@ -59,9 +74,34 @@ pub fn resolve_base_url(explicit: Option<&str>) -> String {
     }
 }
 
+/// Version-aware base-URL default (pure; testable): explicit wins, else
+/// `v2` -> `http://127.0.0.1:49374`, `v1` -> `http://localhost:4096`.
+/// This mirrors `otb_core::types_config::resolve_api_url` service
+/// defaults so `from_env` and `AppConfig::opencode_client` agree.
+pub fn resolve_base_url_for_version(explicit: Option<&str>, server_version: &str) -> String {
+    match explicit {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().trim_end_matches('/').to_string(),
+        _ => {
+            if server_version == "v1" {
+                DEFAULT_OPENCODE_URL_V1.to_string()
+            } else {
+                DEFAULT_OPENCODE_URL_V2.to_string()
+            }
+        }
+    }
+}
+
 /// Base URL from the environment: `OPENCODE_URL`, else `OPENCODE_API_URL`,
-/// else the default. Reads env only; performs no I/O.
+/// else the version default. Reads env only; performs no I/O.
+/// Canonical construction is `AppConfig::opencode_client` (via
+/// `resolve_api_url`); this matches it when no explicit URL is set.
 pub fn base_url_from_env() -> String {
+    base_url_from_env_for_version(server_version_from_env())
+}
+
+/// Version-pinned variant of [`base_url_from_env`] (pure env reads;
+/// no I/O). Lets boot negotiation pass the adopted version explicitly.
+pub fn base_url_from_env_for_version(server_version: &str) -> String {
     let explicit = std::env::var(OPENCODE_URL_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -70,10 +110,11 @@ pub fn base_url_from_env() -> String {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         });
-    resolve_base_url(explicit.as_deref())
+    resolve_base_url_for_version(explicit.as_deref(), server_version)
 }
 
-/// Server version from the environment (`v2` else `v1`, Node parity).
+/// Server version from the environment (`v1` only on an explicit
+/// `v1`/`1` pin, else `v2`; V2 authoritative default).
 pub fn server_version_from_env() -> &'static str {
     let raw = std::env::var("OPENCODE_SERVER_VERSION").ok();
     otb_core::types_config::resolve_server_version(raw.as_deref())
@@ -531,22 +572,49 @@ pub const OPENCODE_SERVER_USERNAME_ENV: &str = "OPENCODE_SERVER_USERNAME";
 /// Env var carrying the OpenCode server password (Node: `OPENCODE_SERVER_PASSWORD`).
 pub const OPENCODE_SERVER_PASSWORD_ENV: &str = "OPENCODE_SERVER_PASSWORD";
 
-/// Server username from the environment (Node: `config.opencode.username`;
-/// defaults to `opencode` when missing or empty).
-pub fn server_username_from_env() -> String {
-    std::env::var(OPENCODE_SERVER_USERNAME_ENV)
-        .ok()
+/// Env var carrying the OpenCode password fallback (V2 authoritative).
+/// `OPENCODE_SERVER_PASSWORD` wins when set; otherwise this is read.
+pub const OPENCODE_PASSWORD_ENV: &str = "OPENCODE_PASSWORD";
+
+/// Resolve the server username for a version (pure; testable): V2 always
+/// returns `opencode` (`OPENCODE_SERVER_USERNAME` is unsupported on V2);
+/// V1 uses the explicit value when non-empty, else `opencode`.
+pub fn resolve_server_username(server_version: &str, explicit: Option<&str>) -> String {
+    if server_version == "v2" {
+        return otb_core::runtime_bootstrap_gates::DEFAULT_SERVER_USERNAME.to_string();
+    }
+    match explicit.filter(|value| !value.is_empty()) {
+        Some(value) => value.to_string(),
+        None => otb_core::runtime_bootstrap_gates::DEFAULT_SERVER_USERNAME.to_string(),
+    }
+}
+
+/// Resolve the server password from primary/fallback values (pure;
+/// testable): `OPENCODE_SERVER_PASSWORD` wins, else `OPENCODE_PASSWORD`;
+/// `None` when both are missing or empty (no auth header is sent).
+pub fn resolve_server_password(primary: Option<&str>, fallback: Option<&str>) -> Option<String> {
+    primary
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| otb_core::runtime_bootstrap_gates::DEFAULT_SERVER_USERNAME.to_string())
+        .or_else(|| fallback.filter(|value| !value.is_empty()))
+        .map(str::to_string)
+}
+
+/// Server username from the environment (Node: `config.opencode.username`;
+/// V2 forces `opencode`, ignoring `OPENCODE_SERVER_USERNAME`).
+pub fn server_username_from_env() -> String {
+    let version = server_version_from_env();
+    let explicit = std::env::var(OPENCODE_SERVER_USERNAME_ENV).ok();
+    resolve_server_username(version, explicit.as_deref())
 }
 
 /// Server password from the environment (Node: `config.opencode.password`);
+/// `OPENCODE_SERVER_PASSWORD` wins, else `OPENCODE_PASSWORD` is read.
 /// `None` when missing or empty, in which case no auth header is sent
 /// (Node: `getAuth` returns `undefined`).
 pub fn server_password_from_env() -> Option<String> {
-    std::env::var(OPENCODE_SERVER_PASSWORD_ENV)
-        .ok()
-        .filter(|value| !value.is_empty())
+    let primary = std::env::var(OPENCODE_SERVER_PASSWORD_ENV).ok();
+    let fallback = std::env::var(OPENCODE_PASSWORD_ENV).ok();
+    resolve_server_password(primary.as_deref(), fallback.as_deref())
 }
 
 /// Basic-auth header from the environment (Node: `getAuth`/`authHeaders`);
@@ -653,13 +721,17 @@ impl OpencodeClient {
     }
 
     /// Build from the environment (`OPENCODE_URL` / `OPENCODE_API_URL`,
-    /// `OPENCODE_SERVER_VERSION`, plus `OPENCODE_SERVER_USERNAME` /
-    /// `OPENCODE_SERVER_PASSWORD` for Basic auth). Reads env only;
-    /// performs no I/O.
+    /// `OPENCODE_SERVER_VERSION`, plus Basic auth: V2 forces username
+    /// `opencode` and reads `OPENCODE_SERVER_PASSWORD` else
+    /// `OPENCODE_PASSWORD`; V1 honors `OPENCODE_SERVER_USERNAME`).
+    /// Reads env only; performs no I/O. Uses the same version-aware
+    /// default as `AppConfig::opencode_client` (`v2` ->
+    /// `http://127.0.0.1:49374`, `v1` -> `http://localhost:4096`).
     pub fn from_env() -> Self {
+        let version = server_version_from_env().to_string();
         Self {
-            base_url: base_url_from_env(),
-            server_version: server_version_from_env().to_string(),
+            base_url: base_url_from_env_for_version(&version),
+            server_version: version,
             authorization: auth_header_from_env(),
             http: reqwest::Client::new(),
         }
@@ -1636,30 +1708,92 @@ mod tests {
 
     #[test]
     fn auth_header_from_env_matches_node_get_auth() {
-        // Node `getAuth`: no header without a password; otherwise
-        // `Basic base64("username:password")` with username defaulting to
-        // `opencode`. Dummy values only; live env is restored afterwards.
+        // V2 authoritative default: `OPENCODE_SERVER_USERNAME` is ignored
+        // on V2 (always `opencode`); `OPENCODE_PASSWORD` is the fallback
+        // when `OPENCODE_SERVER_PASSWORD` is unset/empty. V1 keeps the
+        // custom username. Dummy values only; live env is restored after.
+        let prev_version = std::env::var("OPENCODE_SERVER_VERSION").ok();
         let prev_user = std::env::var(OPENCODE_SERVER_USERNAME_ENV).ok();
         let prev_pass = std::env::var(OPENCODE_SERVER_PASSWORD_ENV).ok();
+        let prev_fallback = std::env::var(OPENCODE_PASSWORD_ENV).ok();
 
+        // V1 honors the custom username.
+        std::env::set_var("OPENCODE_SERVER_VERSION", "v1");
         std::env::remove_var(OPENCODE_SERVER_USERNAME_ENV);
         std::env::set_var(OPENCODE_SERVER_PASSWORD_ENV, "dummy-password");
+        std::env::remove_var(OPENCODE_PASSWORD_ENV);
+        assert_eq!(server_username_from_env(), "opencode");
+        assert_eq!(
+            auth_header_from_env(),
+            Some(basic_auth_header("opencode", "dummy-password"))
+        );
+        std::env::set_var(OPENCODE_SERVER_USERNAME_ENV, "dummy-user");
+        assert_eq!(server_username_from_env(), "dummy-user");
+        assert_eq!(
+            auth_header_from_env(),
+            Some(basic_auth_header("dummy-user", "dummy-password"))
+        );
+
+        // V2 forces `opencode` even with a custom username set.
+        std::env::set_var("OPENCODE_SERVER_VERSION", "v2");
         assert_eq!(server_username_from_env(), "opencode");
         assert_eq!(
             auth_header_from_env(),
             Some(basic_auth_header("opencode", "dummy-password"))
         );
 
-        std::env::set_var(OPENCODE_SERVER_USERNAME_ENV, "dummy-user");
+        // Password fallback: `OPENCODE_PASSWORD` fills in when the primary
+        // is unset, and an empty primary does not block the fallback.
+        std::env::remove_var(OPENCODE_SERVER_PASSWORD_ENV);
+        std::env::set_var(OPENCODE_PASSWORD_ENV, "fallback-password");
+        assert_eq!(
+            server_password_from_env().as_deref(),
+            Some("fallback-password")
+        );
         assert_eq!(
             auth_header_from_env(),
-            Some(basic_auth_header("dummy-user", "dummy-password"))
+            Some(basic_auth_header("opencode", "fallback-password"))
+        );
+        std::env::set_var(OPENCODE_SERVER_PASSWORD_ENV, "");
+        assert_eq!(
+            server_password_from_env().as_deref(),
+            Some("fallback-password")
         );
 
+        // No password anywhere -> no header.
         std::env::remove_var(OPENCODE_SERVER_PASSWORD_ENV);
+        std::env::remove_var(OPENCODE_PASSWORD_ENV);
         assert_eq!(server_password_from_env(), None);
         assert_eq!(auth_header_from_env(), None);
 
+        // Pure resolvers (no env): V2 ignores the username, V1 keeps it.
+        assert_eq!(
+            resolve_server_username("v2", Some("dummy-user")),
+            "opencode"
+        );
+        assert_eq!(
+            resolve_server_username("v1", Some("dummy-user")),
+            "dummy-user"
+        );
+        assert_eq!(resolve_server_username("v1", None), "opencode");
+        assert_eq!(
+            resolve_server_password(Some("primary"), Some("fallback")).as_deref(),
+            Some("primary")
+        );
+        assert_eq!(
+            resolve_server_password(None, Some("fallback")).as_deref(),
+            Some("fallback")
+        );
+        assert_eq!(
+            resolve_server_password(Some(""), Some("fallback")).as_deref(),
+            Some("fallback")
+        );
+        assert_eq!(resolve_server_password(None, None), None);
+
+        match prev_version {
+            Some(value) => std::env::set_var("OPENCODE_SERVER_VERSION", value),
+            None => std::env::remove_var("OPENCODE_SERVER_VERSION"),
+        }
         match prev_user {
             Some(value) => std::env::set_var(OPENCODE_SERVER_USERNAME_ENV, value),
             None => std::env::remove_var(OPENCODE_SERVER_USERNAME_ENV),
@@ -1668,6 +1802,37 @@ mod tests {
             Some(value) => std::env::set_var(OPENCODE_SERVER_PASSWORD_ENV, value),
             None => std::env::remove_var(OPENCODE_SERVER_PASSWORD_ENV),
         }
+        match prev_fallback {
+            Some(value) => std::env::set_var(OPENCODE_PASSWORD_ENV, value),
+            None => std::env::remove_var(OPENCODE_PASSWORD_ENV),
+        }
+    }
+
+    #[test]
+    fn version_aware_base_url_defaults_match_app_config() {
+        // Explicit wins on both versions; otherwise V2 lands on the
+        // service-registry port and V1 on the legacy localhost port, so
+        // `from_env` agrees with `AppConfig::opencode_client`.
+        assert_eq!(
+            resolve_base_url_for_version(Some("http://127.0.0.1:4096/"), "v2"),
+            "http://127.0.0.1:4096"
+        );
+        assert_eq!(
+            resolve_base_url_for_version(None, "v2"),
+            "http://127.0.0.1:49374"
+        );
+        assert_eq!(
+            resolve_base_url_for_version(Some(""), "v2"),
+            "http://127.0.0.1:49374"
+        );
+        assert_eq!(
+            resolve_base_url_for_version(None, "v1"),
+            "http://localhost:4096"
+        );
+        assert_eq!(
+            resolve_base_url_for_version(Some("http://custom:1/"), "v1"),
+            "http://custom:1"
+        );
     }
 
     #[test]
