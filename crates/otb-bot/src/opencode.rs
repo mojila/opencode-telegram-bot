@@ -329,10 +329,16 @@ pub fn permission_reply_payload(reply: &str, message: Option<&str>) -> Value {
     payload
 }
 
-/// Prompt path per server version: `<session_path>/<session_id>`
-/// (V1 `session/{id}`, V2 `api/session/{id}`; V2 prefix assumed, see header).
+/// Prompt-send path per server version (TS SDK parity:
+/// `admitPrompt` in `src/opencode/v2/client.ts:269-283` is
+/// `POST /api/session/{id}/prompt`; V1 keeps `session/{id}`).
+/// Pure; testable.
 pub fn prompt_path(server_version: &str, session_id: &str) -> String {
-    format!("{}/{}", session_path(server_version), session_id)
+    if server_version == "v2" {
+        format!("{}/{session_id}/prompt", session_path(server_version))
+    } else {
+        format!("{}/{session_id}", session_path(server_version))
+    }
 }
 
 /// Session message-list path per server version:
@@ -1030,7 +1036,7 @@ impl OpencodeClient {
     /// this dead-code helper keeps its current wire contract; callers that
     /// need the parts shape use [`OpencodeClient::prompt_session`].
     pub async fn send_prompt(&self, session_id: &str, text: &str) -> Result<Value, reqwest::Error> {
-        let path = format!("{}/{}", session_path(&self.server_version), session_id);
+        let path = prompt_path(&self.server_version, session_id);
         let payload = serde_json::json!({ "text": text });
         let response = self
             .post(&path)
@@ -1681,7 +1687,7 @@ mod tests {
     #[test]
     fn prompt_url_and_payload_follow_version_prefix() {
         assert_eq!(prompt_path("v1", "abc"), "session/abc");
-        assert_eq!(prompt_path("v2", "abc"), "api/session/abc");
+        assert_eq!(prompt_path("v2", "abc"), "api/session/abc/prompt");
         assert_eq!(
             prompt_payload("v1", "hi"),
             serde_json::json!({ "parts": [{ "type": "text", "text": "hi" }] })
@@ -1690,6 +1696,35 @@ mod tests {
             prompt_payload("v2", "hi"),
             serde_json::json!({ "text": "hi" })
         );
+    }
+
+    #[test]
+    fn v2_prompt_path_requires_prompt_suffix() {
+        // P0 (`bot.prompt_send_error` 404): TS `admitPrompt`
+        // (`src/opencode/v2/client.ts:269-283`) posts to
+        // `POST /api/session/{id}/prompt`; V1 keeps `session/{id}`.
+        assert_eq!(prompt_path("v2", "ses_x"), "api/session/ses_x/prompt");
+        assert_eq!(prompt_path("v1", "ses_x"), "session/ses_x");
+        // Body contract unchanged: `{text, delivery:"queue"}`, no `files`.
+        let options = otb_core::prompt_request_gates::build_prompt_options(
+            "ses_x",
+            "",
+            "hi",
+            0,
+            false,
+            otb_core::prompt_request_gates::PromptSelection::default(),
+        );
+        let payload = prompt_payload_from_options(&options, None, None);
+        assert_eq!(
+            payload,
+            serde_json::json!({ "text": "hi", "delivery": "queue" })
+        );
+        assert!(payload.get("files").is_none());
+        // Neighboring routes do not regress: only the prompt send changes.
+        assert_eq!(message_path("v2", "ses_x"), "api/session/ses_x/message");
+        assert_eq!(abort_path("v2", "ses_x"), "api/session/ses_x/interrupt");
+        assert_eq!(message_path("v1", "ses_x"), "session/ses_x/message");
+        assert_eq!(abort_path("v1", "ses_x"), "session/ses_x/abort");
     }
 
     #[test]
