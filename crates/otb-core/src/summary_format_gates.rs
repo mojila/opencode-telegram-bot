@@ -140,8 +140,12 @@ pub fn split_text(
 
     while current_index < len {
         let owned: String = chars.iter().collect();
-        let end_index =
-            resolve_split_end_index(&owned, current_index, max_length, avoid_trailing_markdown_escape);
+        let end_index = resolve_split_end_index(
+            &owned,
+            current_index,
+            max_length,
+            avoid_trailing_markdown_escape,
+        );
 
         if end_index <= current_index {
             let fallback_end = len.min(current_index.saturating_add(1));
@@ -168,7 +172,10 @@ pub fn escape_markdown_v2_pipes_outside_code(text: &str) -> String {
     let mut in_code_fence = false;
 
     while index < len {
-        if index + 3 <= len && chars[index] == '`' && chars[index + 1] == '`' && chars[index + 2] == '`'
+        if index + 3 <= len
+            && chars[index] == '`'
+            && chars[index + 1] == '`'
+            && chars[index + 2] == '`'
         {
             result.push_str("```");
             index += 3;
@@ -185,7 +192,10 @@ pub fn escape_markdown_v2_pipes_outside_code(text: &str) -> String {
             continue;
         }
 
-        if !in_code_fence && !in_inline_code && ch == '|' && (index == 0 || chars[index - 1] != '\\')
+        if !in_code_fence
+            && !in_inline_code
+            && ch == '|'
+            && (index == 0 || chars[index - 1] != '\\')
         {
             result.push_str("\\|");
             index += 1;
@@ -231,8 +241,7 @@ pub fn format_summary_with_mode(
             // convertToTelegramMarkdownV2 here; this gate approximates with
             // the pipe-escape only (see DEVIATIONS).
             let converted = escape_markdown_v2_pipes_outside_code(trimmed);
-            let converted_parts =
-                split_text(&converted, normalized_max_length, true);
+            let converted_parts = split_text(&converted, normalized_max_length, true);
             for converted_part in &converted_parts {
                 let normalized_part = converted_part.trim();
                 if !normalized_part.is_empty() {

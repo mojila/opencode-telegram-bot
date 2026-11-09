@@ -78,11 +78,23 @@ pub struct PlainListItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlainBlock {
     Paragraph(Vec<PlainInline>),
-    Heading { level: u8, inlines: Vec<PlainInline> },
+    Heading {
+        level: u8,
+        inlines: Vec<PlainInline>,
+    },
     Blockquote(Vec<PlainBlock>),
-    List { ordered: bool, start: Option<i64>, items: Vec<PlainListItem> },
-    Code { language: Option<String>, text: String },
-    Table { rows: Vec<Vec<String>> },
+    List {
+        ordered: bool,
+        start: Option<i64>,
+        items: Vec<PlainListItem>,
+    },
+    Code {
+        language: Option<String>,
+        text: String,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+    },
     Rule,
     Plain(String),
 }
@@ -164,12 +176,7 @@ pub fn build_plain_aligned_table(rows: &[Vec<String>]) -> String {
     format!("{}\n{divider}\n{}", formatted[0], formatted[1..].join("\n"))
 }
 
-fn build_list_item_text(
-    item: &PlainListItem,
-    index: usize,
-    ordered: bool,
-    start: i64,
-) -> String {
+fn build_list_item_text(item: &PlainListItem, index: usize, ordered: bool, start: i64) -> String {
     // A task item states its state in the marker; a bullet in front reads as a second one.
     let task_prefix = match item.checked {
         Some(true) => "✅ ",
@@ -221,7 +228,11 @@ pub fn to_block_plain_text(block: &PlainBlock) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        PlainBlock::List { ordered, start, items } => {
+        PlainBlock::List {
+            ordered,
+            start,
+            items,
+        } => {
             let from = start.unwrap_or(1);
             items
                 .iter()

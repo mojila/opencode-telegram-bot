@@ -65,10 +65,7 @@ fn slice68_attach_snapshot_is_copy_parity() {
     manager.attach("sess-1", "/work/a");
     let mut snapshot = manager.snapshot().expect("attached");
     snapshot.session_id = "mutated".to_string();
-    assert_eq!(
-        manager.snapshot().expect("again").session_id,
-        "sess-1"
-    );
+    assert_eq!(manager.snapshot().expect("again").session_id, "sess-1");
 }
 
 #[test]

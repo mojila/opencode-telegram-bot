@@ -129,21 +129,49 @@ fn slice79_commands_metadata_none_state_is_none_parity() {
 
 #[test]
 fn slice79_commands_metadata_wrong_kind_is_none_parity() {
-    let state = snapshot("other", Some("commands"), Some("list"), Some(1), Some("/p"), Some(0.0));
+    let state = snapshot(
+        "other",
+        Some("commands"),
+        Some("list"),
+        Some(1),
+        Some("/p"),
+        Some(0.0),
+    );
     assert_eq!(parse_commands_metadata(Some(&state)), None);
 }
 
 #[test]
 fn slice79_commands_metadata_wrong_flow_is_none_parity() {
-    let state = snapshot("custom", Some("skills"), Some("list"), Some(1), Some("/p"), Some(0.0));
+    let state = snapshot(
+        "custom",
+        Some("skills"),
+        Some("list"),
+        Some(1),
+        Some("/p"),
+        Some(0.0),
+    );
     assert_eq!(parse_commands_metadata(Some(&state)), None);
 }
 
 #[test]
 fn slice79_commands_metadata_missing_ids_is_none_parity() {
-    let state = snapshot("custom", Some("commands"), Some("list"), None, Some("/p"), Some(0.0));
+    let state = snapshot(
+        "custom",
+        Some("commands"),
+        Some("list"),
+        None,
+        Some("/p"),
+        Some(0.0),
+    );
     assert_eq!(parse_commands_metadata(Some(&state)), None);
-    let state = snapshot("custom", Some("commands"), Some("list"), Some(7), None, Some(0.0));
+    let state = snapshot(
+        "custom",
+        Some("commands"),
+        Some("list"),
+        Some(7),
+        None,
+        Some(0.0),
+    );
     assert_eq!(parse_commands_metadata(Some(&state)), None);
 }
 
@@ -328,7 +356,14 @@ fn slice79_skills_metadata_confirm_ok_parity() {
 
 #[test]
 fn slice79_skills_metadata_wrong_flow_is_none_parity() {
-    let state = snapshot("custom", Some("commands"), Some("list"), Some(1), Some("/p"), Some(0.0));
+    let state = snapshot(
+        "custom",
+        Some("commands"),
+        Some("list"),
+        Some(1),
+        Some("/p"),
+        Some(0.0),
+    );
     assert_eq!(parse_skills_metadata(Some(&state)), None);
 }
 
@@ -473,7 +508,10 @@ fn slice79_trim_arguments_parity() {
 
 #[test]
 fn slice79_command_invocation_with_args_parity() {
-    assert_eq!(build_command_invocation("deploy", "prod now"), "/deploy prod now");
+    assert_eq!(
+        build_command_invocation("deploy", "prod now"),
+        "/deploy prod now"
+    );
 }
 
 #[test]

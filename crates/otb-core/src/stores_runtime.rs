@@ -358,10 +358,7 @@ pub fn resolve_app_home(
             if path.is_absolute() {
                 return trimmed.to_string();
             }
-            return Path::new(cwd)
-                .join(trimmed)
-                .to_string_lossy()
-                .into_owned();
+            return Path::new(cwd).join(trimmed).to_string_lossy().into_owned();
         }
     }
     if mode == "sources" {
@@ -395,10 +392,7 @@ pub fn describe_server_url(url: &str) -> String {
     if host.is_empty() {
         return FALLBACK.to_string();
     }
-    let path = after
-        .split(|c| c == '?' || c == '#')
-        .next()
-        .unwrap_or("");
+    let path = after.split(|c| c == '?' || c == '#').next().unwrap_or("");
     let path = if path == "/" { "" } else { path };
     format!("{protocol}://{host}{path}")
 }
@@ -406,10 +400,7 @@ pub fn describe_server_url(url: &str) -> String {
 /// Which stored server the next request targets: `Some(url)` switches away
 /// from the configured URL, `None` (or a URL equal to the configured one)
 /// stays on the configured server (TS: `switchOpencodeServer` mapping).
-pub fn resolve_switched_server(
-    new_url: Option<&str>,
-    configured_url: &str,
-) -> Option<String> {
+pub fn resolve_switched_server(new_url: Option<&str>, configured_url: &str) -> Option<String> {
     match new_url {
         Some(url) if url != configured_url => Some(url.to_string()),
         _ => None,
@@ -471,7 +462,12 @@ pub fn build_basic_auth(username: Option<&str>, password: Option<&str>) -> Optio
 /// Probe outcome from the HTTP status + body gate
 /// (TS: `probeOpencodeServer`: `401` -> `"unauthorized"`;
 /// ok + JSON + version -> `"found"`; else `"none"`).
-pub fn classify_probe(status: u16, content_type_json: bool, has_version: bool, ok: bool) -> &'static str {
+pub fn classify_probe(
+    status: u16,
+    content_type_json: bool,
+    has_version: bool,
+    ok: bool,
+) -> &'static str {
     if status == 401 {
         return "unauthorized";
     }

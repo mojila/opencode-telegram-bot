@@ -53,9 +53,8 @@
 
 /// Locales whose placeholder parity has no Rust owner yet
 /// (`en` is the reference, `ru` is covered via `crate::i18n_full`).
-pub const REMAINING_LOCALES: [&str; 10] = [
-    "ar", "de", "es", "fr", "id", "it", "ko", "pt", "tr", "zh",
-];
+pub const REMAINING_LOCALES: [&str; 10] =
+    ["ar", "de", "es", "fr", "id", "it", "ko", "pt", "tr", "zh"];
 
 /// Source of the shared placeholder pattern
 /// (TS: `/\{([a-zA-Z0-9_]+)\}/g` in `tests/i18n/placeholders.test.ts`
@@ -104,10 +103,7 @@ pub fn placeholder_sets_equal(en_template: &str, locale_template: &str) -> bool 
 /// Placeholders in `en_template` missing from `locale_template`, sorted
 /// (TS: `[...expected].filter((p) => !actual.has(p))` subset of the
 /// mismatch gate).
-pub fn missing_placeholders(
-    en_template: &str,
-    locale_template: &str,
-) -> Vec<String> {
+pub fn missing_placeholders(en_template: &str, locale_template: &str) -> Vec<String> {
     let expected = placeholder_set(en_template);
     let actual = placeholder_set(locale_template);
     expected.difference(&actual).cloned().collect()
@@ -115,10 +111,7 @@ pub fn missing_placeholders(
 
 /// Placeholders in `locale_template` absent from `en_template`, sorted
 /// (TS: the size/equality gate catches these together with missing ones).
-pub fn extra_placeholders(
-    en_template: &str,
-    locale_template: &str,
-) -> Vec<String> {
+pub fn extra_placeholders(en_template: &str, locale_template: &str) -> Vec<String> {
     let expected = placeholder_set(en_template);
     let actual = placeholder_set(locale_template);
     actual.difference(&expected).cloned().collect()
@@ -126,10 +119,7 @@ pub fn extra_placeholders(
 
 /// `true` when the translation keeps the `en` placeholder set exactly
 /// (TS: zero `mismatches` for the key).
-pub fn is_translation_placeholder_ok(
-    en_template: &str,
-    locale_template: &str,
-) -> bool {
+pub fn is_translation_placeholder_ok(en_template: &str, locale_template: &str) -> bool {
     placeholder_sets_equal(en_template, locale_template)
 }
 

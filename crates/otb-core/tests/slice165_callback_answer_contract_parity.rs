@@ -156,11 +156,7 @@ fn callback_contract_ignores_unpaired_lines_parity() {
     // Only the first `return false;` pairs with one answer.
     let single = find_violations(&[(
         "handler.ts",
-        &[
-            "await alert(ctx);",
-            "return false;",
-            "return false;",
-        ] as &[&str],
+        &["await alert(ctx);", "return false;", "return false;"] as &[&str],
     )]);
     assert_eq!(single.len(), 1);
     assert_eq!(single[0].return_line, 2);

@@ -94,10 +94,7 @@ fn unescape_ts(raw: &str) -> String {
                         }
                     }
                 }
-                match u32::from_str_radix(&hex, 16)
-                    .ok()
-                    .and_then(char::from_u32)
-                {
+                match u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
                     Some(c) => out.push(c),
                     None => out.push_str(&format!("\\u{hex}")),
                 }
@@ -136,11 +133,7 @@ fn parse_ts_string<'a>(rest: &'a str, file: &str) -> (String, &'a str) {
         if rest.as_bytes()[i] == delim {
             return (unescape_ts(&raw), &rest[i + 1..]);
         }
-        let ch_len = rest[i..]
-            .chars()
-            .next()
-            .map(|c| c.len_utf8())
-            .unwrap_or(1);
+        let ch_len = rest[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
         raw.push_str(&rest[i..i + ch_len]);
         i += ch_len;
     }
@@ -198,7 +191,9 @@ fn collect_ts_files(root: &Path, out: &mut Vec<PathBuf>) {
     let entries =
         fs::read_dir(root).unwrap_or_else(|e| panic!("cannot read dir {}: {e}", root.display()));
     for entry in entries {
-        let path = entry.unwrap_or_else(|e| panic!("cannot read entry: {e}")).path();
+        let path = entry
+            .unwrap_or_else(|e| panic!("cannot read entry: {e}"))
+            .path();
         if path.is_dir() {
             collect_ts_files(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "ts") {

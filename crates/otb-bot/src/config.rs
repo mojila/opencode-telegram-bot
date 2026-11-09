@@ -252,10 +252,8 @@ impl AppConfig {
             env_opt("OPENCODE_API_URL").as_deref(),
         )
         .map_err(|err| err.to_string())?;
-        let bot_locale = otb_core::types_config::normalize_locale_tag(
-            env_opt("BOT_LOCALE").as_deref(),
-            "en",
-        );
+        let bot_locale =
+            otb_core::types_config::normalize_locale_tag(env_opt("BOT_LOCALE").as_deref(), "en");
         let health_port = crate::health::resolve_health_port_from_env();
 
         Ok(Self {
@@ -282,9 +280,7 @@ impl AppConfig {
             &self.opencode_server_version,
         );
         match &self.opencode_server_password {
-            Some(password) => {
-                client.with_basic_auth(&self.opencode_server_username, password)
-            }
+            Some(password) => client.with_basic_auth(&self.opencode_server_username, password),
             None => client,
         }
     }

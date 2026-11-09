@@ -195,7 +195,10 @@ fn slice53_04_eligible_skips_empty_text() {
         ),
         assistant("real", 5),
     ];
-    assert_eq!(find_eligible_reply(&messages, false).map(|pick| pick.text), Some("real".to_string()));
+    assert_eq!(
+        find_eligible_reply(&messages, false).map(|pick| pick.text),
+        Some("real".to_string())
+    );
 }
 
 #[test]
@@ -261,7 +264,11 @@ fn slice53_09_eligible_none_without_usable_assistant() {
 
 #[test]
 fn slice53_10_latest_user_picks_newest_user_message() {
-    let messages = vec![user_msg("old", 2), assistant("reply", 5), user_msg("new", 9)];
+    let messages = vec![
+        user_msg("old", 2),
+        assistant("reply", 5),
+        user_msg("new", 9),
+    ];
     assert_eq!(
         find_latest_user_prompt(&messages, "attachment").map(|found| found.info.created),
         Some(Some(9))
@@ -403,7 +410,10 @@ fn slice53_22_quote_missing_filename_falls_back_to_label() {
 
 #[test]
 fn slice53_23_quote_empty_text_and_no_files_is_none() {
-    assert_eq!(build_session_pick_quote(&user_msg("   ", 3), "Last input", "attachment"), None);
+    assert_eq!(
+        build_session_pick_quote(&user_msg("   ", 3), "Last input", "attachment"),
+        None
+    );
     let image_only = msg(
         Some("u"),
         "user",
@@ -414,7 +424,10 @@ fn slice53_23_quote_empty_text_and_no_files_is_none() {
         None,
         vec![image_part()],
     );
-    assert_eq!(build_session_pick_quote(&image_only, "Last input", "attachment"), None);
+    assert_eq!(
+        build_session_pick_quote(&image_only, "Last input", "attachment"),
+        None
+    );
 }
 
 // --- external user input (24-28) ---
@@ -438,15 +451,18 @@ fn slice53_25_truncate_over_budget_appends_ellipsis() {
 
 #[test]
 fn slice53_26_notification_normalizes_crlf_and_trims() {
-    let notice =
-        build_external_user_input_notification("Review\r\nREADME  ", "External input").expect("notice");
+    let notice = build_external_user_input_notification("Review\r\nREADME  ", "External input")
+        .expect("notice");
     assert_eq!(notice.title, "👤 External input");
     assert_eq!(notice.body, "Review\nREADME");
 }
 
 #[test]
 fn slice53_27_notification_blank_is_none() {
-    assert_eq!(build_external_user_input_notification("   \r\n  ", "External input"), None);
+    assert_eq!(
+        build_external_user_input_notification("   \r\n  ", "External input"),
+        None
+    );
 }
 
 #[test]
@@ -462,7 +478,10 @@ fn slice53_28_notification_body_truncated_at_budget() {
 
 #[test]
 fn slice53_29_catalog_directory_folds_backslashes() {
-    assert_eq!(normalize_catalog_api_directory("C:\\proj\\app"), "C:/proj/app");
+    assert_eq!(
+        normalize_catalog_api_directory("C:\\proj\\app"),
+        "C:/proj/app"
+    );
 }
 
 #[test]
@@ -583,10 +602,19 @@ fn slice53_37_skills_filter_drops_command_source_and_blanks() {
 
 #[test]
 fn slice53_38_mcp_all_status_names_recognized_unknown_rejected() {
-    assert_eq!(mcp_status_name_of("connected"), Some(McpStatusName::Connected));
-    assert_eq!(mcp_status_name_of("disabled"), Some(McpStatusName::Disabled));
+    assert_eq!(
+        mcp_status_name_of("connected"),
+        Some(McpStatusName::Connected)
+    );
+    assert_eq!(
+        mcp_status_name_of("disabled"),
+        Some(McpStatusName::Disabled)
+    );
     assert_eq!(mcp_status_name_of("failed"), Some(McpStatusName::Failed));
-    assert_eq!(mcp_status_name_of("needs_auth"), Some(McpStatusName::NeedsAuth));
+    assert_eq!(
+        mcp_status_name_of("needs_auth"),
+        Some(McpStatusName::NeedsAuth)
+    );
     assert_eq!(
         mcp_status_name_of("needs_client_registration"),
         Some(McpStatusName::NeedsClientRegistration)
@@ -686,7 +714,10 @@ fn slice53_43_mcp_non_string_status_is_invalid() {
 #[test]
 fn slice53_44_mcp_invalid_shapes_are_none() {
     assert_eq!(parse_mcp_catalog_servers(&CatalogJson::Null), None);
-    assert_eq!(parse_mcp_catalog_servers(&CatalogJson::Str("nope".to_string())), None);
+    assert_eq!(
+        parse_mcp_catalog_servers(&CatalogJson::Str("nope".to_string())),
+        None
+    );
     // Array item that is not a record.
     assert_eq!(
         parse_mcp_catalog_servers(&CatalogJson::Arr(vec![CatalogJson::Num(1.0)])),
@@ -718,7 +749,10 @@ fn slice53_45_recent_question_outranks_everything() {
         decide_recent_status(true, true, Some("busy")),
         RecentStatus::Question
     );
-    assert_eq!(decide_recent_status(true, false, None), RecentStatus::Question);
+    assert_eq!(
+        decide_recent_status(true, false, None),
+        RecentStatus::Question
+    );
 }
 
 #[test]
@@ -735,12 +769,18 @@ fn slice53_46_recent_permission_outranks_running() {
 
 #[test]
 fn slice53_47_recent_busy_and_retry_run_otherwise_idle() {
-    assert_eq!(decide_recent_status(false, false, Some("busy")), RecentStatus::Running);
+    assert_eq!(
+        decide_recent_status(false, false, Some("busy")),
+        RecentStatus::Running
+    );
     assert_eq!(
         decide_recent_status(false, false, Some("retry")),
         RecentStatus::Running
     );
-    assert_eq!(decide_recent_status(false, false, Some("idle")), RecentStatus::Idle);
+    assert_eq!(
+        decide_recent_status(false, false, Some("idle")),
+        RecentStatus::Idle
+    );
     assert_eq!(decide_recent_status(false, false, None), RecentStatus::Idle);
 }
 

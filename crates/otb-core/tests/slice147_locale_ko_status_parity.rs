@@ -75,7 +75,10 @@ fn ko_status_placeholders_match_en_parity() {
         "Status: {health}",
         "상태: {health}"
     ));
-    assert!(is_ko_status_placeholder_ok("Model: {model}", "모델: {model}"));
+    assert!(is_ko_status_placeholder_ok(
+        "Model: {model}",
+        "모델: {model}"
+    ));
 }
 
 #[test]

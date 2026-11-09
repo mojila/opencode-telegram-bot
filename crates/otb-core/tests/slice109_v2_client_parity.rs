@@ -80,7 +80,11 @@ fn not_found_client_non_404_drops_parity() {
         "UnexpectedStatus",
         500
     ));
-    assert!(!is_not_found_client_status("Other", "UnexpectedStatus", 404));
+    assert!(!is_not_found_client_status(
+        "Other",
+        "UnexpectedStatus",
+        404
+    ));
 }
 
 // ---- unsupported goal (4) ----

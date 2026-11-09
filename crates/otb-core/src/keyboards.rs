@@ -78,10 +78,7 @@ pub fn queued_prompt_button_labels(display_texts: &[String]) -> Vec<String> {
 
 /// Position of the queue entry behind a button label, `None` when the label
 /// no longer matches (TS: `findQueuedPromptByButtonLabel`).
-pub fn find_queued_prompt_index_by_label(
-    display_texts: &[String],
-    label: &str,
-) -> Option<usize> {
+pub fn find_queued_prompt_index_by_label(display_texts: &[String], label: &str) -> Option<usize> {
     display_texts
         .iter()
         .enumerate()
@@ -156,7 +153,11 @@ fn capitalize_first(name: &str) -> String {
 
 /// Reply-keyboard label for an agent button (TS: `getAgentButtonLabel`).
 pub fn agent_button_label(agent_name: &str) -> String {
-    format!("{} {} Agent", agent_emoji(agent_name), capitalize_first(agent_name))
+    format!(
+        "{} {} Agent",
+        agent_emoji(agent_name),
+        capitalize_first(agent_name)
+    )
 }
 
 /// Truncate a display part on a char boundary with `...` (TS: `substring` cut).
@@ -212,7 +213,11 @@ pub fn create_main_keyboard(
             .map(str::to_string)
             .unwrap_or_else(|| VARIANT_DEFAULT_LABEL.to_string()),
     ]);
-    MainKeyboard { rows, resized: true, persistent: true }
+    MainKeyboard {
+        rows,
+        resized: true,
+        persistent: true,
+    }
 }
 
 /// Single-button agent keyboard (TS: `createAgentKeyboard`, deprecated).
@@ -283,7 +288,9 @@ fn goal_status_word(status: GoalStatus) -> &'static str {
 /// Button labels for a goal snapshot: `[details, action]` or `[]` when no
 /// goal/session (TS: `getGoalButtonLabels`).
 pub fn get_goal_button_labels(status: Option<GoalStatus>, objective: &str) -> Vec<String> {
-    let Some(status) = status else { return Vec::new() };
+    let Some(status) = status else {
+        return Vec::new();
+    };
     let flat = flatten_goal_objective(objective);
     let short = if flat.chars().count() <= 28 {
         flat
@@ -353,7 +360,9 @@ pub fn is_agent_mode_button_text(text: &str) -> bool {
 
 /// Whether text looks like a model button (TS: `MODEL_BUTTON_TEXT_PATTERN`).
 pub fn is_model_button_text(text: &str) -> bool {
-    let Some(rest) = text.strip_prefix("🧠") else { return false };
+    let Some(rest) = text.strip_prefix("🧠") else {
+        return false;
+    };
     if !rest.starts_with(char::is_whitespace) {
         return false;
     }
@@ -388,7 +397,9 @@ pub fn is_context_button_text(text: &str) -> bool {
 /// Whether text looks like a queued-prompt button
 /// (TS: `QUEUED_PROMPT_BUTTON_TEXT_PATTERN`).
 pub fn is_queued_prompt_button_text(text: &str) -> bool {
-    let Some(rest) = text.strip_prefix("❌") else { return false };
+    let Some(rest) = text.strip_prefix("❌") else {
+        return false;
+    };
     let rest = rest.strip_prefix(char::is_whitespace).unwrap_or(rest);
     // `❌` must be followed by whitespace before the digits.
     if rest.len() == text.len() - "❌".len() {
@@ -464,7 +475,10 @@ pub fn parse_provider_callback(data: &str) -> Option<ProviderCallback> {
     }
     let provider_index = parse_callback_index(index_text)? as usize;
     let page = parse_callback_index(page_text)? as usize;
-    Some(ProviderCallback { provider_index, page })
+    Some(ProviderCallback {
+        provider_index,
+        page,
+    })
 }
 
 /// Parse a `model:pick:<index>` callback (TS: `parseProviderModelCallback`).
@@ -492,7 +506,12 @@ pub fn calculate_models_pagination_range(
     let normalized_page = (page.max(0) as usize).min(total_pages - 1);
     let start_index = normalized_page * safe_page_size;
     let end_index = (start_index + safe_page_size).min(total_items);
-    PaginationRange { page: normalized_page, total_pages, start_index, end_index }
+    PaginationRange {
+        page: normalized_page,
+        total_pages,
+        start_index,
+        end_index,
+    }
 }
 
 /// Saved-model option label with `⭐`/`🕘` prefix and `✅` when active
@@ -504,7 +523,11 @@ pub fn model_option_label(
     is_active: bool,
 ) -> String {
     let label = format!("{prefix} {provider_id}/{model_id}");
-    if is_active { format!("✅ {label}") } else { label }
+    if is_active {
+        format!("✅ {label}")
+    } else {
+        label
+    }
 }
 
 /// Provider option label (TS: `buildProvidersMenuView` label).
@@ -523,7 +546,11 @@ pub fn model_menu_has_choices(favorites: usize, recent: usize) -> bool {
 
 /// Agent option label with `✅` when current (TS: `buildAgentSelectionMenu`).
 pub fn agent_option_label(display_name: &str, is_active: bool) -> String {
-    if is_active { format!("✅ {display_name}") } else { display_name.to_string() }
+    if is_active {
+        format!("✅ {display_name}")
+    } else {
+        display_name.to_string()
+    }
 }
 
 /// Agent option callback `agent:<name>` (TS: `buildAgentSelectionMenu`).
@@ -543,7 +570,11 @@ pub fn format_variant_for_display(variant_id: &str) -> String {
 /// Variant option label with `✅` when current (TS: `buildVariantSelectionMenu`).
 pub fn variant_option_label(variant_id: &str, is_active: bool) -> String {
     let display = format_variant_for_display(variant_id);
-    if is_active { format!("✅ {display}") } else { display }
+    if is_active {
+        format!("✅ {display}")
+    } else {
+        display
+    }
 }
 
 /// Variant option callback `variant:<id>`.
@@ -634,10 +665,7 @@ pub enum PermissionReply {
 }
 
 /// Status line closing a prompt (TS: `formatOutcomeLine`).
-pub fn format_permission_outcome_line(
-    reply: PermissionReply,
-    answered_outside: bool,
-) -> String {
+pub fn format_permission_outcome_line(reply: PermissionReply, answered_outside: bool) -> String {
     let line = match reply {
         PermissionReply::Once => "✅ Allowed once",
         PermissionReply::Always => "🔓 Allowed always",
@@ -676,7 +704,11 @@ pub fn format_permission_text(
     let mut rendered = String::new();
     for (index, pattern) in patterns.iter().enumerate() {
         let line = format!("{PATTERN_PREFIX}{pattern}\n");
-        let reserve = if index == patterns.len() - 1 { 0 } else { cut_line.len() };
+        let reserve = if index == patterns.len() - 1 {
+            0
+        } else {
+            cut_line.len()
+        };
         if line.len() + reserve <= budget {
             budget -= line.len();
             rendered.push_str(&line);
@@ -741,7 +773,12 @@ pub fn format_question_button_text(label: &str, is_selected: bool) -> String {
     let icon = if is_selected { "✅ " } else { "" };
     let text = format!("{icon}{label}");
     if text.chars().count() > MAX_QUESTION_BUTTON_LENGTH {
-        format!("{}...", text.chars().take(MAX_QUESTION_BUTTON_LENGTH - 3).collect::<String>())
+        format!(
+            "{}...",
+            text.chars()
+                .take(MAX_QUESTION_BUTTON_LENGTH - 3)
+                .collect::<String>()
+        )
     } else {
         text
     }
@@ -844,7 +881,11 @@ pub fn format_question_fallback_text(
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    let multiple_hint = if multiple { "\n(You can select multiple options)" } else { "" };
+    let multiple_hint = if multiple {
+        "\n(You can select multiple options)"
+    } else {
+        ""
+    };
     let question_text = format!("{question}{multiple_hint}");
 
     let mut segments: Vec<String> = Vec::new();
@@ -996,10 +1037,7 @@ fn find_split_boundary(chars: &[char], start: usize, limit: usize) -> Option<usi
         if chars[index - 1] == '\n' {
             return Some(index);
         }
-        if whitespace_boundary.is_none()
-            && index > 0
-            && chars[index - 1].is_whitespace()
-        {
+        if whitespace_boundary.is_none() && index > 0 && chars[index - 1].is_whitespace() {
             whitespace_boundary = Some(index);
         }
         if fallback_boundary.is_none() {

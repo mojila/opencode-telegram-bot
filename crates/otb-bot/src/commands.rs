@@ -121,7 +121,11 @@ pub fn render_status(snapshot: &StatusSnapshot, locale: Option<&str>) -> String 
     let mut message = format!("{}\n\n", t("status.header_running"));
     message.push_str(&format!(
         "{}\n",
-        fill(&t("status.line.bot_version"), "version", &snapshot.bot_version)
+        fill(
+            &t("status.line.bot_version"),
+            "version",
+            &snapshot.bot_version
+        )
     ));
     if let Some(version) = snapshot
         .opencode_version
@@ -445,27 +449,31 @@ fn parse_instant_millis(raw: &str) -> Option<i64> {
         return Some(seconds * 1000);
     };
     // Split the trailing zone (`Z` or `±HH[:][MM]`) off the clock part.
-    let (clock, zone) = if let Some(stripped) = time.strip_suffix('Z').or_else(|| time.strip_suffix('z')) {
-        (stripped, Some(0))
-    } else if let Some(index) = time.rfind(|c| c == '+' || c == '-') {
-        if index == 0 {
-            return None;
-        }
-        let (clock, zone) = (&time[..index], &time[index..]);
-        let sign = if zone.starts_with('-') { -1 } else { 1 };
-        let digits: String = zone[1..].chars().filter(|c| *c != ':').collect();
-        let (hours, minutes) = match digits.len() {
-            2 => (digits.parse::<i64>().ok()?, 0),
-            4 => (digits[..2].parse::<i64>().ok()?, digits[2..].parse::<i64>().ok()?),
-            _ => return None,
+    let (clock, zone) =
+        if let Some(stripped) = time.strip_suffix('Z').or_else(|| time.strip_suffix('z')) {
+            (stripped, Some(0))
+        } else if let Some(index) = time.rfind(|c| c == '+' || c == '-') {
+            if index == 0 {
+                return None;
+            }
+            let (clock, zone) = (&time[..index], &time[index..]);
+            let sign = if zone.starts_with('-') { -1 } else { 1 };
+            let digits: String = zone[1..].chars().filter(|c| *c != ':').collect();
+            let (hours, minutes) = match digits.len() {
+                2 => (digits.parse::<i64>().ok()?, 0),
+                4 => (
+                    digits[..2].parse::<i64>().ok()?,
+                    digits[2..].parse::<i64>().ok()?,
+                ),
+                _ => return None,
+            };
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            (clock, Some(sign * (hours * 3600 + minutes * 60)))
+        } else {
+            (time, None)
         };
-        if hours > 23 || minutes > 59 {
-            return None;
-        }
-        (clock, Some(sign * (hours * 3600 + minutes * 60)))
-    } else {
-        (time, None)
-    };
     // A zone-less clock reads as UTC (stored values are UTC ISO strings).
     let offset = zone.unwrap_or(0);
     let mut clock_parts = clock.split(':');
@@ -541,11 +549,7 @@ pub fn render_tasklist(items: &[ScheduledTaskItem], locale: Option<&str>) -> Str
         } else {
             "⏰"
         };
-        let prompt = item
-            .prompt
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+        let prompt = item.prompt.split_whitespace().collect::<Vec<_>>().join(" ");
         message.push_str(&format!("\n{}. {state} {prompt}", index + 1));
     }
     message
@@ -905,7 +909,10 @@ pub fn format_message_line(message: &UserMessageItem) -> String {
     if text.chars().count() > available {
         return format!("{prefix}{collapsed}...");
     }
-    format!("{prefix}{}", text.chars().take(available).collect::<String>())
+    format!(
+        "{prefix}{}",
+        text.chars().take(available).collect::<String>()
+    )
 }
 
 /// Render the `/messages` list reply (JS `formatMessagesSelectText` +
@@ -914,11 +921,7 @@ pub fn format_message_line(message: &UserMessageItem) -> String {
 /// Empty list renders `messages.empty`; otherwise `messages.select` (page
 /// 0) or `messages.select_page` plus one `N. [HH:MM] text` line per item.
 /// `locale` selects the dictionary with `en` fallback; `None` means `en`.
-pub fn render_messages(
-    items: &[UserMessageItem],
-    page: usize,
-    locale: Option<&str>,
-) -> String {
+pub fn render_messages(items: &[UserMessageItem], page: usize, locale: Option<&str>) -> String {
     let locale = locale.unwrap_or(crate::locale::FALLBACK_LOCALE);
     if items.is_empty() {
         return crate::locale::translate(locale, "messages.empty");
@@ -959,24 +962,22 @@ pub fn raw_catalog_item_from_value(
     value: &serde_json::Value,
 ) -> Option<otb_core::session_pick_catalog_gates::RawCatalogItem> {
     let object = value.as_object()?;
-    Some(
-        otb_core::session_pick_catalog_gates::RawCatalogItem {
-            name: object
-                .get("name")
-                .and_then(|name| name.as_str())
-                .unwrap_or("")
-                .to_string(),
-            description: object
-                .get("description")
-                .and_then(|description| description.as_str())
-                .map(str::to_string),
-            source: object
-                .get("source")
-                .and_then(|source| source.as_str())
-                .unwrap_or("")
-                .to_string(),
-        },
-    )
+    Some(otb_core::session_pick_catalog_gates::RawCatalogItem {
+        name: object
+            .get("name")
+            .and_then(|name| name.as_str())
+            .unwrap_or("")
+            .to_string(),
+        description: object
+            .get("description")
+            .and_then(|description| description.as_str())
+            .map(str::to_string),
+        source: object
+            .get("source")
+            .and_then(|source| source.as_str())
+            .unwrap_or("")
+            .to_string(),
+    })
 }
 
 /// Render a `/commands` or `/skills` list reply (JS `formatCommandsSelectText`
@@ -1144,11 +1145,18 @@ pub fn render_ls_browse(
 ) -> String {
     let locale = locale.unwrap_or(crate::locale::FALLBACK_LOCALE);
     let t = |key: &str| crate::locale::translate(locale, key);
-    let mut message = format!("📁 {}\n<code>{}</code>", t("ls.header"), escape_html(display_path));
+    let mut message = format!(
+        "📁 {}\n<code>{}</code>",
+        t("ls.header"),
+        escape_html(display_path)
+    );
     if total_pages > 1 {
         message.push_str(&format!("\n({}/{total_pages})", page + 1));
     }
-    message.push_str(&format!("\n{}", fill(&t("ls.total"), "count", &total_count.to_string())));
+    message.push_str(&format!(
+        "\n{}",
+        fill(&t("ls.total"), "count", &total_count.to_string())
+    ));
     for (index, entry) in entries.iter().enumerate() {
         let glyph = if entry.is_dir { "📁" } else { "📄" };
         message.push_str(&format!("\n{}. {glyph} {}", index + 1, entry.name));
@@ -1379,9 +1387,7 @@ pub fn render_mcp_detail(
     let locale = locale.unwrap_or(crate::locale::FALLBACK_LOCALE);
     let t = |key: &str| crate::locale::translate(locale, key);
     let status_key = match item.status.name {
-        otb_core::session_pick_catalog_gates::McpStatusName::Connected => {
-            "mcps.status.connected"
-        }
+        otb_core::session_pick_catalog_gates::McpStatusName::Connected => "mcps.status.connected",
         otb_core::session_pick_catalog_gates::McpStatusName::Disabled => "mcps.status.disabled",
         otb_core::session_pick_catalog_gates::McpStatusName::Failed => "mcps.status.failed",
         otb_core::session_pick_catalog_gates::McpStatusName::NeedsAuth => "mcps.status.needs_auth",
@@ -1400,7 +1406,10 @@ pub fn render_mcp_detail(
             | otb_core::session_pick_catalog_gates::McpStatusName::NeedsClientRegistration
     ) {
         let error = item.status.error.as_deref().unwrap_or("");
-        message.push_str(&format!("\n{}", fill(&t("mcps.detail.error"), "error", error)));
+        message.push_str(&format!(
+            "\n{}",
+            fill(&t("mcps.detail.error"), "error", error)
+        ));
     }
     if matches!(
         item.status.name,
@@ -1487,10 +1496,7 @@ pub fn provider_list_from_value(value: &serde_json::Value) -> Vec<ProviderListIt
 /// Build model rows for one provider from a raw `config.providers` body
 /// (pure; testable). Reads `providers[].models` keys for the matching
 /// provider id, sorted; anything missing yields an empty list.
-pub fn model_list_for_provider(
-    value: &serde_json::Value,
-    provider_id: &str,
-) -> Vec<ModelListItem> {
+pub fn model_list_for_provider(value: &serde_json::Value, provider_id: &str) -> Vec<ModelListItem> {
     let entries: &[serde_json::Value] = match value {
         serde_json::Value::Array(items) => items,
         serde_json::Value::Object(map) => match map.get("providers") {
@@ -1776,9 +1782,7 @@ mod tests {
             })
         );
         assert!(session_list_item_from_value(&serde_json::json!({})).is_none());
-        assert!(
-            session_list_item_from_value(&serde_json::json!({ "id": "  " })).is_none()
-        );
+        assert!(session_list_item_from_value(&serde_json::json!({ "id": "  " })).is_none());
     }
 
     #[test]
@@ -1949,13 +1953,10 @@ mod tests {
         );
         // Missing id, blank id, and blank nextRunAt collapse as documented.
         assert!(scheduled_task_item_from_value(&serde_json::json!({})).is_none());
-        assert!(
-            scheduled_task_item_from_value(&serde_json::json!({ "id": "  " })).is_none()
-        );
-        let blank_next = scheduled_task_item_from_value(
-            &serde_json::json!({ "id": "t", "nextRunAt": "  " }),
-        )
-        .expect("parses");
+        assert!(scheduled_task_item_from_value(&serde_json::json!({ "id": "  " })).is_none());
+        let blank_next =
+            scheduled_task_item_from_value(&serde_json::json!({ "id": "t", "nextRunAt": "  " }))
+                .expect("parses");
         assert_eq!(blank_next.next_run_at, None);
         assert_eq!(blank_next.kind, "cron");
         assert!(blank_next.enabled);
@@ -2039,18 +2040,15 @@ mod tests {
         assert_eq!(item.name, "proj");
         assert_eq!(item.last_updated, 42);
         // Missing name falls back to the worktree; missing time to 0.
-        let bare = project_list_item_from_value(
-            &serde_json::json!({ "id": "d", "worktree": "/w/x" }),
-        )
-        .expect("parses");
+        let bare =
+            project_list_item_from_value(&serde_json::json!({ "id": "d", "worktree": "/w/x" }))
+                .expect("parses");
         assert_eq!(bare.name, "/w/x");
         assert_eq!(bare.last_updated, 0);
         assert!(project_list_item_from_value(&serde_json::json!({})).is_none());
         assert!(
-            project_list_item_from_value(
-                &serde_json::json!({ "id": "  ", "worktree": "/w" })
-            )
-            .is_none()
+            project_list_item_from_value(&serde_json::json!({ "id": "  ", "worktree": "/w" }))
+                .is_none()
         );
     }
 
@@ -2076,14 +2074,8 @@ mod tests {
             project_item("a", "/work/alpha", "alpha"),
             project_item("b", "/work/beta", "beta"),
         ];
-        let rendered = render_projects(
-            &items,
-            Some("/work/alpha"),
-            Some("alpha"),
-            0,
-            1,
-            Some("en"),
-        );
+        let rendered =
+            render_projects(&items, Some("/work/alpha"), Some("alpha"), 0, 1, Some("en"));
         assert_eq!(
             rendered,
             "Select a project:\n\nCurrent: 🏗 alpha\n1. ✅ alpha [/work/alpha]\n2. beta [/work/beta]"
@@ -2146,7 +2138,9 @@ mod tests {
             RecentStatus::Running,
         )
         .expect("parses");
-        assert!(recent_item_from_value(&serde_json::json!({ "id": "x" }), RecentStatus::Idle).is_none());
+        assert!(
+            recent_item_from_value(&serde_json::json!({ "id": "x" }), RecentStatus::Idle).is_none()
+        );
         let sorted = sort_recent_items(vec![old, new]);
         assert_eq!(sorted[0].id, "ses_new");
         assert_eq!(recent_status_glyph(RecentStatus::Running), "⏳");
@@ -2186,27 +2180,21 @@ mod tests {
         assert_eq!(item.text, "hello");
         assert_eq!(format_message_time_utc(item.created), "01:00");
         // Assistant roles, summaries, and text-less entries are dropped.
-        assert!(
-            user_message_item_from_value(&serde_json::json!({
-                "info": { "id": "m", "role": "assistant", "time": { "created": 1 } },
-                "parts": [{ "type": "text", "text": "hi" }],
-            }))
-            .is_none()
-        );
-        assert!(
-            user_message_item_from_value(&serde_json::json!({
-                "info": { "id": "m", "role": "user", "summary": true, "time": { "created": 1 } },
-                "parts": [{ "type": "text", "text": "hi" }],
-            }))
-            .is_none()
-        );
-        assert!(
-            user_message_item_from_value(&serde_json::json!({
-                "info": { "id": "m", "role": "user", "time": { "created": 1 } },
-                "parts": [{ "type": "text", "text": "   " }],
-            }))
-            .is_none()
-        );
+        assert!(user_message_item_from_value(&serde_json::json!({
+            "info": { "id": "m", "role": "assistant", "time": { "created": 1 } },
+            "parts": [{ "type": "text", "text": "hi" }],
+        }))
+        .is_none());
+        assert!(user_message_item_from_value(&serde_json::json!({
+            "info": { "id": "m", "role": "user", "summary": true, "time": { "created": 1 } },
+            "parts": [{ "type": "text", "text": "hi" }],
+        }))
+        .is_none());
+        assert!(user_message_item_from_value(&serde_json::json!({
+            "info": { "id": "m", "role": "user", "time": { "created": 1 } },
+            "parts": [{ "type": "text", "text": "   " }],
+        }))
+        .is_none());
         // Missing id falls back to the created timestamp.
         let fallback = user_message_item_from_value(&serde_json::json!({
             "info": { "role": "user", "time": { "created": 9 } },
@@ -2259,10 +2247,7 @@ mod tests {
             render_messages(&items, 1, Some("en")),
             "Choose a message (page 2):\n1. [01:00] hello"
         );
-        assert_eq!(
-            render_message_detail(&items[0]),
-            "[01:00]\n\nhello"
-        );
+        assert_eq!(render_message_detail(&items[0]), "[01:00]\n\nhello");
     }
 
     fn raw_catalog(name: &str, description: Option<&str>, source: &str) -> serde_json::Value {
@@ -2271,8 +2256,9 @@ mod tests {
 
     #[test]
     fn raw_catalog_item_shapes_for_core_filters() {
-        let raw = raw_catalog_item_from_value(&raw_catalog("review", Some("Review code"), "command"))
-            .expect("parses");
+        let raw =
+            raw_catalog_item_from_value(&raw_catalog("review", Some("Review code"), "command"))
+                .expect("parses");
         assert_eq!(raw.name, "review");
         assert_eq!(raw.description.as_deref(), Some("Review code"));
         assert_eq!(raw.source, "command");
@@ -2293,8 +2279,10 @@ mod tests {
                 .expect("parses"),
             raw_catalog_item_from_value(&raw_catalog("blank", None, "command")).expect("parses"),
             // Wrong sources and the `goal` command are filtered like Node.
-            raw_catalog_item_from_value(&raw_catalog("goal", Some("g"), "command")).expect("parses"),
-            raw_catalog_item_from_value(&raw_catalog("helper", Some("h"), "skill")).expect("parses"),
+            raw_catalog_item_from_value(&raw_catalog("goal", Some("g"), "command"))
+                .expect("parses"),
+            raw_catalog_item_from_value(&raw_catalog("helper", Some("h"), "skill"))
+                .expect("parses"),
         ];
         let commands = filter_command_catalog_items(&raws);
         assert_eq!(
@@ -2327,8 +2315,8 @@ mod tests {
     #[test]
     fn render_mcps_lists_status_glyphs() {
         use otb_core::session_pick_catalog_gates::{
-            CatalogJson, McpCatalogServerItem, McpServerStatus, McpStatusName as Name,
-            parse_mcp_catalog_servers,
+            parse_mcp_catalog_servers, CatalogJson, McpCatalogServerItem, McpServerStatus,
+            McpStatusName as Name,
         };
         // Record form (live `mcp.status` shape) with an unknown status skipped.
         let record = CatalogJson::Obj(vec![
@@ -2359,11 +2347,11 @@ mod tests {
             render_mcps(&servers, Some("en")),
             "MCP servers:\n1. 🟢 gh\n2. ⚠️ db"
         );
-        assert_eq!(render_mcps(&[], Some("en")), "📭 No MCP servers configured.");
         assert_eq!(
-            mcp_status_glyph(Name::Disabled),
-            "🔴",
+            render_mcps(&[], Some("en")),
+            "📭 No MCP servers configured."
         );
+        assert_eq!(mcp_status_glyph(Name::Disabled), "🔴",);
         assert_eq!(
             McpCatalogServerItem {
                 name: "x".to_string(),
@@ -2434,7 +2422,10 @@ mod tests {
             render_rename_success("New title", Some("en")),
             "✅ Session renamed to: New title"
         );
-        assert_eq!(validate_rename_title("  New title  ").as_deref(), Some("New title"));
+        assert_eq!(
+            validate_rename_title("  New title  ").as_deref(),
+            Some("New title")
+        );
         assert_eq!(validate_rename_title("   "), None);
         assert_eq!(
             render_rename_prompt("Fix bug", Some("xx")),
@@ -2557,9 +2548,6 @@ mod tests {
             goal_entry_key(true, true, true, true),
             "goal.arguments_not_supported"
         );
-        assert_eq!(
-            goal_entry_key(true, true, true, false),
-            "goal.input.prompt"
-        );
+        assert_eq!(goal_entry_key(true, true, true, false), "goal.input.prompt");
     }
 }

@@ -89,7 +89,10 @@ fn start_unready_server_reports_not_ready() {
 
 #[test]
 fn start_notify_reason_values_parity() {
-    assert_eq!(START_NOTIFY_ALREADY_RUNNING, "opencode_start_already_running");
+    assert_eq!(
+        START_NOTIFY_ALREADY_RUNNING,
+        "opencode_start_already_running"
+    );
     assert_eq!(START_NOTIFY_NOT_RUNNING, "opencode_start_not_running");
     assert_eq!(START_NOTIFY_CONNECTED, "opencode_start_connected");
     assert_eq!(START_NOTIFY_SUCCESS, "opencode_start_success");

@@ -46,7 +46,10 @@ fn slice111_04_prepared_and_sent_is_sent() {
 
 #[test]
 fn slice111_05_unprepared_never_sends_even_when_transport_would_succeed() {
-    assert_eq!(classify_tts_send_outcome(false, true), TtsSendOutcome::Skipped);
+    assert_eq!(
+        classify_tts_send_outcome(false, true),
+        TtsSendOutcome::Skipped
+    );
     assert_eq!(
         classify_tts_send_outcome(false, false),
         TtsSendOutcome::Skipped
@@ -117,5 +120,8 @@ fn slice111_12_send_failure_reports_tts_failed_and_resolves_false() {
     let outcome = classify_tts_send_outcome(should_send_tts_audio(true), false);
     assert_eq!(outcome, TtsSendOutcome::Failed);
     assert!(!tts_handler_result(outcome));
-    assert_eq!(tts_failure_notice_key(outcome), Some(TTS_FAILED_MESSAGE_KEY));
+    assert_eq!(
+        tts_failure_notice_key(outcome),
+        Some(TTS_FAILED_MESSAGE_KEY)
+    );
 }

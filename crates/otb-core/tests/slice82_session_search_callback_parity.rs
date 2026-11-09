@@ -303,7 +303,12 @@ fn same_search_false_when_stage_or_token_missing_parity() {
         Some(9),
         Some("input")
     ));
-    assert!(!is_same_session_search(None, Some("results"), Some(9), Some("results")));
+    assert!(!is_same_session_search(
+        None,
+        Some("results"),
+        Some(9),
+        Some("results")
+    ));
     assert!(!is_same_session_search(
         Some(9),
         Some("results"),

@@ -258,7 +258,9 @@ fn slice71_updated_at_change_reannounces_parity() {
 fn slice71_reason_only_change_silent_parity() {
     let mut mgr = GoalManager::new();
     mgr.follow("s1");
-    assert!(mgr.apply("s1", Some(paused_goal(Some("a"))), true).is_some());
+    assert!(mgr
+        .apply("s1", Some(paused_goal(Some("a"))), true)
+        .is_some());
     assert_eq!(mgr.apply("s1", Some(paused_goal(Some("b"))), true), None);
 }
 
@@ -437,10 +439,7 @@ fn slice71_rename_start_waiting_sets_info_parity() {
     let mut flow = RenameFlow::new();
     flow.start_waiting("s1", "/work/proj", "Old title");
     assert!(flow.is_waiting_for_name());
-    assert_eq!(
-        flow.session_info(),
-        Some(("s1", "/work/proj", "Old title"))
-    );
+    assert_eq!(flow.session_info(), Some(("s1", "/work/proj", "Old title")));
     assert_eq!(flow.message_id(), None);
 }
 

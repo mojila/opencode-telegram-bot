@@ -193,9 +193,7 @@ pub fn is_mcps_message_mismatch(
 pub fn mcps_stage_allows(action: McpsCallbackAction, stage: McpsStage) -> bool {
     match action {
         McpsCallbackAction::Cancel => true,
-        McpsCallbackAction::Back | McpsCallbackAction::Toggle => {
-            stage == McpsStage::Detail
-        }
+        McpsCallbackAction::Back | McpsCallbackAction::Toggle => stage == McpsStage::Detail,
         McpsCallbackAction::Select => stage == McpsStage::List,
         McpsCallbackAction::Unknown => false,
     }

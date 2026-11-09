@@ -337,7 +337,8 @@ pub fn collect_custom_env_assignments(
         let Some(parsed) = parse_env_assignment_line(line) else {
             continue;
         };
-        if parsed.is_commented || template_keys.contains(&parsed.key) || seen.contains(&parsed.key) {
+        if parsed.is_commented || template_keys.contains(&parsed.key) || seen.contains(&parsed.key)
+        {
             continue;
         }
         seen.push(parsed.key);
@@ -392,10 +393,7 @@ fn wizard_ordered_values(values: &WizardEnvValues) -> Vec<(String, String)> {
 
 /// Flat rewrite: remove-then-append each wizard key in order, skipping
 /// blank values (TS: `buildFlatEnvFileContent`).
-pub fn build_flat_env_file_content(
-    existing_content: &str,
-    values: &WizardEnvValues,
-) -> String {
+pub fn build_flat_env_file_content(existing_content: &str, values: &WizardEnvValues) -> String {
     let mut lines = normalize_env_line_endings(existing_content);
     for (key, value) in wizard_ordered_values(values) {
         lines = remove_env_key(&lines, &key);
@@ -435,9 +433,7 @@ pub fn build_env_file_content(
             rendered.push(line.clone());
             continue;
         };
-        if let Some((_, override_value)) =
-            overrides.iter().find(|(key, _)| *key == parsed.key)
-        {
+        if let Some((_, override_value)) = overrides.iter().find(|(key, _)| *key == parsed.key) {
             if !override_value.trim().is_empty() {
                 rendered.push(render_env_assignment(&parsed.key, override_value));
             } else {

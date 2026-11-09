@@ -155,7 +155,10 @@ fn active_metadata_rejects_unknown_kind_parity() {
 
 #[test]
 fn active_metadata_rejects_missing_kind_parity() {
-    assert_eq!(resolve_active_inline_metadata(true, None, false, Some(11)), None);
+    assert_eq!(
+        resolve_active_inline_metadata(true, None, false, Some(11)),
+        None
+    );
 }
 
 #[test]
@@ -230,7 +233,10 @@ fn close_text_only_for_settings_parity() {
 
 #[test]
 fn cancel_data_build_parity() {
-    assert_eq!(inline_cancel_callback_for("context"), "inline:cancel:context");
+    assert_eq!(
+        inline_cancel_callback_for("context"),
+        "inline:cancel:context"
+    );
     assert_eq!(
         inline_cancel_callback_for("settings"),
         "inline:cancel:settings"
@@ -277,10 +283,7 @@ fn append_pushes_cancel_button_parity() {
     let out = append_inline_cancel_button(rows, "Cancel", "inline:cancel:context");
     let last = out.last().unwrap();
     assert_eq!(last.last().unwrap().text, "Cancel");
-    assert_eq!(
-        last.last().unwrap().callback_data,
-        "inline:cancel:context"
-    );
+    assert_eq!(last.last().unwrap().callback_data, "inline:cancel:context");
 }
 
 // ---- context window + cost (5) ----

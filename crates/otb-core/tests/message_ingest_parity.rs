@@ -110,7 +110,9 @@ fn slice29b_10_office_mimes_are_documents() {
 
 #[test]
 fn slice29b_11_opendocument_and_rtf_are_documents() {
-    assert!(is_document_mime_type("application/vnd.oasis.opendocument.text"));
+    assert!(is_document_mime_type(
+        "application/vnd.oasis.opendocument.text"
+    ));
     assert!(is_document_mime_type("text/rtf"));
 }
 
@@ -150,7 +152,10 @@ fn slice29b_15_text_prompt_contains_extracted_document_text() {
 
 #[test]
 fn slice29b_16_photo_picks_the_largest_last_entry() {
-    assert_eq!(pick_largest_photo(&["small-id", "large-id"]), Some("large-id"));
+    assert_eq!(
+        pick_largest_photo(&["small-id", "large-id"]),
+        Some("large-id")
+    );
 }
 
 #[test]
@@ -160,7 +165,10 @@ fn slice29b_17_photo_without_sizes_picks_nothing() {
 
 #[test]
 fn slice29b_18_photo_display_text_uses_caption() {
-    assert_eq!(photo_display_text("Describe this image"), "Describe this image");
+    assert_eq!(
+        photo_display_text("Describe this image"),
+        "Describe this image"
+    );
 }
 
 #[test]
@@ -185,10 +193,7 @@ fn slice29b_21_album_display_text_falls_back_to_file_count() {
 #[test]
 fn slice29b_22_album_display_text_joins_captions() {
     assert_eq!(
-        album_display_text(
-            &["first".to_string(), "second".to_string()],
-            2
-        ),
+        album_display_text(&["first".to_string(), "second".to_string()], 2),
         "first / second"
     );
 }
@@ -266,8 +271,16 @@ fn slice29b_33_short_message_buffers_behind_pending_chunk() {
 #[test]
 fn slice29b_34_merged_prompt_joins_texts_with_blank_line() {
     let merged = merge_incoming_prompts(&[
-        MergeInput { text: "a".repeat(4000), file_parts: vec![], photos: vec![] },
-        MergeInput { text: "part 2".to_string(), file_parts: vec![], photos: vec![] },
+        MergeInput {
+            text: "a".repeat(4000),
+            file_parts: vec![],
+            photos: vec![],
+        },
+        MergeInput {
+            text: "part 2".to_string(),
+            file_parts: vec![],
+            photos: vec![],
+        },
     ]);
     assert_eq!(merged.text, format!("{}\n\npart 2", "a".repeat(4000)));
 }
@@ -287,15 +300,20 @@ fn slice29b_35_merged_prompt_concatenates_files_and_orders_photos() {
         },
     ]);
     assert_eq!(merged.file_parts, vec!["f1".to_string(), "f2".to_string()]);
-    assert_eq!(merged.photos, vec!["photo-1".to_string(), "photo-2".to_string()]);
+    assert_eq!(
+        merged.photos,
+        vec!["photo-1".to_string(), "photo-2".to_string()]
+    );
 }
 
 // --- unsupported-message-handler.ts (3 its) ---
 
 #[test]
 fn slice29b_36_unsupported_fields_detect_video_and_sticker() {
-    let fields: Vec<String> =
-        ["video", "message_id", "sticker"].iter().map(|s| s.to_string()).collect();
+    let fields: Vec<String> = ["video", "message_id", "sticker"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(
         unsupported_fields_present(&fields),
         vec!["video".to_string(), "sticker".to_string()]
@@ -304,8 +322,10 @@ fn slice29b_36_unsupported_fields_detect_video_and_sticker() {
 
 #[test]
 fn slice29b_37_supported_only_message_has_no_unsupported_fields() {
-    let fields: Vec<String> =
-        ["text", "photo", "caption"].iter().map(|s| s.to_string()).collect();
+    let fields: Vec<String> = ["text", "photo", "caption"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert!(unsupported_fields_present(&fields).is_empty());
     assert!(!has_unsupported_content(&fields));
 }
@@ -368,16 +388,28 @@ fn slice29b_46_queued_media_size_rejects_unknown_and_over_cap() {
     assert!(is_queued_media_size_rejected(None, 0));
     assert!(is_queued_media_size_rejected(Some(1.5), 0));
     assert!(is_queued_media_size_rejected(Some(-1.0), 0));
-    assert!(is_queued_media_size_rejected(Some((20 * 1024 * 1024 + 1) as f64), 0));
+    assert!(is_queued_media_size_rejected(
+        Some((20 * 1024 * 1024 + 1) as f64),
+        0
+    ));
     assert!(!is_queued_media_size_rejected(Some(1024.0), 0));
-    assert!(!is_queued_media_size_rejected(Some((20 * 1024 * 1024) as f64), 0));
+    assert!(!is_queued_media_size_rejected(
+        Some((20 * 1024 * 1024) as f64),
+        0
+    ));
 }
 
 // --- model-capabilities-service.ts (2 its) ---
 
 #[test]
 fn slice29b_47_supports_input_checks_named_modality() {
-    let caps = ModelInputSupport { text: true, audio: false, image: true, video: false, pdf: true };
+    let caps = ModelInputSupport {
+        text: true,
+        audio: false,
+        image: true,
+        video: false,
+        pdf: true,
+    };
     assert!(supports_input(Some(&caps), "image"));
     assert!(supports_input(Some(&caps), "pdf"));
     assert!(!supports_input(Some(&caps), "video"));

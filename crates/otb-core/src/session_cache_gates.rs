@@ -202,8 +202,7 @@ pub fn normalize_cache_data(
     let mut directories: Vec<CachedSessionDirectory> = Vec::new();
     if let Some(items) = raw.directories.as_ref() {
         for item in items {
-            let (Some(worktree), Some(last_updated)) =
-                (item.worktree.as_ref(), item.last_updated)
+            let (Some(worktree), Some(last_updated)) = (item.worktree.as_ref(), item.last_updated)
             else {
                 continue;
             };
@@ -372,7 +371,12 @@ fn sha1_digest(data: &[u8]) -> [u8; 20] {
     for chunk in msg.chunks_exact(64) {
         let mut w = [0u32; 80];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3]]);
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);

@@ -78,7 +78,8 @@ pub const FR_QUEUE_ADDED: &str = "📥 Ajouté à la file d'attente ({count}/{ma
 pub const FR_QUEUE_FULL: &str =
     "⚠️ La file d'attente est pleine ({max}). Supprimez un message ou attendez la fin de la tâche en cours.";
 /// Verbatim `fr` media-limit template (TS: `src/i18n/fr.ts` line 475).
-pub const FR_QUEUE_MEDIA_LIMIT: &str = "⚠️ Les médias en file sont limités à {maxSizeMb} MiB. Attendez l'envoi d'un élément.";
+pub const FR_QUEUE_MEDIA_LIMIT: &str =
+    "⚠️ Les médias en file sont limités à {maxSizeMb} MiB. Attendez l'envoi d'un élément.";
 /// Verbatim `fr` queue-removed template (TS: `src/i18n/fr.ts` line 478).
 pub const FR_QUEUE_REMOVED: &str = "🗑 Message retiré de la file d'attente.";
 /// Verbatim `fr` queue-not-found template (TS: `src/i18n/fr.ts` line 479).
@@ -140,8 +141,7 @@ fn interpolate_fr(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

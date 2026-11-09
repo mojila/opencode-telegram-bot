@@ -55,7 +55,9 @@ fn reload_success_maps_to_success_key_parity() {
         "reload.success"
     );
     assert_eq!(
-        reload_result_key(ReloadCompletion::Success { model_changed: true }),
+        reload_result_key(ReloadCompletion::Success {
+            model_changed: true
+        }),
         "reload.success"
     );
 }
@@ -100,10 +102,7 @@ fn reload_timeout_maps_to_failed_key_parity() {
 fn reload_thrown_maps_to_failed_key_parity() {
     // TS: a rejected `reloadOpencodeConfig` is caught into the bare failure
     // line (test lines 103-111).
-    assert_eq!(
-        reload_result_key(ReloadCompletion::Thrown),
-        "reload.failed"
-    );
+    assert_eq!(reload_result_key(ReloadCompletion::Thrown), "reload.failed");
 }
 
 // ---- immediate refresh gate (3) ----
@@ -152,7 +151,9 @@ fn reload_success_schedules_late_catalog_settle_parity() {
         }
     ));
     assert!(should_schedule_late_catalog_settle(
-        ReloadCompletion::Success { model_changed: true }
+        ReloadCompletion::Success {
+            model_changed: true
+        }
     ));
 }
 
@@ -166,9 +167,9 @@ fn reload_failure_and_throw_never_schedule_late_settle_parity() {
             error: Some("Invalid config")
         }
     ));
-    assert!(!should_schedule_late_catalog_settle(ReloadCompletion::Failed {
-        error: None
-    }));
+    assert!(!should_schedule_late_catalog_settle(
+        ReloadCompletion::Failed { error: None }
+    ));
     assert!(!should_schedule_late_catalog_settle(
         ReloadCompletion::Timeout
     ));

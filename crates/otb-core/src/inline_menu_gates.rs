@@ -57,6 +57,14 @@
 //!   *default* is the gate; an explicit override bypasses it).
 //! - `cancelMenu` delivery (answers `common.cancelled`, caller-owned).
 //!
+//! Paged delete+resend delivery (`resendPagedMenu`,
+//! `src/bot/menus/inline-menu.ts:118-137`) is out of scope here and lives
+//! with the future dispatcher/polling caller in `otb-bot/src/telegram.rs`,
+//! gated by `crate::paged_resend_gates` (`DeleteOldMessage` ->
+//! `ReplyFreshPage` -> `TransitionToSentId`). Scope guardrail: page turns
+//! (`:page:` + back-to-list + model/open/ls page navigations) resend,
+//! while detail / confirm / file-detail / toggle screens stay on edit.
+//!
 //! Already covered elsewhere and NOT re-tested here:
 //! - locale strings for the `inline.*` / `common.cancelled` keys (i18n
 //!   owners).

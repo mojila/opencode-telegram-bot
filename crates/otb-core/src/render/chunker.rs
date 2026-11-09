@@ -98,13 +98,7 @@ fn count_rich_blocks(block: &RichBlock) -> usize {
         RichBlock::List { items } => {
             1 + items
                 .iter()
-                .map(|item| {
-                    1 + item
-                        .blocks
-                        .iter()
-                        .map(count_rich_blocks)
-                        .sum::<usize>()
-                })
+                .map(|item| 1 + item.blocks.iter().map(count_rich_blocks).sum::<usize>())
                 .sum::<usize>()
         }
     }
@@ -120,12 +114,7 @@ fn count_rich_chars(block: &RichBlock) -> usize {
         RichBlock::Divider => 0,
         RichBlock::List { items } => items
             .iter()
-            .map(|item| {
-                item.blocks
-                    .iter()
-                    .map(count_rich_chars)
-                    .sum::<usize>()
-            })
+            .map(|item| item.blocks.iter().map(count_rich_chars).sum::<usize>())
             .sum(),
     }
 }

@@ -78,10 +78,7 @@ pub fn is_record_value(value: &ErrorValue) -> bool {
     // TS: `typeof value === "object" && value !== null`. Strings, numbers,
     // booleans and null are not records; `Error` instances and plain objects
     // are. `undefined`/functions/symbols have no `ErrorValue` counterpart.
-    matches!(
-        value,
-        ErrorValue::Instance(_) | ErrorValue::Record(_)
-    )
+    matches!(value, ErrorValue::Instance(_) | ErrorValue::Record(_))
 }
 
 /// TS: `isExpectedOpencodeUnavailableError` — falsy values are `false`;

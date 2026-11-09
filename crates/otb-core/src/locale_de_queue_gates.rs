@@ -81,7 +81,8 @@ pub const DE_QUEUE_NOT_FOUND: &str = "Diese Nachricht ist nicht mehr in der Wart
 /// (TS: `src/i18n/de.ts` line 478).
 pub const DE_QUEUE_STEER_ADDED: &str = "📥 Added to the current task ({count}/{max}).";
 /// Verbatim `de` queue-disabled hint (TS: `src/i18n/de.ts` line 479).
-pub const DE_QUEUE_DISABLED_HINT: &str = "Die Nachrichtenwarteschlange lässt sich in /settings aktivieren.";
+pub const DE_QUEUE_DISABLED_HINT: &str =
+    "Die Nachrichtenwarteschlange lässt sich in /settings aktivieren.";
 /// Verbatim `de` keyboard-updated notice (TS: `src/i18n/de.ts` line 480).
 pub const DE_KEYBOARD_UPDATED: &str = "⌨️ Tastatur aktualisiert";
 
@@ -134,8 +135,7 @@ fn interpolate_de(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

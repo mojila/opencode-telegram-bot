@@ -41,7 +41,9 @@ fn prompt_attachment_cancelled_key_value_parity() {
 #[test]
 fn prompt_attachment_cancel_guard_matches_only_cancel_parity() {
     assert!(handles_prompt_attachment_cancel(Some("attach:cancel")));
-    assert!(!handles_prompt_attachment_cancel(Some("ls:download:/repo/a.ts")));
+    assert!(!handles_prompt_attachment_cancel(Some(
+        "ls:download:/repo/a.ts"
+    )));
     assert!(!handles_prompt_attachment_cancel(Some("attach:other")));
     assert!(!handles_prompt_attachment_cancel(None));
     assert!(!handles_prompt_attachment_cancel(Some("")));

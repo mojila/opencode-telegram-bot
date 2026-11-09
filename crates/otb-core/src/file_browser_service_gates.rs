@@ -122,10 +122,7 @@ pub fn page_slice_range(page: usize) -> (usize, usize) {
 /// `localeCompare(b.name, undefined, { sensitivity: "base" })`).
 pub fn sorted_dir_names(names: &[String]) -> Vec<String> {
     let mut out = names.to_vec();
-    out.sort_by(|a, b| {
-        a.to_lowercase()
-            .cmp(&b.to_lowercase())
-    });
+    out.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
     out
 }
 
@@ -257,7 +254,10 @@ pub fn base_name(p: &str) -> String {
     // A bare root has no basename (`basename("/") === ""`,
     // `basename("C:\\") === ""`).
     if (!windows && trimmed == "/")
-        || (windows && (trimmed == "\\" || trimmed == "/" || trimmed.len() == 3 && trimmed.as_bytes()[1] == b':'))
+        || (windows
+            && (trimmed == "\\"
+                || trimmed == "/"
+                || trimmed.len() == 3 && trimmed.as_bytes()[1] == b':'))
     {
         return String::new();
     }
@@ -268,11 +268,7 @@ pub fn base_name(p: &str) -> String {
             c == '/'
         }
     };
-    trimmed
-        .rsplit(sep)
-        .next()
-        .unwrap_or("")
-        .to_string()
+    trimmed.rsplit(sep).next().unwrap_or("").to_string()
 }
 
 /// Parent directory, dispatching on the path flavor (TS:
@@ -372,7 +368,10 @@ fn split_drive_or_unc(rest: &str) -> (String, Vec<String>) {
             ),
             _ => ("\\\\".to_string(), Vec::new()),
         }
-    } else if rest.len() >= 2 && rest.as_bytes()[0].is_ascii_alphabetic() && rest.as_bytes()[1] == b':' {
+    } else if rest.len() >= 2
+        && rest.as_bytes()[0].is_ascii_alphabetic()
+        && rest.as_bytes()[1] == b':'
+    {
         let drive = rest[..2].to_lowercase();
         let tail = rest[2..].replace('/', "\\");
         let parts = tail
@@ -555,7 +554,8 @@ pub fn sort_ls_entries(entries: Vec<LsEntry>) -> Vec<LsEntry> {
                 std::cmp::Ordering::Greater
             };
         }
-        a.name.to_lowercase()
+        a.name
+            .to_lowercase()
             .cmp(&b.name.to_lowercase())
             .then_with(|| a.name.cmp(&b.name))
     });

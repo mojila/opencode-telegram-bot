@@ -25,8 +25,8 @@
 /// (TS: `escapeMarkdownV2`.)
 pub fn escape_markdown_v2(text: &str) -> String {
     const SPECIAL: [char; 19] = [
-        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}',
-        '.', '!', '\\',
+        '_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!',
+        '\\',
     ];
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -316,14 +316,31 @@ struct TelegramListItem {
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 enum TelegramBlock {
-    Paragraph { inlines: Vec<InlineNode> },
-    Heading { level: usize, inlines: Vec<InlineNode> },
-    Blockquote { blocks: Vec<TelegramBlock> },
-    List { ordered: bool, items: Vec<TelegramListItem> },
-    Code { language: Option<String>, text: String },
-    Table { rows: Vec<Vec<String>> },
+    Paragraph {
+        inlines: Vec<InlineNode>,
+    },
+    Heading {
+        level: usize,
+        inlines: Vec<InlineNode>,
+    },
+    Blockquote {
+        blocks: Vec<TelegramBlock>,
+    },
+    List {
+        ordered: bool,
+        items: Vec<TelegramListItem>,
+    },
+    Code {
+        language: Option<String>,
+        text: String,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+    },
     Rule,
-    Plain { text: String },
+    Plain {
+        text: String,
+    },
 }
 
 // --- Inline parser (simplified port of `parseInlineNodes`) ---
@@ -677,10 +694,7 @@ fn parse_chunk(lines: &[&str]) -> Vec<TelegramBlock> {
         return Vec::new();
     }
 
-    if lines.len() >= 2
-        && lines.iter().all(|l| is_table_row(l))
-        && is_delimiter_row(lines[1])
-    {
+    if lines.len() >= 2 && lines.iter().all(|l| is_table_row(l)) && is_delimiter_row(lines[1]) {
         let mut rows = vec![parse_table_row_cells(lines[0])];
         for line in &lines[2..] {
             rows.push(parse_table_row_cells(line));
@@ -707,10 +721,7 @@ fn parse_chunk(lines: &[&str]) -> Vec<TelegramBlock> {
         return vec![TelegramBlock::List { ordered, items }];
     }
 
-    if lines
-        .iter()
-        .all(|l| l.trim_start().starts_with('>'))
-    {
+    if lines.iter().all(|l| l.trim_start().starts_with('>')) {
         let inner: Vec<String> = lines
             .iter()
             .map(|l| {

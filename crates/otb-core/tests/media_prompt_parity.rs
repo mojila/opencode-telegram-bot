@@ -115,10 +115,7 @@ fn slice25b_strip_fenced_block_keeps_content() {
 #[test]
 fn slice25b_strip_headings_quotes_lists() {
     assert_eq!(strip_markdown_for_speech("## Title"), "Title");
-    assert_eq!(
-        strip_markdown_for_speech("> quoted text"),
-        "quoted text"
-    );
+    assert_eq!(strip_markdown_for_speech("> quoted text"), "quoted text");
     assert_eq!(
         strip_markdown_for_speech("- item one\n* item two"),
         "item one\nitem two"
@@ -162,7 +159,10 @@ fn slice25b_elevenlabs_url_trims_trailing_slashes() {
 #[test]
 fn slice25b_elevenlabs_model_fallback_when_empty() {
     assert_eq!(elevenlabs_model_id(""), ELEVENLABS_FALLBACK_MODEL);
-    assert_eq!(elevenlabs_model_id("eleven_flash_v2_5"), "eleven_flash_v2_5");
+    assert_eq!(
+        elevenlabs_model_id("eleven_flash_v2_5"),
+        "eleven_flash_v2_5"
+    );
 }
 
 #[test]
@@ -177,7 +177,11 @@ fn slice25b_tts_input_limit_is_4000() {
 
 #[test]
 fn slice25b_prepare_tts_gating() {
-    assert!(!should_prepare_tts_response(Some("text_only"), "hello", true));
+    assert!(!should_prepare_tts_response(
+        Some("text_only"),
+        "hello",
+        true
+    ));
     assert!(!should_prepare_tts_response(None, "hello", true));
     assert!(!should_prepare_tts_response(
         Some("text_and_tts"),
@@ -367,10 +371,7 @@ fn slice25b_response_mode_set_get_clear() {
     let mut modes = PromptResponseModes::new();
     assert_eq!(modes.get("session-1"), None);
     modes.set("session-1", PromptResponseMode::TextAndTts);
-    assert_eq!(
-        modes.get("session-1"),
-        Some(PromptResponseMode::TextAndTts)
-    );
+    assert_eq!(modes.get("session-1"), Some(PromptResponseMode::TextAndTts));
     modes.clear("session-1");
     assert_eq!(modes.get("session-1"), None);
 }
@@ -453,10 +454,7 @@ fn slice25b_normalize_path_separators_and_worktree() {
 
 #[test]
 fn slice25b_escape_pipes_outside_code_only() {
-    assert_eq!(
-        escape_pipes_outside_code("| A | B |"),
-        "\\| A \\| B \\|"
-    );
+    assert_eq!(escape_pipes_outside_code("| A | B |"), "\\| A \\| B \\|");
     let fenced = escape_pipes_outside_code("```\n| raw |\n```");
     assert!(fenced.contains("| raw |"));
     assert!(!fenced.contains("\\|"));

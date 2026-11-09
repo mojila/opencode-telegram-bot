@@ -63,7 +63,10 @@ fn slice22b_07_progressive_throttle_tiers() {
     assert_eq!(resolve_progressive_throttle_ms(0), STREAM_THROTTLE_BASE_MS);
     assert_eq!(resolve_progressive_throttle_ms(60_000), 2000);
     assert_eq!(resolve_progressive_throttle_ms(5 * 60_000), 5000);
-    assert_eq!(resolve_progressive_throttle_ms(15 * 60_000), STREAM_THROTTLE_MAX_MS);
+    assert_eq!(
+        resolve_progressive_throttle_ms(15 * 60_000),
+        STREAM_THROTTLE_MAX_MS
+    );
 }
 
 #[test]
@@ -109,17 +112,26 @@ fn slice22b_13_plain_fallback_chunks_fit_limit() {
 
 #[test]
 fn slice22b_14_plain_fallback_keeps_short_whole() {
-    assert_eq!(chunk_plain_fallback("short", 4096), vec!["short".to_string()]);
+    assert_eq!(
+        chunk_plain_fallback("short", 4096),
+        vec!["short".to_string()]
+    );
 }
 
 #[test]
 fn slice22b_15_degraded_plain_still_skips_unchanged() {
-    assert!(!should_sync_payload(&["plain:hello".into()], &["plain:hello".into()]));
+    assert!(!should_sync_payload(
+        &["plain:hello".into()],
+        &["plain:hello".into()]
+    ));
 }
 
 #[test]
 fn slice22b_16_entity_change_triggers_edit() {
-    assert!(should_sync_payload(&["text+blockquote".into()], &["text+expandable".into()]));
+    assert!(should_sync_payload(
+        &["text+blockquote".into()],
+        &["text+expandable".into()]
+    ));
 }
 
 #[test]
@@ -169,13 +181,19 @@ fn slice22b_24_final_tick_at_limit() {
 
 #[test]
 fn slice22b_25_newest_call_picks_later_start() {
-    let newest = newest_call_id(&[("call-1", 1000, false, false), ("call-2", 2000, false, false)]);
+    let newest = newest_call_id(&[
+        ("call-1", 1000, false, false),
+        ("call-2", 2000, false, false),
+    ]);
     assert_eq!(newest.as_deref(), Some("call-2"));
 }
 
 #[test]
 fn slice22b_26_newest_skips_released_and_detached() {
-    let newest = newest_call_id(&[("call-1", 1000, false, false), ("call-2", 2000, true, false)]);
+    let newest = newest_call_id(&[
+        ("call-1", 1000, false, false),
+        ("call-2", 2000, true, false),
+    ]);
     assert_eq!(newest.as_deref(), Some("call-1"));
     let detached = newest_call_id(&[("call-bg", 1000, false, true)]);
     assert_eq!(detached, None);
@@ -202,7 +220,10 @@ fn slice22b_29_empty_counts_summarize_none() {
 
 #[test]
 fn slice22b_30_reads_summarize() {
-    let counts = ToolCallCounts { reads: 1, ..empty_tool_call_counts() };
+    let counts = ToolCallCounts {
+        reads: 1,
+        ..empty_tool_call_counts()
+    };
     assert_eq!(
         format_compact_summary(counts, 0).as_deref(),
         Some("✅ reads: 1")
@@ -211,8 +232,14 @@ fn slice22b_30_reads_summarize() {
 
 #[test]
 fn slice22b_31_counts_merge() {
-    let a = ToolCallCounts { reads: 1, ..empty_tool_call_counts() };
-    let b = ToolCallCounts { commands: 1, ..empty_tool_call_counts() };
+    let a = ToolCallCounts {
+        reads: 1,
+        ..empty_tool_call_counts()
+    };
+    let b = ToolCallCounts {
+        commands: 1,
+        ..empty_tool_call_counts()
+    };
     let merged = add_tool_call_counts(a, b);
     assert_eq!(merged.reads, 1);
     assert_eq!(merged.commands, 1);
@@ -226,7 +253,11 @@ fn slice22b_32_changed_files_summarize() {
 
 #[test]
 fn slice22b_33_multi_category_summary() {
-    let counts = ToolCallCounts { commands: 1, reads: 1, ..empty_tool_call_counts() };
+    let counts = ToolCallCounts {
+        commands: 1,
+        reads: 1,
+        ..empty_tool_call_counts()
+    };
     let summary = format_compact_summary(counts, 2).unwrap();
     assert!(summary.contains("commands: 1"));
     assert!(summary.contains("reads: 1"));
@@ -240,7 +271,10 @@ fn slice22b_34_progress_text_marks_working() {
 
 #[test]
 fn slice22b_35_commands_only_summary() {
-    let counts = ToolCallCounts { commands: 1, ..empty_tool_call_counts() };
+    let counts = ToolCallCounts {
+        commands: 1,
+        ..empty_tool_call_counts()
+    };
     assert_eq!(
         format_compact_summary(counts, 0).as_deref(),
         Some("✅ commands: 1")
@@ -256,12 +290,18 @@ fn slice22b_36_empty_counts_are_zero() {
 
 #[test]
 fn slice22b_37_normalize_command_strips_mention_and_args() {
-    assert_eq!(normalize_incoming_command("/status"), Some("/status".into()));
+    assert_eq!(
+        normalize_incoming_command("/status"),
+        Some("/status".into())
+    );
     assert_eq!(
         normalize_incoming_command("/status@bot extra"),
         Some("/status".into())
     );
-    assert_eq!(normalize_incoming_command("/STATUS"), Some("/status".into()));
+    assert_eq!(
+        normalize_incoming_command("/STATUS"),
+        Some("/status".into())
+    );
     assert_eq!(normalize_incoming_command("hello"), None);
     assert_eq!(normalize_incoming_command("/"), None);
 }

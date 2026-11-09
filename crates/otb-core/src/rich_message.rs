@@ -44,15 +44,39 @@ pub enum RichText {
     Superscript(Box<RichText>),
     Marked(Box<RichText>),
     Code(String),
-    CustomEmoji { alternative_text: String },
-    Math { expression: String },
-    Url { text: Box<RichText>, url: String },
-    Email { text: Box<RichText>, email: String },
-    Phone { text: Box<RichText>, phone: String },
-    Anchor { name: String },
-    AnchorLink { text: Box<RichText>, anchor_name: String },
-    Reference { name: String, text: Box<RichText> },
-    ReferenceLink { text: Box<RichText>, reference_name: String },
+    CustomEmoji {
+        alternative_text: String,
+    },
+    Math {
+        expression: String,
+    },
+    Url {
+        text: Box<RichText>,
+        url: String,
+    },
+    Email {
+        text: Box<RichText>,
+        email: String,
+    },
+    Phone {
+        text: Box<RichText>,
+        phone: String,
+    },
+    Anchor {
+        name: String,
+    },
+    AnchorLink {
+        text: Box<RichText>,
+        anchor_name: String,
+    },
+    Reference {
+        name: String,
+        text: Box<RichText>,
+    },
+    ReferenceLink {
+        text: Box<RichText>,
+        reference_name: String,
+    },
     /// `date_time` / `text_mention` / `bank_card_number` / `mention` /
     /// `hashtag` / `cashtag` / `bot_command`: renders inner text as-is.
     Passthrough(Box<RichText>),
@@ -74,22 +98,58 @@ pub enum RichBlock {
     Paragraph(RichText),
     Footer(RichText),
     Thinking(RichText),
-    Heading { size: u8, text: RichText },
-    Pre { language: Option<String>, text: RichText },
+    Heading {
+        size: u8,
+        text: RichText,
+    },
+    Pre {
+        language: Option<String>,
+        text: RichText,
+    },
     Divider,
-    Math { expression: String },
-    Anchor { name: String },
-    List { items: Vec<RichListItem> },
-    Blockquote { blocks: Vec<RichBlock>, credit: Option<RichText> },
-    Pullquote { text: RichText, credit: Option<RichText> },
-    Collage { blocks: Vec<RichBlock>, caption: Option<RichText> },
-    Slideshow { blocks: Vec<RichBlock>, caption: Option<RichText> },
-    Table { cells: Vec<Vec<TableCell>>, caption: Option<RichText> },
-    Details { summary: RichText, blocks: Vec<RichBlock>, is_open: bool },
-    Photo { sizes: Vec<PhotoSize>, caption: Option<RichText> },
+    Math {
+        expression: String,
+    },
+    Anchor {
+        name: String,
+    },
+    List {
+        items: Vec<RichListItem>,
+    },
+    Blockquote {
+        blocks: Vec<RichBlock>,
+        credit: Option<RichText>,
+    },
+    Pullquote {
+        text: RichText,
+        credit: Option<RichText>,
+    },
+    Collage {
+        blocks: Vec<RichBlock>,
+        caption: Option<RichText>,
+    },
+    Slideshow {
+        blocks: Vec<RichBlock>,
+        caption: Option<RichText>,
+    },
+    Table {
+        cells: Vec<Vec<TableCell>>,
+        caption: Option<RichText>,
+    },
+    Details {
+        summary: RichText,
+        blocks: Vec<RichBlock>,
+        is_open: bool,
+    },
+    Photo {
+        sizes: Vec<PhotoSize>,
+        caption: Option<RichText>,
+    },
     /// `animation` / `audio` / `video` / `voice_note` / `map`: counts one
     /// skipped-media part, renders caption only.
-    SkippedMedia { caption: Option<RichText> },
+    SkippedMedia {
+        caption: Option<RichText>,
+    },
 }
 
 /// One table cell (TS: `RichBlockTableCell` text + align).
@@ -150,16 +210,26 @@ fn render_blocks(blocks: &[RichBlock], state: &mut ConversionState) -> String {
 #[allow(clippy::too_many_lines)]
 fn render_block(block: &RichBlock, state: &mut ConversionState) -> String {
     match block {
-        RichBlock::Paragraph(text)
-        | RichBlock::Footer(text)
-        | RichBlock::Thinking(text) => render_rich_text(text),
+        RichBlock::Paragraph(text) | RichBlock::Footer(text) | RichBlock::Thinking(text) => {
+            render_rich_text(text)
+        }
         RichBlock::Heading { size, text } => {
             format!("{} {}", "#".repeat(*size as usize), render_rich_text(text))
         }
         RichBlock::Pre { language, text } => {
             let content = plain_rich_text(text);
-            let fence = if content.contains("```") { "````" } else { "```" };
-            format!("{}{}\n{}\n{}", fence, language.as_deref().unwrap_or(""), content, fence)
+            let fence = if content.contains("```") {
+                "````"
+            } else {
+                "```"
+            };
+            format!(
+                "{}{}\n{}\n{}",
+                fence,
+                language.as_deref().unwrap_or(""),
+                content,
+                fence
+            )
         }
         RichBlock::Divider => "---".to_string(),
         RichBlock::Math { expression } => format!("$$\n{}\n$$", expression),
@@ -179,24 +249,46 @@ fn render_block(block: &RichBlock, state: &mut ConversionState) -> String {
             if let Some(credit) = credit {
                 parts.push(format!("— {}", render_rich_text(credit)));
             }
-            quote_markdown(&parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("\n\n"))
+            quote_markdown(
+                &parts
+                    .iter()
+                    .filter(|p| !p.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            )
         }
         RichBlock::Pullquote { text, credit } => {
             let mut parts = vec![render_rich_text(text)];
             if let Some(credit) = credit {
                 parts.push(format!("— {}", render_rich_text(credit)));
             }
-            quote_markdown(&parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("\n\n"))
+            quote_markdown(
+                &parts
+                    .iter()
+                    .filter(|p| !p.is_empty())
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            )
         }
         RichBlock::Collage { blocks, caption } | RichBlock::Slideshow { blocks, caption } => {
             let mut parts = vec![render_blocks(blocks, state)];
             if let Some(caption) = caption {
                 parts.push(render_caption(caption, None));
             }
-            parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n\n")
+            parts
+                .into_iter()
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n")
         }
         RichBlock::Table { cells, caption } => render_table(cells, caption.as_ref()),
-        RichBlock::Details { summary, blocks, is_open } => {
+        RichBlock::Details {
+            summary,
+            blocks,
+            is_open,
+        } => {
             let open = if *is_open { " open" } else { "" };
             format!(
                 "<details{}><summary>{}</summary>\n\n{}\n\n</details>",
@@ -214,11 +306,17 @@ fn render_block(block: &RichBlock, state: &mut ConversionState) -> String {
                     file_size: largest.file_size,
                 });
             }
-            caption.as_ref().map(|c| render_caption(c, None)).unwrap_or_default()
+            caption
+                .as_ref()
+                .map(|c| render_caption(c, None))
+                .unwrap_or_default()
         }
         RichBlock::SkippedMedia { caption } => {
             state.skipped_media_count += 1;
-            caption.as_ref().map(|c| render_caption(c, None)).unwrap_or_default()
+            caption
+                .as_ref()
+                .map(|c| render_caption(c, None))
+                .unwrap_or_default()
         }
     }
 }
@@ -243,22 +341,45 @@ pub fn render_rich_text(text: &RichText) -> String {
             format!("[{}]({})", render_rich_text(text), escape_link_target(url))
         }
         RichText::Email { text, email } => {
-            format!("[{}](mailto:{})", render_rich_text(text), escape_link_target(email))
+            format!(
+                "[{}](mailto:{})",
+                render_rich_text(text),
+                escape_link_target(email)
+            )
         }
         RichText::Phone { text, phone } => {
-            format!("[{}](tel:{})", render_rich_text(text), escape_link_target(phone))
+            format!(
+                "[{}](tel:{})",
+                render_rich_text(text),
+                escape_link_target(phone)
+            )
         }
         RichText::Anchor { name } => {
             format!("<a name=\"{}\"></a>", escape_html_attribute(name))
         }
         RichText::AnchorLink { text, anchor_name } => {
-            format!("[{}](#{})", render_rich_text(text), escape_link_target(anchor_name))
+            format!(
+                "[{}](#{})",
+                render_rich_text(text),
+                escape_link_target(anchor_name)
+            )
         }
         RichText::Reference { name, text } => {
-            format!("[^{}]: {}", escape_reference_name(name), render_rich_text(text))
+            format!(
+                "[^{}]: {}",
+                escape_reference_name(name),
+                render_rich_text(text)
+            )
         }
-        RichText::ReferenceLink { text, reference_name } => {
-            format!("[{}][^{}]", render_rich_text(text), escape_reference_name(reference_name))
+        RichText::ReferenceLink {
+            text,
+            reference_name,
+        } => {
+            format!(
+                "[{}][^{}]",
+                render_rich_text(text),
+                escape_reference_name(reference_name)
+            )
         }
         RichText::Passthrough(inner) => render_rich_text(inner),
     }
@@ -298,7 +419,11 @@ pub fn render_caption(text: &RichText, credit: Option<&RichText>) -> String {
     if let Some(credit) = credit {
         parts.push(format!("— {}", render_rich_text(credit)));
     }
-    parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("\n")
+    parts
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Render cells (+ optional caption) as a Markdown table
@@ -360,7 +485,11 @@ pub fn rich_photo_filename(message_id: i64, index: usize) -> String {
 /// (TS: list `marker`).
 pub fn list_item_marker(has_checkbox: bool, is_checked: bool, label: &str) -> String {
     if has_checkbox {
-        if is_checked { "- [x]".to_string() } else { "- [ ]".to_string() }
+        if is_checked {
+            "- [x]".to_string()
+        } else {
+            "- [ ]".to_string()
+        }
     } else if label.is_empty() {
         "-".to_string()
     } else {
@@ -391,7 +520,10 @@ pub fn prefix_first_and_indent_rest(marker: &str, text: &str) -> String {
 
 /// Prefix every line with `> ` (TS: `quoteMarkdown`).
 pub fn quote_markdown(text: &str) -> String {
-    text.split('\n').map(|line| format!("> {}", line)).collect::<Vec<_>>().join("\n")
+    text.split('\n')
+        .map(|line| format!("> {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Wrap in backticks, doubling when the content holds one
@@ -415,7 +547,9 @@ pub fn escape_markdown_text(text: &str) -> String {
 
 /// Escape `|` and fold newlines to `<br>` (TS: `escapeTableCell`).
 pub fn escape_table_cell(text: &str) -> String {
-    text.replace('|', "\\|").replace("\r\n", "<br>").replace('\n', "<br>")
+    text.replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace('\n', "<br>")
 }
 
 /// Escape `\`, `(`, `)` in link targets (TS: `escapeLinkTarget`).
@@ -437,7 +571,10 @@ pub fn escape_reference_name(text: &str) -> String {
 
 /// Escape `&`, `"`, `<`, `>` in HTML attributes (TS: `escapeHtmlAttribute`).
 pub fn escape_html_attribute(text: &str) -> String {
-    text.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+    text.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// First whitespace-separated token when it is a `/command`

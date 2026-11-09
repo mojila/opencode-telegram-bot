@@ -51,10 +51,7 @@ fn fr_queue_templates_value_parity() {
         FR_QUEUE_MEDIA_LIMIT,
         "⚠️ Les médias en file sont limités à {maxSizeMb} MiB. Attendez l'envoi d'un élément."
     );
-    assert_eq!(
-        FR_QUEUE_REMOVED,
-        "🗑 Message retiré de la file d'attente."
-    );
+    assert_eq!(FR_QUEUE_REMOVED, "🗑 Message retiré de la file d'attente.");
     assert_eq!(
         FR_QUEUE_NOT_FOUND,
         "Ce message n'est plus dans la file d'attente."

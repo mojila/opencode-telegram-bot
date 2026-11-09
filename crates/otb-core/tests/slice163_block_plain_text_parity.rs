@@ -33,7 +33,10 @@ fn para(value: &str) -> PlainBlock {
 }
 
 fn item(text_value: &str, checked: Option<bool>) -> PlainListItem {
-    PlainListItem { blocks: vec![para(text_value)], checked }
+    PlainListItem {
+        blocks: vec![para(text_value)],
+        checked,
+    }
 }
 
 // ---- constants (1) ----
@@ -52,7 +55,10 @@ fn block_plain_extract_drops_formatting_parity() {
         text("a "),
         I::Bold(vec![I::Italic(vec![text("b")])]),
         I::Code("c".to_string()),
-        I::Link { text: vec![text("d")], url: "https://example.com".to_string() },
+        I::Link {
+            text: vec![text("d")],
+            url: "https://example.com".to_string(),
+        },
     ];
     assert_eq!(extract_plain_inline_text(&nodes), "a bcd");
 }
@@ -73,7 +79,10 @@ fn block_plain_table_pads_columns_and_divider_parity() {
 
 #[test]
 fn block_plain_table_normalizes_ragged_rows_parity() {
-    let rows = vec![vec!["a".to_string(), "b".to_string()], vec!["c".to_string()]];
+    let rows = vec![
+        vec!["a".to_string(), "b".to_string()],
+        vec!["c".to_string()],
+    ];
     assert_eq!(
         build_plain_aligned_table(&rows),
         ["a | b", "--|--", "c |  "].join("\n")
@@ -86,7 +95,10 @@ fn block_plain_table_normalizes_ragged_rows_parity() {
 fn block_plain_paragraph_and_heading_bare_text_parity() {
     assert_eq!(to_block_plain_text(&para("Some text")), "Some text");
     assert_eq!(
-        to_block_plain_text(&Heading { level: 2, inlines: vec![text("Title")] }),
+        to_block_plain_text(&Heading {
+            level: 2,
+            inlines: vec![text("Title")]
+        }),
         "Title"
     );
 }
@@ -162,7 +174,10 @@ fn block_plain_nested_list_indent_parity() {
 
 #[test]
 fn block_plain_code_kept_as_is_parity() {
-    let block = Code { language: Some("js".to_string()), text: "const a = 1;".to_string() };
+    let block = Code {
+        language: Some("js".to_string()),
+        text: "const a = 1;".to_string(),
+    };
     assert_eq!(to_block_plain_text(&block), "const a = 1;");
 }
 
@@ -174,7 +189,10 @@ fn block_plain_table_block_aligned_parity() {
             vec!["1".to_string(), "2".to_string()],
         ],
     };
-    assert_eq!(to_block_plain_text(&block), ["a | b", "--|--", "1 | 2"].join("\n"));
+    assert_eq!(
+        to_block_plain_text(&block),
+        ["a | b", "--|--", "1 | 2"].join("\n")
+    );
 }
 
 #[test]

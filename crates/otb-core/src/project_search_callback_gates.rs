@@ -166,7 +166,9 @@ pub fn resolve_project_search_result_id(ids: Option<&[String]>, raw: &str) -> Op
 
 /// Live `project-search` flow state: `custom` kind plus
 /// `flow === "project-search"` (TS: `searchState(deps)`).
-pub fn project_search_flow_state(state: Option<&ProjectSearchSnapshot>) -> Option<ProjectSearchFlow> {
+pub fn project_search_flow_state(
+    state: Option<&ProjectSearchSnapshot>,
+) -> Option<ProjectSearchFlow> {
     let snapshot = state?;
     if snapshot.kind != "custom" {
         return None;

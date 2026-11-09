@@ -188,10 +188,7 @@ fn slice75_parse_field_star_wildcard_parity() {
 fn slice75_parse_field_list_not_wildcard_parity() {
     let field = parse_cron_field("1,2,3", 0, 59).expect("list parses");
     assert!(!field.wildcard);
-    assert_eq!(
-        field.values,
-        BTreeSet::from([1, 2, 3])
-    );
+    assert_eq!(field.values, BTreeSet::from([1, 2, 3]));
 }
 
 #[test]

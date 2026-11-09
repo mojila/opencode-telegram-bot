@@ -80,7 +80,10 @@ fn classify_no_paused_parity() {
 
 #[test]
 fn classify_none_set_parity() {
-    assert_eq!(classify_goal_reason("No goal is set."), GoalReasonKind::NoneSet);
+    assert_eq!(
+        classify_goal_reason("No goal is set."),
+        GoalReasonKind::NoneSet
+    );
 }
 
 #[test]
@@ -167,7 +170,9 @@ fn classify_session_failed_parity() {
 fn classify_session_failed_multiline_tail_parity() {
     assert_eq!(
         classify_goal_reason("The session failed: boom\nbang"),
-        GoalReasonKind::SessionFailed { reason: "boom\nbang" }
+        GoalReasonKind::SessionFailed {
+            reason: "boom\nbang"
+        }
     );
 }
 

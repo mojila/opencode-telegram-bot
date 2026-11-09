@@ -220,10 +220,7 @@ pub enum UnknownCommandDecision {
 }
 
 /// `text` is `ctx.message?.text`; `known` is the known-command set.
-pub fn decide_unknown_command(
-    text: Option<&str>,
-    known: &[&str],
-) -> UnknownCommandDecision {
+pub fn decide_unknown_command(text: Option<&str>, known: &[&str]) -> UnknownCommandDecision {
     let text = match text {
         Some(t) => t,
         None => return UnknownCommandDecision::PassThrough,
@@ -235,7 +232,12 @@ pub fn decide_unknown_command(
     if is_known_command(&name, known) {
         return UnknownCommandDecision::PassThrough;
     }
-    let token = text.trim().split_whitespace().next().unwrap_or("").to_string();
+    let token = text
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
     UnknownCommandDecision::ReplyUnknown { token }
 }
 
@@ -290,9 +292,7 @@ pub fn is_valid_goal_cancel(
     // TS compares `metadata.messageId === messageId` where the sides are
     // `number | undefined` vs `number | null`: `None == None` across the two
     // representations is `false`, so both sides must be present and equal.
-    flow == Some("goal")
-        && metadata_message_id.is_some()
-        && metadata_message_id == message_id
+    flow == Some("goal") && metadata_message_id.is_some() && metadata_message_id == message_id
 }
 
 // ---------------------------------------------------------------------------

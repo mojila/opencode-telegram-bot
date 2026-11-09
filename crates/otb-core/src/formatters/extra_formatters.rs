@@ -86,11 +86,22 @@ pub enum RichText {
 pub enum RichBlock {
     Paragraph(String),
     Divider,
-    List { items: Vec<String> },
-    Table { rows: Vec<Vec<String>> },
-    Blockquote { blocks: Vec<RichBlock> },
-    Details { summary: String, blocks: Vec<RichBlock> },
-    Pre { text: String },
+    List {
+        items: Vec<String>,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+    },
+    Blockquote {
+        blocks: Vec<RichBlock>,
+    },
+    Details {
+        summary: String,
+        blocks: Vec<RichBlock>,
+    },
+    Pre {
+        text: String,
+    },
 }
 
 // ---- duration-formatter.ts ----
@@ -234,21 +245,11 @@ fn compact_labels(locale: &str) -> [&str; 5] {
             "изменённые файлы",
         ]
     } else {
-        [
-            "commands",
-            "edits",
-            "reads",
-            "tools",
-            "changed files",
-        ]
+        ["commands", "edits", "reads", "tools", "changed files"]
     }
 }
 
-pub fn format_compact_summary(
-    counts: &ToolCallCounts,
-    changed_files: u32,
-    locale: &str,
-) -> String {
+pub fn format_compact_summary(counts: &ToolCallCounts, changed_files: u32, locale: &str) -> String {
     let labels = compact_labels(locale);
     let values = [
         counts.commands,
@@ -441,8 +442,13 @@ fn format_cron_task_badge(cron: &str) -> String {
         Some(p) => p,
         None => return "cron".to_string(),
     };
-    let (minute_s, hour_s, dom_s, month_s, dow_s) =
-        (parts[0].as_str(), parts[1].as_str(), parts[2].as_str(), parts[3].as_str(), parts[4].as_str());
+    let (minute_s, hour_s, dom_s, month_s, dow_s) = (
+        parts[0].as_str(),
+        parts[1].as_str(),
+        parts[2].as_str(),
+        parts[3].as_str(),
+        parts[4].as_str(),
+    );
 
     let minute = parse_exact_number(minute_s, 0, 59);
     let hour = parse_exact_number(hour_s, 0, 23);
@@ -452,12 +458,7 @@ fn format_cron_task_badge(cron: &str) -> String {
     let dom_wild = dom_s == "*";
     let dow_wild = dow_s == "*";
 
-    if every_minute_step.is_some()
-        && hour_s == "*"
-        && month_wild
-        && dom_wild
-        && dow_wild
-    {
+    if every_minute_step.is_some() && hour_s == "*" && month_wild && dom_wild && dow_wild {
         return format!("{}m", every_minute_step.unwrap_or(0));
     }
 
@@ -546,10 +547,7 @@ fn subagent_starting(description: &str, locale: &str) -> String {
 }
 
 pub fn render_subagent_card(card: &SubagentCard, locale: &str, _now_ms: i64) -> String {
-    let has_model = card
-        .provider_id
-        .as_ref()
-        .is_some_and(|s| !s.is_empty())
+    let has_model = card.provider_id.as_ref().is_some_and(|s| !s.is_empty())
         && card.model_id.as_ref().is_some_and(|s| !s.is_empty());
     let mut header_count = 0;
     if !card.description.is_empty() {
@@ -613,12 +611,8 @@ pub fn count_rich_blocks(block: &RichBlock) -> u32 {
         RichBlock::Paragraph(_) | RichBlock::Divider | RichBlock::Pre { .. } => 1,
         RichBlock::List { items } => 1 + items.len() as u32,
         RichBlock::Table { rows } => 1 + rows.len() as u32,
-        RichBlock::Blockquote { blocks } => {
-            1 + blocks.iter().map(count_rich_blocks).sum::<u32>()
-        }
-        RichBlock::Details { blocks, .. } => {
-            1 + blocks.iter().map(count_rich_blocks).sum::<u32>()
-        }
+        RichBlock::Blockquote { blocks } => 1 + blocks.iter().map(count_rich_blocks).sum::<u32>(),
+        RichBlock::Details { blocks, .. } => 1 + blocks.iter().map(count_rich_blocks).sum::<u32>(),
     }
 }
 

@@ -113,16 +113,14 @@ pub const TR_GOAL2_KEYS: [&str; 26] = [
 /// Currently English fallback (untranslated).
 pub const TR_GOAL_ARGUMENTS_NOT_SUPPORTED: &str =
     "Use /goal without arguments, then follow the prompts or use the goal buttons.";
-pub const TR_GOAL_INPUT_EMPTY: &str =
-    "The objective cannot be empty. Send its text or tap Cancel.";
+pub const TR_GOAL_INPUT_EMPTY: &str = "The objective cannot be empty. Send its text or tap Cancel.";
 pub const TR_GOAL_INPUT_RESERVED: &str =
     "That word is reserved by OpenCode for goal controls. Describe the objective in more detail, or tap Cancel.";
 pub const TR_GOAL_BUTTON_CLEAR: &str = "× Delete";
 pub const TR_GOAL_CONTINUE: &str = "▶ Continue";
 pub const TR_GOAL_DELETE: &str = "🗑 Delete goal";
 pub const TR_GOAL_DELETED: &str = "Goal deleted. Use /goal to create a new one.";
-pub const TR_GOAL_UNSUPPORTED: &str =
-    "This OpenCode server does not support session goals.";
+pub const TR_GOAL_UNSUPPORTED: &str = "This OpenCode server does not support session goals.";
 pub const TR_GOAL_READ_ERROR: &str = "Couldn't read the session goal.";
 pub const TR_GOAL_ACTION_ERROR: &str = "Couldn't update the session goal.";
 pub const TR_GOAL_CONFIRM_WARNING: &str = "This goal continues on its own after each step. Continuation and judging spend tokens. There is no cost cap. The server stops it after its round limit.";
@@ -132,12 +130,9 @@ pub const TR_GOAL_CONFIRM_CANCEL: &str = "❌ Cancel";
 pub const TR_GOAL_NOTICE_NO_REASON: &str = "No reason reported.";
 pub const TR_GOAL_REASON_PAUSED_BY_USER: &str = "Paused by the user";
 pub const TR_GOAL_REASON_STOPPED_BY_USER: &str = "Stopped by the user";
-pub const TR_GOAL_REASON_SERVER_RESTARTED: &str =
-    "The server restarted while the goal was active";
-pub const TR_GOAL_REASON_STOPPED_AFTER_ERROR: &str =
-    "The goal stopped after an error";
-pub const TR_GOAL_REASON_NO_VERDICT: &str =
-    "The goal reviewer gave no usable verdict";
+pub const TR_GOAL_REASON_SERVER_RESTARTED: &str = "The server restarted while the goal was active";
+pub const TR_GOAL_REASON_STOPPED_AFTER_ERROR: &str = "The goal stopped after an error";
+pub const TR_GOAL_REASON_NO_VERDICT: &str = "The goal reviewer gave no usable verdict";
 pub const TR_GOAL_REASON_REVIEW_TOO_LARGE: &str =
     "The goal reviewer's request is too large for the model";
 pub const TR_GOAL_REASON_SESSION_FAILED: &str = "The session failed: {reason}";
@@ -169,9 +164,7 @@ pub fn lookup_tr_goal2_template(key: &str) -> Option<&'static str> {
         "goal.reason.paused_by_user" => Some(TR_GOAL_REASON_PAUSED_BY_USER),
         "goal.reason.stopped_by_user" => Some(TR_GOAL_REASON_STOPPED_BY_USER),
         "goal.reason.server_restarted" => Some(TR_GOAL_REASON_SERVER_RESTARTED),
-        "goal.reason.stopped_after_error" => {
-            Some(TR_GOAL_REASON_STOPPED_AFTER_ERROR)
-        }
+        "goal.reason.stopped_after_error" => Some(TR_GOAL_REASON_STOPPED_AFTER_ERROR),
         "goal.reason.no_verdict" => Some(TR_GOAL_REASON_NO_VERDICT),
         "goal.reason.review_too_large" => Some(TR_GOAL_REASON_REVIEW_TOO_LARGE),
         "goal.reason.session_failed" => Some(TR_GOAL_REASON_SESSION_FAILED),
@@ -216,8 +209,7 @@ fn interpolate_tr(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),
@@ -238,10 +230,7 @@ fn interpolate_tr(template: &str, params: &[(&str, &str)]) -> String {
 /// `true` when the `tr` template keeps the `en` placeholder set exactly
 /// (TS: per-key placeholder-equality loop in
 /// `tests/i18n/placeholders.test.ts`).
-pub fn is_tr_goal2_placeholder_ok(
-    en_template: &str,
-    tr_template: &str,
-) -> bool {
+pub fn is_tr_goal2_placeholder_ok(en_template: &str, tr_template: &str) -> bool {
     placeholder_set(en_template) == placeholder_set(tr_template)
 }
 

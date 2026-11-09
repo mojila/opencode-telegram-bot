@@ -135,7 +135,12 @@ fn exec_rejects_blank() {
 
 // --- isCommandFile: full ---
 
-fn raw(desc: Option<&str>, exec: Option<&str>, busy: Option<bool>, is_bool: bool) -> RawCommandFile {
+fn raw(
+    desc: Option<&str>,
+    exec: Option<&str>,
+    busy: Option<bool>,
+    is_bool: bool,
+) -> RawCommandFile {
     RawCommandFile {
         description: desc.map(str::to_string),
         exec: exec.map(str::to_string),
@@ -146,7 +151,12 @@ fn raw(desc: Option<&str>, exec: Option<&str>, busy: Option<bool>, is_bool: bool
 
 #[test]
 fn valid_command_file() {
-    assert!(is_command_file(&raw(Some("Deploy"), Some("npm run deploy"), None, true)));
+    assert!(is_command_file(&raw(
+        Some("Deploy"),
+        Some("npm run deploy"),
+        None,
+        true
+    )));
 }
 
 #[test]
@@ -176,7 +186,12 @@ fn command_file_rejects_bad_description() {
 
 #[test]
 fn command_file_rejects_non_bool_busy() {
-    assert!(!is_command_file(&raw(Some("Deploy"), Some("run"), None, false)));
+    assert!(!is_command_file(&raw(
+        Some("Deploy"),
+        Some("run"),
+        None,
+        false
+    )));
 }
 
 // --- .json filter + name derivation + sort ---
@@ -203,10 +218,18 @@ fn command_name_from_non_json_is_none() {
 
 #[test]
 fn sort_file_names_byte_order() {
-    let names = vec!["b.json".to_string(), "a.json".to_string(), "c.json".to_string()];
+    let names = vec![
+        "b.json".to_string(),
+        "a.json".to_string(),
+        "c.json".to_string(),
+    ];
     assert_eq!(
         sort_command_file_names(&names),
-        vec!["a.json".to_string(), "b.json".to_string(), "c.json".to_string()]
+        vec![
+            "a.json".to_string(),
+            "b.json".to_string(),
+            "c.json".to_string()
+        ]
     );
 }
 
@@ -294,7 +317,10 @@ fn definitions_strip_exec() {
 
 #[test]
 fn resolve_working_directory_dirname() {
-    assert_eq!(resolve_working_directory("/app/commands"), "/app".to_string());
+    assert_eq!(
+        resolve_working_directory("/app/commands"),
+        "/app".to_string()
+    );
 }
 
 // --- appendBounded ---
@@ -378,8 +404,5 @@ fn non_empty_stdout_classifies_success() {
 
 #[test]
 fn timeout_variant_exists() {
-    assert_eq!(
-        LocalCommandResult::Timeout,
-        LocalCommandResult::Timeout
-    );
+    assert_eq!(LocalCommandResult::Timeout, LocalCommandResult::Timeout);
 }

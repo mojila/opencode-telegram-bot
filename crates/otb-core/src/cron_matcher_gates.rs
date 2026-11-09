@@ -91,7 +91,11 @@ pub struct ZonedDateParts {
 
 /// `7 -> 0`, everything else unchanged (TS: `normalizeWeekday`).
 pub fn normalize_weekday(value: i64) -> i64 {
-    if value == 7 { 0 } else { value }
+    if value == 7 {
+        0
+    } else {
+        value
+    }
 }
 
 /// Lowercased month alias to 1-12 (`jan` -> `1`, ..., `dec` -> `12`).
@@ -196,12 +200,7 @@ fn parse_single_value(raw: &str, min: i64, max: i64, kind: FieldKind) -> Result<
     }
 }
 
-fn expand_base_inner(
-    base: &str,
-    min: i64,
-    max: i64,
-    kind: FieldKind,
-) -> Result<Vec<i64>, String> {
+fn expand_base_inner(base: &str, min: i64, max: i64, kind: FieldKind) -> Result<Vec<i64>, String> {
     if base.trim() == "*" {
         return Ok((min..=max).collect());
     }

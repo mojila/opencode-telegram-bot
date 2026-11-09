@@ -101,10 +101,7 @@ fn parse_socket_port(value: &str) -> Option<i64> {
 }
 
 fn is_local_hostname(hostname: &str) -> bool {
-    matches!(
-        hostname,
-        "localhost" | "127.0.0.1" | "::1" | "0.0.0.0"
-    )
+    matches!(hostname, "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
 }
 
 /// Scheme-default ports WHATWG drops before TS reads `.port` (TS then falls

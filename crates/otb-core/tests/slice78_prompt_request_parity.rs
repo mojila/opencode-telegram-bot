@@ -13,7 +13,12 @@
 
 use otb_core::prompt_request_gates::*;
 
-fn selection(agent: Option<&str>, provider: &str, model: &str, variant: Option<&str>) -> PromptSelection {
+fn selection(
+    agent: Option<&str>,
+    provider: &str,
+    model: &str,
+    variant: Option<&str>,
+) -> PromptSelection {
     PromptSelection {
         agent: agent.map(str::to_string),
         provider_id: provider.to_string(),
@@ -327,22 +332,13 @@ fn slice78_unsupported_standalone_reply_key_parity() {
 
 #[test]
 fn slice78_download_notice_album_parity() {
-    assert_eq!(
-        photo_download_notice_key(true, 1),
-        "bot.files_downloading"
-    );
+    assert_eq!(photo_download_notice_key(true, 1), "bot.files_downloading");
 }
 
 #[test]
 fn slice78_download_notice_single_standalone_parity() {
-    assert_eq!(
-        photo_download_notice_key(false, 1),
-        "bot.photo_downloading"
-    );
-    assert_eq!(
-        photo_download_notice_key(false, 3),
-        "bot.files_downloading"
-    );
+    assert_eq!(photo_download_notice_key(false, 1), "bot.photo_downloading");
+    assert_eq!(photo_download_notice_key(false, 3), "bot.files_downloading");
 }
 
 #[test]
@@ -351,10 +347,7 @@ fn slice78_download_error_keys_parity() {
         photo_download_error_key(true),
         "bot.media_group_download_error"
     );
-    assert_eq!(
-        photo_download_error_key(false),
-        "bot.photo_download_error"
-    );
+    assert_eq!(photo_download_error_key(false), "bot.photo_download_error");
 }
 
 #[test]
@@ -416,10 +409,7 @@ fn slice78_response_mode_wire_values_parity() {
 fn slice78_registry_set_get_parity() {
     let mut registry = ResponseModeRegistry::new();
     registry.set("ses-1", PromptResponseMode::TextAndTts);
-    assert_eq!(
-        registry.get("ses-1"),
-        Some(PromptResponseMode::TextAndTts)
-    );
+    assert_eq!(registry.get("ses-1"), Some(PromptResponseMode::TextAndTts));
     assert_eq!(registry.get("missing"), None);
 }
 
@@ -429,10 +419,7 @@ fn slice78_registry_overwrite_and_independence_parity() {
     registry.set("a", PromptResponseMode::TextOnly);
     registry.set("b", PromptResponseMode::TextAndTts);
     registry.set("a", PromptResponseMode::TextAndTts);
-    assert_eq!(
-        registry.get("a"),
-        Some(PromptResponseMode::TextAndTts)
-    );
+    assert_eq!(registry.get("a"), Some(PromptResponseMode::TextAndTts));
     assert_eq!(registry.get("b"), Some(PromptResponseMode::TextAndTts));
 }
 

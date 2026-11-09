@@ -149,7 +149,10 @@ fn event_like_rejects_misshapen_values_parity() {
 
 #[test]
 fn global_event_drops_mismatched_directory_parity() {
-    assert!(should_drop_global_event_on_directory(Some("C:/other"), false));
+    assert!(should_drop_global_event_on_directory(
+        Some("C:/other"),
+        false
+    ));
 }
 
 #[test]

@@ -154,7 +154,9 @@ pub fn map_user_message(
     }
     let text = extract_text_parts(parts)?;
     let created = created.unwrap_or(0);
-    let id = id.map(str::to_string).unwrap_or_else(|| created.to_string());
+    let id = id
+        .map(str::to_string)
+        .unwrap_or_else(|| created.to_string());
     Some(UserMessageItem { id, text, created })
 }
 
@@ -191,9 +193,17 @@ pub fn pick_latest_assistant_text(messages: &[AssistantCandidate]) -> Option<Ass
             continue;
         };
         match &latest {
-            None => latest = Some(AssistantPick { text, created: message.created }),
+            None => {
+                latest = Some(AssistantPick {
+                    text,
+                    created: message.created,
+                })
+            }
             Some(current) if message.created >= current.created => {
-                latest = Some(AssistantPick { text, created: message.created });
+                latest = Some(AssistantPick {
+                    text,
+                    created: message.created,
+                });
             }
             Some(_) => {}
         }
@@ -416,7 +426,11 @@ pub fn path_style_of(path: &str) -> PathStyle {
 
 /// Join on the parent's path flavour (TS: `joinPath`).
 pub fn join_path(parent_path: &str, child_name: &str) -> String {
-    let sep = if uses_windows_path(parent_path) { '\\' } else { '/' };
+    let sep = if uses_windows_path(parent_path) {
+        '\\'
+    } else {
+        '/'
+    };
     if parent_path.ends_with('/') || parent_path.ends_with('\\') {
         format!("{parent_path}{child_name}")
     } else {
@@ -462,7 +476,10 @@ pub fn is_path_within_directory(target_path: &str, directory_path: &str) -> bool
                     let share = parts.next().unwrap_or("");
                     let root = format!("\\\\{server}\\{share}\\");
                     let rest_len = stripped.len().saturating_sub(
-                        server.len() + 1 + share.len() + usize::from(!share.is_empty() || !server.is_empty()),
+                        server.len()
+                            + 1
+                            + share.len()
+                            + usize::from(!share.is_empty() || !server.is_empty()),
                     );
                     let rest = if rest_len < stripped.len() {
                         &stripped[stripped.len() - rest_len..]
@@ -568,11 +585,7 @@ fn entry_base_name(entry: &str, style: PathStyle) -> &str {
     }
 }
 
-pub fn ancestor_lists_child(
-    entries: &[String],
-    child_name: &str,
-    style: PathStyle,
-) -> bool {
+pub fn ancestor_lists_child(entries: &[String], child_name: &str, style: PathStyle) -> bool {
     entries
         .iter()
         .any(|entry| names_match(style, entry_base_name(entry, style), child_name))

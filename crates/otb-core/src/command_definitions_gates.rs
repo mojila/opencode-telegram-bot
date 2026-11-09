@@ -46,37 +46,103 @@ pub struct CommandDefinition {
 /// Canonical command list in Telegram display order
 /// (TS: `COMMAND_DEFINITIONS`).
 pub const COMMAND_DEFINITIONS: &[CommandDefinition] = &[
-    CommandDefinition { command: "status", server_version: None },
-    CommandDefinition { command: "new", server_version: None },
-    CommandDefinition { command: "abort", server_version: None },
-    CommandDefinition { command: "detach", server_version: None },
-    CommandDefinition { command: "sessions", server_version: None },
-    CommandDefinition { command: "recent", server_version: None },
-    CommandDefinition { command: "messages", server_version: None },
-    CommandDefinition { command: "settings", server_version: None },
-    CommandDefinition { command: "projects", server_version: None },
-    CommandDefinition { command: "worktree", server_version: None },
-    CommandDefinition { command: "task", server_version: None },
-    CommandDefinition { command: "tasklist", server_version: None },
-    CommandDefinition { command: "rename", server_version: None },
-    CommandDefinition { command: "commands", server_version: None },
-    CommandDefinition { command: "skills", server_version: None },
-    CommandDefinition { command: "mcps", server_version: None },
-    CommandDefinition { command: "opencode_start", server_version: None },
-    CommandDefinition { command: "opencode_stop", server_version: None },
-    CommandDefinition { command: "reload", server_version: Some("v2") },
-    CommandDefinition { command: "goal", server_version: Some("v2") },
-    CommandDefinition { command: "open", server_version: None },
-    CommandDefinition { command: "ls", server_version: None },
-    CommandDefinition { command: "help", server_version: None },
+    CommandDefinition {
+        command: "status",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "new",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "abort",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "detach",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "sessions",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "recent",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "messages",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "settings",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "projects",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "worktree",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "task",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "tasklist",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "rename",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "commands",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "skills",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "mcps",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "opencode_start",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "opencode_stop",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "reload",
+        server_version: Some("v2"),
+    },
+    CommandDefinition {
+        command: "goal",
+        server_version: Some("v2"),
+    },
+    CommandDefinition {
+        command: "open",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "ls",
+        server_version: None,
+    },
+    CommandDefinition {
+        command: "help",
+        server_version: None,
+    },
 ];
 
 /// Active filter for one definition
 /// (TS: `!serverVersion || serverVersion === config.opencode.serverVersion`).
-pub fn is_command_active(
-    server_version: Option<&str>,
-    current: &str,
-) -> bool {
+pub fn is_command_active(server_version: Option<&str>, current: &str) -> bool {
     match server_version {
         None => true,
         Some(required) => required == current,

@@ -20,8 +20,7 @@ pub const LIVE_STATE_FILES: &[&str] = &["settings.json", "opencode.db"];
 
 /// Whether `db_path` is the isolated cache DB (never a live path).
 pub fn db_path_is_isolated(db_path: &Path) -> bool {
-    db_path.file_name().and_then(|name| name.to_str())
-        == Some(crate::store::ISOLATED_DB_FILE)
+    db_path.file_name().and_then(|name| name.to_str()) == Some(crate::store::ISOLATED_DB_FILE)
 }
 
 /// Whether a DB path targets a live state file that must stay untouched.

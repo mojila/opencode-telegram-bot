@@ -99,7 +99,10 @@ fn es_status_placeholders_reject_mismatch_parity() {
 
 #[test]
 fn es_status_health_line_parity() {
-    assert_eq!(format_es_status_health_line("Saludable"), "Estado: Saludable");
+    assert_eq!(
+        format_es_status_health_line("Saludable"),
+        "Estado: Saludable"
+    );
 }
 
 #[test]

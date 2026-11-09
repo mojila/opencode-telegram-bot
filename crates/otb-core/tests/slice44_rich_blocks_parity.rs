@@ -21,7 +21,9 @@ fn text(s: &str) -> InlineNode {
 }
 
 fn para(s: &str) -> TelegramBlock {
-    TelegramBlock::Paragraph { inlines: vec![text(s)] }
+    TelegramBlock::Paragraph {
+        inlines: vec![text(s)],
+    }
 }
 
 fn item(blocks: Vec<TelegramBlock>, checked: Option<bool>) -> TelegramListItem {
@@ -112,7 +114,10 @@ fn slice44_13_ordered_untasked_marker_combines_count_and_box() {
 
 #[test]
 fn slice44_14_marker_index_ignores_item_content() {
-    assert_eq!(text_list_marker(&plain_item("zzz"), 4, true, Some(10)), "14. ");
+    assert_eq!(
+        text_list_marker(&plain_item("zzz"), 4, true, Some(10)),
+        "14. "
+    );
 }
 
 // --- to_rich_text (15-24) ---
@@ -129,7 +134,10 @@ fn slice44_16_single_text_node_collapses() {
 
 #[test]
 fn slice44_17_empty_text_nodes_are_dropped() {
-    assert_eq!(to_rich_text(&[text(""), text("hi")]), RichText::Str("hi".to_string()));
+    assert_eq!(
+        to_rich_text(&[text(""), text("hi")]),
+        RichText::Str("hi".to_string())
+    );
 }
 
 #[test]
@@ -141,7 +149,10 @@ fn slice44_18_all_empty_nodes_become_empty_string() {
 fn slice44_19_two_text_nodes_become_array() {
     assert_eq!(
         to_rich_text(&[text("a"), text("b")]),
-        RichText::Arr(vec![RichText::Str("a".to_string()), RichText::Str("b".to_string())])
+        RichText::Arr(vec![
+            RichText::Str("a".to_string()),
+            RichText::Str("b".to_string())
+        ])
     );
 }
 
@@ -149,7 +160,10 @@ fn slice44_19_two_text_nodes_become_array() {
 fn slice44_20_bold_wraps_children() {
     assert_eq!(
         to_rich_text(&[InlineNode::Bold(vec![text("b")])]),
-        RichText::Styled { kind: "bold".to_string(), text: Box::new(RichText::Str("b".to_string())) }
+        RichText::Styled {
+            kind: "bold".to_string(),
+            text: Box::new(RichText::Str("b".to_string()))
+        }
     );
 }
 
@@ -168,14 +182,20 @@ fn slice44_21_strike_maps_to_strikethrough() {
 fn slice44_22_code_node_keeps_text() {
     assert_eq!(
         to_rich_text(&[InlineNode::Code("x+1".to_string())]),
-        RichText::Styled { kind: "code".to_string(), text: Box::new(RichText::Str("x+1".to_string())) }
+        RichText::Styled {
+            kind: "code".to_string(),
+            text: Box::new(RichText::Str("x+1".to_string()))
+        }
     );
 }
 
 #[test]
 fn slice44_23_link_keeps_url() {
     assert_eq!(
-        to_rich_text(&[InlineNode::Link { text: vec![text("t")], url: "https://x.test".to_string() }]),
+        to_rich_text(&[InlineNode::Link {
+            text: vec![text("t")],
+            url: "https://x.test".to_string()
+        }]),
         RichText::Url {
             text: Box::new(RichText::Str("t".to_string())),
             url: "https://x.test".to_string()
@@ -204,38 +224,61 @@ fn slice44_24_mixed_nodes_become_array_with_styles() {
 fn slice44_25_paragraph_converts_text() {
     assert_eq!(
         to_rich_block(&para("hello")),
-        RichBlock::Paragraph { text: RichText::Str("hello".to_string()) }
+        RichBlock::Paragraph {
+            text: RichText::Str("hello".to_string())
+        }
     );
 }
 
 #[test]
 fn slice44_26_heading_keeps_level_in_range() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Heading { level: 3, inlines: vec![text("t")] }),
-        RichBlock::Heading { size: 3, text: RichText::Str("t".to_string()) }
+        to_rich_block(&TelegramBlock::Heading {
+            level: 3,
+            inlines: vec![text("t")]
+        }),
+        RichBlock::Heading {
+            size: 3,
+            text: RichText::Str("t".to_string())
+        }
     );
 }
 
 #[test]
 fn slice44_27_heading_level_clamps_to_six() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Heading { level: 9, inlines: vec![text("t")] }),
-        RichBlock::Heading { size: 6, text: RichText::Str("t".to_string()) }
+        to_rich_block(&TelegramBlock::Heading {
+            level: 9,
+            inlines: vec![text("t")]
+        }),
+        RichBlock::Heading {
+            size: 6,
+            text: RichText::Str("t".to_string())
+        }
     );
 }
 
 #[test]
 fn slice44_28_heading_level_clamps_to_one() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Heading { level: 0, inlines: vec![text("t")] }),
-        RichBlock::Heading { size: 1, text: RichText::Str("t".to_string()) }
+        to_rich_block(&TelegramBlock::Heading {
+            level: 0,
+            inlines: vec![text("t")]
+        }),
+        RichBlock::Heading {
+            size: 1,
+            text: RichText::Str("t".to_string())
+        }
     );
 }
 
 #[test]
 fn slice44_29_code_with_language_stays_pre() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Code { language: Some("ts".to_string()), text: "x".to_string() }),
+        to_rich_block(&TelegramBlock::Code {
+            language: Some("ts".to_string()),
+            text: "x".to_string()
+        }),
         RichBlock::Pre {
             language: Some("ts".to_string()),
             text: RichText::Str("x".to_string())
@@ -246,8 +289,14 @@ fn slice44_29_code_with_language_stays_pre() {
 #[test]
 fn slice44_30_code_without_language_has_no_language() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Code { language: None, text: "x".to_string() }),
-        RichBlock::Pre { language: None, text: RichText::Str("x".to_string()) }
+        to_rich_block(&TelegramBlock::Code {
+            language: None,
+            text: "x".to_string()
+        }),
+        RichBlock::Pre {
+            language: None,
+            text: RichText::Str("x".to_string())
+        }
     );
 }
 
@@ -259,8 +308,12 @@ fn slice44_31_rule_becomes_divider() {
 #[test]
 fn slice44_32_plain_becomes_paragraph() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Plain { text: "p".to_string() }),
-        RichBlock::Paragraph { text: RichText::Str("p".to_string()) }
+        to_rich_block(&TelegramBlock::Plain {
+            text: "p".to_string()
+        }),
+        RichBlock::Paragraph {
+            text: RichText::Str("p".to_string())
+        }
     );
 }
 
@@ -274,8 +327,16 @@ fn slice44_33_table_marks_header_and_defaults_align() {
         out,
         RichBlock::Table {
             cells: vec![
-                vec![RichTableCell { text: "h".to_string(), is_header: true, align: TableAlign::Left }],
-                vec![RichTableCell { text: "c".to_string(), is_header: false, align: TableAlign::Left }],
+                vec![RichTableCell {
+                    text: "h".to_string(),
+                    is_header: true,
+                    align: TableAlign::Left
+                }],
+                vec![RichTableCell {
+                    text: "c".to_string(),
+                    is_header: false,
+                    align: TableAlign::Left
+                }],
             ],
             is_bordered: true,
         }
@@ -285,24 +346,39 @@ fn slice44_33_table_marks_header_and_defaults_align() {
 #[test]
 fn slice44_34_wide_table_falls_back_to_pre() {
     let wide: Vec<String> = (0..21).map(|i| format!("c{i}")).collect();
-    let out = to_rich_block(&TelegramBlock::Table { rows: vec![wide], align: None });
-    assert!(matches!(out, RichBlock::Pre { .. }), "21-column table must degrade to pre, got {out:?}");
+    let out = to_rich_block(&TelegramBlock::Table {
+        rows: vec![wide],
+        align: None,
+    });
+    assert!(
+        matches!(out, RichBlock::Pre { .. }),
+        "21-column table must degrade to pre, got {out:?}"
+    );
 }
 
 #[test]
 fn slice44_35_empty_table_becomes_empty_paragraph() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Table { rows: vec![], align: None }),
-        RichBlock::Paragraph { text: RichText::Str(String::new()) }
+        to_rich_block(&TelegramBlock::Table {
+            rows: vec![],
+            align: None
+        }),
+        RichBlock::Paragraph {
+            text: RichText::Str(String::new())
+        }
     );
 }
 
 #[test]
 fn slice44_36_blockquote_converts_children() {
     assert_eq!(
-        to_rich_block(&TelegramBlock::Blockquote { blocks: vec![para("q")] }),
+        to_rich_block(&TelegramBlock::Blockquote {
+            blocks: vec![para("q")]
+        }),
         RichBlock::Blockquote {
-            blocks: vec![RichBlock::Paragraph { text: RichText::Str("q".to_string()) }]
+            blocks: vec![RichBlock::Paragraph {
+                text: RichText::Str("q".to_string())
+            }]
         }
     );
 }
@@ -344,7 +420,10 @@ fn slice44_40_trailing_code_block_is_lifted_out() {
         items: vec![item(
             vec![
                 para("lead"),
-                TelegramBlock::Code { language: None, text: "x".to_string() },
+                TelegramBlock::Code {
+                    language: None,
+                    text: "x".to_string(),
+                },
             ],
             None,
         )],
@@ -364,7 +443,10 @@ fn slice44_41_numbering_continues_across_lift() {
             item(
                 vec![
                     para("one"),
-                    TelegramBlock::Code { language: None, text: "x".to_string() },
+                    TelegramBlock::Code {
+                        language: None,
+                        text: "x".to_string(),
+                    },
                 ],
                 None,
             ),
@@ -408,23 +490,35 @@ fn slice44_43_plain_source_signature_without_entities() {
 #[test]
 fn slice44_44_plain_signature_encodes_entities() {
     let part = RenderedPart {
-        entities: vec![PartEntity { kind: "bold".to_string(), offset: 0, length: 5 }],
+        entities: vec![PartEntity {
+            kind: "bold".to_string(),
+            offset: 0,
+            length: 5,
+        }],
         ..plain_part("hello")
     };
     let sig = get_telegram_rendered_part_signature(&part);
-    assert_eq!(sig, "plain\n[{\"type\":\"bold\",\"offset\":0,\"length\":5}]\nhello");
+    assert_eq!(
+        sig,
+        "plain\n[{\"type\":\"bold\",\"offset\":0,\"length\":5}]\nhello"
+    );
 }
 
 #[test]
 fn slice44_45_empty_blocks_use_plain_branch() {
-    let part = RenderedPart { source: PartSource::Blocks, ..plain_part("fb") };
+    let part = RenderedPart {
+        source: PartSource::Blocks,
+        ..plain_part("fb")
+    };
     assert_eq!(get_telegram_rendered_part_signature(&part), "plain\n\nfb");
 }
 
 #[test]
 fn slice44_46_blocks_source_prefixes_blocks_json() {
     let part = RenderedPart {
-        blocks: vec![RichBlock::Paragraph { text: RichText::Str("hi".to_string()) }],
+        blocks: vec![RichBlock::Paragraph {
+            text: RichText::Str("hi".to_string()),
+        }],
         fallback_text: "hi".to_string(),
         source: PartSource::Blocks,
         entities: vec![],
@@ -439,7 +533,11 @@ fn slice44_47_blocks_signature_ignores_entities() {
         blocks: vec![RichBlock::Divider],
         fallback_text: "fb".to_string(),
         source: PartSource::Blocks,
-        entities: vec![PartEntity { kind: "bold".to_string(), offset: 0, length: 1 }],
+        entities: vec![PartEntity {
+            kind: "bold".to_string(),
+            offset: 0,
+            length: 1,
+        }],
     };
     assert_eq!(
         get_telegram_rendered_part_signature(&part),
@@ -451,6 +549,8 @@ fn slice44_47_blocks_signature_ignores_entities() {
 fn slice44_48_create_paragraph_block_round_trips() {
     assert_eq!(
         create_paragraph_block("t"),
-        RichBlock::Paragraph { text: RichText::Str("t".to_string()) }
+        RichBlock::Paragraph {
+            text: RichText::Str("t".to_string())
+        }
     );
 }

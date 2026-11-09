@@ -195,7 +195,9 @@ pub fn project_labels(names: &[String]) -> Vec<String> {
                 }
                 let start = difference.saturating_sub(8);
                 let excerpt: String = parent_chars.iter().skip(start).take(22).collect();
-                if !excerpt.is_empty() && others.iter().all(|candidate| !candidate.contains(&excerpt)) {
+                if !excerpt.is_empty()
+                    && others.iter().all(|candidate| !candidate.contains(&excerpt))
+                {
                     return format!("…{excerpt}…/{folder}");
                 }
             }
@@ -203,8 +205,7 @@ pub fn project_labels(names: &[String]) -> Vec<String> {
             let parent_len = parent_chars.len();
             for size in (1..=parent_len.min(22)).rev() {
                 for start in (0..=(parent_len - size)).rev() {
-                    let excerpt: String =
-                        parent_chars.iter().skip(start).take(size).collect();
+                    let excerpt: String = parent_chars.iter().skip(start).take(size).collect();
                     if others.iter().all(|other| !other.contains(&excerpt)) {
                         return format!("…{excerpt}…/{folder}");
                     }
@@ -271,8 +272,7 @@ pub fn project_names(directories: &[String]) -> Vec<String> {
 /// preformatted `formatSessionTitle` output).
 pub fn build_recent_button_label(glyph: &str, project: &str, display_title: &str) -> String {
     let prefix = format!("{glyph} [{project}] ");
-    let available =
-        MAX_RECENT_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
+    let available = MAX_RECENT_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
     if display_title.chars().count() > available {
         let head: String = display_title
             .chars()

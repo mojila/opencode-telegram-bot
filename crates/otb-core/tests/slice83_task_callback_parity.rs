@@ -212,7 +212,13 @@ fn tasklist_metadata_wrong_kind_is_none_parity() {
 
 #[test]
 fn tasklist_metadata_wrong_flow_is_none_parity() {
-    let s = snapshot("custom", Some("session-search"), Some("list"), Some(7), None);
+    let s = snapshot(
+        "custom",
+        Some("session-search"),
+        Some("list"),
+        Some(7),
+        None,
+    );
     assert_eq!(parse_task_list_metadata(Some(&s)), None);
     let s = snapshot("custom", None, Some("list"), Some(7), None);
     assert_eq!(parse_task_list_metadata(Some(&s)), None);
@@ -255,7 +261,13 @@ fn tasklist_metadata_detail_valid_parity() {
 fn tasklist_metadata_detail_missing_task_id_is_none_parity() {
     let s = snapshot("custom", Some("tasklist"), Some("detail"), Some(7), None);
     assert_eq!(parse_task_list_metadata(Some(&s)), None);
-    let s = snapshot("custom", Some("tasklist"), Some("detail"), Some(7), Some(""));
+    let s = snapshot(
+        "custom",
+        Some("tasklist"),
+        Some("detail"),
+        Some(7),
+        Some(""),
+    );
     assert_eq!(parse_task_list_metadata(Some(&s)), None);
 }
 

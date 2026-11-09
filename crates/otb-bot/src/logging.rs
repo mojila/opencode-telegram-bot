@@ -31,7 +31,5 @@ pub fn init_logging(log_level: &str) {
                 crate::config::DEFAULT_LOG_LEVEL
             ))
         });
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }

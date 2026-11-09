@@ -105,7 +105,10 @@ pub struct PathIndex {
 impl PathIndex {
     /// Empty index (TS: a fresh module-level map with counter `0`).
     pub fn new() -> Self {
-        Self { entries: HashMap::new(), next_counter: 0 }
+        Self {
+            entries: HashMap::new(),
+            next_counter: 0,
+        }
     }
 
     /// Forget all indexed paths and reset the counter (TS:
@@ -154,11 +157,7 @@ pub fn encode_path_for_callback(
 /// Raw path (or `#key` resolved through the index) behind a prefixed
 /// callback; `None` for a wrong prefix or an unknown key (TS:
 /// `decodePathFromCallback`).
-pub fn decode_path_from_callback(
-    index: &PathIndex,
-    prefix: &str,
-    data: &str,
-) -> Option<String> {
+pub fn decode_path_from_callback(index: &PathIndex, prefix: &str, data: &str) -> Option<String> {
     let raw = data.strip_prefix(prefix)?;
     if raw.starts_with('#') {
         return index.entries.get(raw).cloned();
@@ -203,7 +202,10 @@ fn parse_js_int(rest: &str) -> Option<i64> {
             None => (1_i64, trimmed),
         },
     };
-    let digit_len = digits_start.bytes().take_while(|b| b.is_ascii_digit()).count();
+    let digit_len = digits_start
+        .bytes()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
     if digit_len == 0 {
         return None;
     }
@@ -230,47 +232,35 @@ pub fn decode_path_with_page_callback(
     } else {
         path_ref.to_string()
     };
-    Some(PathWithPage { path: resolved, page })
+    Some(PathWithPage {
+        path: resolved,
+        page,
+    })
 }
 
 /// `open:pg:<path>|<page>` (TS: `decodeOpenPaginationCallback`).
-pub fn decode_open_pagination_callback(
-    index: &PathIndex,
-    data: &str,
-) -> Option<PathWithPage> {
+pub fn decode_open_pagination_callback(index: &PathIndex, data: &str) -> Option<PathWithPage> {
     decode_path_with_page_callback(index, OPEN_CALLBACK_PAGE_PREFIX, data)
 }
 
 /// `ls:pg:<path>|<page>` (TS: `decodeLsPaginationCallback`).
-pub fn decode_ls_pagination_callback(
-    index: &PathIndex,
-    data: &str,
-) -> Option<PathWithPage> {
+pub fn decode_ls_pagination_callback(index: &PathIndex, data: &str) -> Option<PathWithPage> {
     decode_path_with_page_callback(index, LS_CALLBACK_PAGE_PREFIX, data)
 }
 
 /// `ls:file:<path>|<page>` (TS: `decodeLsFileCallback`).
-pub fn decode_ls_file_callback(
-    index: &PathIndex,
-    data: &str,
-) -> Option<PathWithPage> {
+pub fn decode_ls_file_callback(index: &PathIndex, data: &str) -> Option<PathWithPage> {
     decode_path_with_page_callback(index, LS_CALLBACK_FILE_PREFIX, data)
 }
 
 /// `ls:back:<path>|<page>` (TS: `decodeLsBackCallback`).
-pub fn decode_ls_back_callback(
-    index: &PathIndex,
-    data: &str,
-) -> Option<PathWithPage> {
+pub fn decode_ls_back_callback(index: &PathIndex, data: &str) -> Option<PathWithPage> {
     decode_path_with_page_callback(index, LS_CALLBACK_BACK_PREFIX, data)
 }
 
 /// Path behind an `ls:attach:` callback (TS: `decodeLsAttachCallback`
 /// over the non-page decoder).
-pub fn decode_ls_attach_callback(
-    index: &PathIndex,
-    data: &str,
-) -> Option<String> {
+pub fn decode_ls_attach_callback(index: &PathIndex, data: &str) -> Option<String> {
     decode_path_from_callback(index, LS_CALLBACK_ATTACH_PREFIX, data)
 }
 
@@ -365,9 +355,7 @@ pub fn resolve_initial_ls_directory(
 ) -> Option<String> {
     let project = current_project?;
     match cached_directory {
-        Some(cached) if !cached.is_empty() && cached_within_project => {
-            Some(cached.to_string())
-        }
+        Some(cached) if !cached.is_empty() && cached_within_project => Some(cached.to_string()),
         _ => Some(project.to_string()),
     }
 }
@@ -398,11 +386,7 @@ pub fn total_pages(total_count: usize) -> usize {
 
 /// Entries mean actions; otherwise only a non-root parent does (TS:
 /// `hasBrowseActions`).
-pub fn has_browse_actions(
-    total_count: usize,
-    has_parent: bool,
-    is_project_root: bool,
-) -> bool {
+pub fn has_browse_actions(total_count: usize, has_parent: bool, is_project_root: bool) -> bool {
     if total_count > 0 {
         return true;
     }

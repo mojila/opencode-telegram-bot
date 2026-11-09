@@ -110,7 +110,10 @@ fn slice49_11_non_numeric_port_is_none() {
 
 #[test]
 fn slice49_12_out_of_range_port_is_none() {
-    assert_eq!(resolve_local_opencode_target("http://localhost:99999"), None);
+    assert_eq!(
+        resolve_local_opencode_target("http://localhost:99999"),
+        None
+    );
 }
 
 // --- parse_opencode_version_output (13-19) ---
@@ -211,7 +214,8 @@ fn slice49_28_bare_major_two_is_v2() {
 
 // --- find_windows_listening_pid_in_netstat (29-37) ---
 
-const WIN_BASIC: &str = "  TCP    127.0.0.1:4096         0.0.0.0:0              LISTENING       1234";
+const WIN_BASIC: &str =
+    "  TCP    127.0.0.1:4096         0.0.0.0:0              LISTENING       1234";
 
 #[test]
 fn slice49_29_windows_basic_match() {
@@ -292,10 +296,7 @@ fn slice49_38_ss_basic_match() {
 #[test]
 fn slice49_39_ss_header_skipped() {
     let stdout = "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\ntcp   ESTAB  0  0  127.0.0.1:4096  0.0.0.0:*  users:((\"node\",pid=4321,fd=3))";
-    assert_eq!(
-        find_unix_listening_pid_in_ss(stdout, 4096),
-        Some(4321)
-    );
+    assert_eq!(find_unix_listening_pid_in_ss(stdout, 4096), Some(4321));
 }
 
 #[test]

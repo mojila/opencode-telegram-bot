@@ -309,7 +309,9 @@ impl PromptQueueManager {
     /// Releases a handed-over reservation; `false` when it was not handed
     /// over or was withdrawn (TS: `releaseHandedOverReservation`).
     pub fn release_handed_over_reservation(&mut self, reservation_id: &str) -> bool {
-        self.handed_over_reservations.remove(reservation_id).is_some()
+        self.handed_over_reservations
+            .remove(reservation_id)
+            .is_some()
     }
 
     /// Withdraws handed-over reservations of one session, or of all when

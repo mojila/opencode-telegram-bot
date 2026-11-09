@@ -103,9 +103,7 @@ pub fn parse_service_cleanup_reason(raw: &str) -> Option<ServiceCleanupReason> {
 }
 
 /// Cleanup notice for a reason, or `None` for `None` (TS: `formatServiceCleanupMessage`).
-pub fn format_service_cleanup_message(
-    reason: Option<ServiceCleanupReason>,
-) -> Option<String> {
+pub fn format_service_cleanup_message(reason: Option<ServiceCleanupReason>) -> Option<String> {
     match reason {
         Some(ServiceCleanupReason::Stale) => Some(CLI_CLEANUP_STALE.to_string()),
         Some(ServiceCleanupReason::Invalid) => Some(CLI_CLEANUP_INVALID.to_string()),

@@ -138,7 +138,10 @@ fn parse_goal_delete_token_parity() {
         Some("tok-1".to_string())
     );
     // TS slices without an emptiness check.
-    assert_eq!(parse_goal_delete_token("goal:delete:"), Some("".to_string()));
+    assert_eq!(
+        parse_goal_delete_token("goal:delete:"),
+        Some("".to_string())
+    );
 }
 
 #[test]
@@ -259,7 +262,8 @@ fn parse_goal_rejects_wrong_flow_parity() {
     );
     assert_eq!(
         parse_goal_confirmation(Some(&input(
-            "custom", None,
+            "custom",
+            None,
             Some("confirm"),
             Some(7),
             Some("start"),
@@ -366,7 +370,11 @@ fn resolve_callback_message_id_parity() {
 
 #[test]
 fn invalidates_when_busy_parity() {
-    assert!(should_invalidate_goal_on_session(true, Some("sess-1"), "sess-1"));
+    assert!(should_invalidate_goal_on_session(
+        true,
+        Some("sess-1"),
+        "sess-1"
+    ));
 }
 
 #[test]

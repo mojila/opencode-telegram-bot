@@ -64,32 +64,44 @@ fn slice45_05_all_parts_joined_in_order() {
 
 #[test]
 fn slice45_06_parse_entities_marker() {
-    assert!(is_telegram_markdown_parse_error_text("bad request: can't parse entities"));
+    assert!(is_telegram_markdown_parse_error_text(
+        "bad request: can't parse entities"
+    ));
 }
 
 #[test]
 fn slice45_07_parse_entity_singular_marker() {
-    assert!(is_telegram_markdown_parse_error_text("can't parse entity in message"));
+    assert!(is_telegram_markdown_parse_error_text(
+        "can't parse entity in message"
+    ));
 }
 
 #[test]
 fn slice45_08_end_of_entity_marker() {
-    assert!(is_telegram_markdown_parse_error_text("can't find end of the entity"));
+    assert!(is_telegram_markdown_parse_error_text(
+        "can't find end of the entity"
+    ));
 }
 
 #[test]
 fn slice45_09_entity_beginning_marker() {
-    assert!(is_telegram_markdown_parse_error_text("entity beginning at offset 3"));
+    assert!(is_telegram_markdown_parse_error_text(
+        "entity beginning at offset 3"
+    ));
 }
 
 #[test]
 fn slice45_10_bad_request_cant_parse_marker() {
-    assert!(is_telegram_markdown_parse_error_text("bad request: can't parse message"));
+    assert!(is_telegram_markdown_parse_error_text(
+        "bad request: can't parse message"
+    ));
 }
 
 #[test]
 fn slice45_11_unrelated_error_is_not_parse_error() {
-    assert!(!is_telegram_markdown_parse_error_text("message is too long"));
+    assert!(!is_telegram_markdown_parse_error_text(
+        "message is too long"
+    ));
 }
 
 #[test]
@@ -99,19 +111,25 @@ fn slice45_12_empty_text_is_not_parse_error() {
 
 #[test]
 fn slice45_13_url_error_alone_is_not_parse_error() {
-    assert!(!is_telegram_markdown_parse_error_text("wrong http url specified"));
+    assert!(!is_telegram_markdown_parse_error_text(
+        "wrong http url specified"
+    ));
 }
 
 // --- is_telegram_entity_url_error_text (14-18) ---
 
 #[test]
 fn slice45_14_entity_url_marker() {
-    assert!(is_telegram_entity_url_error_text("bad request: entity url invalid"));
+    assert!(is_telegram_entity_url_error_text(
+        "bad request: entity url invalid"
+    ));
 }
 
 #[test]
 fn slice45_15_wrong_http_url_marker() {
-    assert!(is_telegram_entity_url_error_text("wrong http url specified"));
+    assert!(is_telegram_entity_url_error_text(
+        "wrong http url specified"
+    ));
 }
 
 #[test]
@@ -180,7 +198,9 @@ fn slice45_27_bad_request_alone_is_not() {
 
 #[test]
 fn slice45_28_nothing_is_not_presentation_error() {
-    assert!(!is_telegram_markdown_presentation_error(false, false, false));
+    assert!(!is_telegram_markdown_presentation_error(
+        false, false, false
+    ));
 }
 
 // --- escape_telegram_markdown_v2 (29-36) ---

@@ -56,14 +56,8 @@ fn id_queue_templates_value_parity() {
         ID_QUEUE_MEDIA_LIMIT,
         "⚠️ Media dalam antrean dibatasi {maxSizeMb} MiB. Tunggu hingga satu item terkirim, lalu coba lagi."
     );
-    assert_eq!(
-        ID_QUEUE_REMOVED,
-        "🗑 Pesan dihapus dari antrean."
-    );
-    assert_eq!(
-        ID_QUEUE_NOT_FOUND,
-        "Pesan ini sudah tidak ada di antrean."
-    );
+    assert_eq!(ID_QUEUE_REMOVED, "🗑 Pesan dihapus dari antrean.");
+    assert_eq!(ID_QUEUE_NOT_FOUND, "Pesan ini sudah tidak ada di antrean.");
     assert_eq!(
         ID_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."

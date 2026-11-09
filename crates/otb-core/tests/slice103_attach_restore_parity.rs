@@ -178,12 +178,16 @@ fn keeps_shown_question_still_pending_parity() {
 
 #[test]
 fn keeps_shown_question_when_none_on_screen_parity() {
-    assert!(!should_close_shown_question(false, false, false, false, true));
+    assert!(!should_close_shown_question(
+        false, false, false, false, true
+    ));
 }
 
 #[test]
 fn keeps_shown_question_when_current_changed_parity() {
-    assert!(!should_close_shown_question(true, false, false, false, true));
+    assert!(!should_close_shown_question(
+        true, false, false, false, true
+    ));
 }
 
 #[test]

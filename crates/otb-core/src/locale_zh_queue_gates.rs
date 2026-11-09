@@ -120,11 +120,9 @@ pub const ZH_QUEUE_KEYS: [&str; 8] = [
 ];
 
 /// Verbatim `zh` template (TS: `src/i18n/zh.ts` line 419).
-pub const ZH_QUEUE_ADDED: &str =
-    "📥 已加入队列（{count}/{max}）。当前任务完成后将自动发送。";
+pub const ZH_QUEUE_ADDED: &str = "📥 已加入队列（{count}/{max}）。当前任务完成后将自动发送。";
 /// Verbatim `zh` queue-full template (TS: `src/i18n/zh.ts` line 420).
-pub const ZH_QUEUE_FULL: &str =
-    "⚠️ 队列已满（{max}）。请删除一条消息或等待当前任务完成。";
+pub const ZH_QUEUE_FULL: &str = "⚠️ 队列已满（{max}）。请删除一条消息或等待当前任务完成。";
 /// Verbatim `zh` media-limit template (TS: `src/i18n/zh.ts` line 421).
 pub const ZH_QUEUE_MEDIA_LIMIT: &str =
     "⚠️ 队列媒体总大小限制为 {maxSizeMb} MiB。请等待一个项目发送后重试。";
@@ -189,8 +187,7 @@ fn interpolate_zh(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

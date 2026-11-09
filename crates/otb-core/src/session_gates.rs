@@ -213,7 +213,10 @@ struct OpenRun {
 }
 
 fn upsert_step(steps: &mut Vec<AssistantRunStep>, step: AssistantRunStep) {
-    if let Some(existing) = steps.iter_mut().find(|item| item.message_id == step.message_id) {
+    if let Some(existing) = steps
+        .iter_mut()
+        .find(|item| item.message_id == step.message_id)
+    {
         *existing = step;
     } else {
         steps.push(step);
@@ -287,7 +290,9 @@ impl AssistantRunState {
         match self.runs.get_mut(session_id) {
             Some(run) if !run.sealed => upsert_step(&mut run.steps, step),
             _ => upsert_step(
-                self.pending_steps.entry(session_id.to_string()).or_default(),
+                self.pending_steps
+                    .entry(session_id.to_string())
+                    .or_default(),
                 step,
             ),
         }
@@ -301,11 +306,7 @@ impl AssistantRunState {
     }
 
     /// Finish and drop the run (TS: `finishRun`).
-    pub fn finish_run(
-        &mut self,
-        session_id: &str,
-        _reason: &str,
-    ) -> Option<FinishedAssistantRun> {
+    pub fn finish_run(&mut self, session_id: &str, _reason: &str) -> Option<FinishedAssistantRun> {
         let run = self.runs.remove(session_id)?;
         Some(FinishedAssistantRun {
             steps: run.steps,
@@ -627,9 +628,7 @@ pub fn is_agent_mode_button_text(text: &str) -> bool {
 /// Whether text matches the variant button pattern (current `💡` +
 /// legacy `💭`; TS: `VARIANT_BUTTON_TEXT_PATTERN`).
 pub fn is_variant_button_text(text: &str) -> bool {
-    let rest = text
-        .strip_prefix("💡")
-        .or_else(|| text.strip_prefix("💭"));
+    let rest = text.strip_prefix("💡").or_else(|| text.strip_prefix("💭"));
     let Some(rest) = rest else {
         return false;
     };
@@ -698,7 +697,10 @@ fn build_queued_prompt_preview(text: &str) -> String {
     if collapsed.chars().count() <= QUEUED_PROMPT_PREVIEW_MAX_LENGTH {
         return collapsed;
     }
-    let preview: String = collapsed.chars().take(QUEUED_PROMPT_PREVIEW_MAX_LENGTH - 1).collect();
+    let preview: String = collapsed
+        .chars()
+        .take(QUEUED_PROMPT_PREVIEW_MAX_LENGTH - 1)
+        .collect();
     format!("{preview}…")
 }
 

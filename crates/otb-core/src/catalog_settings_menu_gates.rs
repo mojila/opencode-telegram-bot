@@ -510,8 +510,7 @@ pub const SETTINGS_CALLBACK_PREFIX: &str = "settings:";
 /// `settings:compact_output` callback data.
 pub const SETTINGS_COMPACT_OUTPUT_CALLBACK: &str = "settings:compact_output";
 /// `settings:delete_progress_on_finish` callback data.
-pub const SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK: &str =
-    "settings:delete_progress_on_finish";
+pub const SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK: &str = "settings:delete_progress_on_finish";
 /// `settings:thinking_content` callback data.
 pub const SETTINGS_THINKING_CONTENT_CALLBACK: &str = "settings:thinking_content";
 /// `settings:response_streaming` callback data.
@@ -549,19 +548,13 @@ pub enum SettingsToggle {
 pub fn classify_settings_callback(data: &str) -> Option<SettingsToggle> {
     match data {
         SETTINGS_COMPACT_OUTPUT_CALLBACK => Some(SettingsToggle::CompactOutput),
-        SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK => {
-            Some(SettingsToggle::DeleteProgressOnFinish)
-        }
+        SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK => Some(SettingsToggle::DeleteProgressOnFinish),
         SETTINGS_THINKING_CONTENT_CALLBACK => Some(SettingsToggle::ThinkingContent),
         SETTINGS_RESPONSE_STREAMING_CALLBACK => Some(SettingsToggle::ResponseStreaming),
         SETTINGS_DIFF_FILES_CALLBACK => Some(SettingsToggle::DiffFiles),
         SETTINGS_ASSISTANT_FOOTER_CALLBACK => Some(SettingsToggle::AssistantFooter),
-        SETTINGS_PIN_SESSION_DASHBOARD_CALLBACK => {
-            Some(SettingsToggle::PinSessionDashboard)
-        }
-        SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK => {
-            Some(SettingsToggle::BackgroundNotifications)
-        }
+        SETTINGS_PIN_SESSION_DASHBOARD_CALLBACK => Some(SettingsToggle::PinSessionDashboard),
+        SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK => Some(SettingsToggle::BackgroundNotifications),
         SETTINGS_TTS_CALLBACK => Some(SettingsToggle::Tts),
         SETTINGS_PROMPT_QUEUE_CALLBACK => Some(SettingsToggle::PromptQueue),
         _ => None,
@@ -580,7 +573,11 @@ pub fn format_boolean_setting_value<'a>(
     on_label: &'a str,
     off_label: &'a str,
 ) -> &'a str {
-    if enabled { on_label } else { off_label }
+    if enabled {
+        on_label
+    } else {
+        off_label
+    }
 }
 
 /// TTS mode behind the value line (TS: `TtsMode`).

@@ -244,10 +244,7 @@ impl TaskCreationManager {
 
     /// Remembers the prompt-request message (TS:
     /// `setPromptRequestMessageId`).
-    pub fn set_prompt_request_message_id(
-        &mut self,
-        message_id: i64,
-    ) -> Option<TaskCreationState> {
+    pub fn set_prompt_request_message_id(&mut self, message_id: i64) -> Option<TaskCreationState> {
         let state = self.state.as_mut()?;
         state.prompt_request_message_id = Some(message_id);
         self.state.clone()
@@ -303,9 +300,7 @@ pub fn clone_scheduled_task_model(model: &ScheduledTaskModel) -> ScheduledTaskMo
 }
 
 /// Copies a parsed schedule (TS: `cloneParsedTaskSchedule`).
-pub fn clone_parsed_task_schedule(
-    schedule: &ParsedTaskSchedule,
-) -> ParsedTaskSchedule {
+pub fn clone_parsed_task_schedule(schedule: &ParsedTaskSchedule) -> ParsedTaskSchedule {
     schedule.clone()
 }
 

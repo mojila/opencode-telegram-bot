@@ -269,12 +269,31 @@ fn scan_code_unknown_parity() {
 #[test]
 fn sort_ls_dirs_first_parity() {
     let entries = vec![
-        LsEntry { name: "b.txt".to_string(), full_path: "/w/b.txt".to_string(), is_dir: false },
-        LsEntry { name: "zeta".to_string(), full_path: "/w/zeta".to_string(), is_dir: true },
-        LsEntry { name: "A.txt".to_string(), full_path: "/w/A.txt".to_string(), is_dir: false },
-        LsEntry { name: "alpha".to_string(), full_path: "/w/alpha".to_string(), is_dir: true },
+        LsEntry {
+            name: "b.txt".to_string(),
+            full_path: "/w/b.txt".to_string(),
+            is_dir: false,
+        },
+        LsEntry {
+            name: "zeta".to_string(),
+            full_path: "/w/zeta".to_string(),
+            is_dir: true,
+        },
+        LsEntry {
+            name: "A.txt".to_string(),
+            full_path: "/w/A.txt".to_string(),
+            is_dir: false,
+        },
+        LsEntry {
+            name: "alpha".to_string(),
+            full_path: "/w/alpha".to_string(),
+            is_dir: true,
+        },
     ];
-    let names: Vec<String> = sort_ls_entries(entries).into_iter().map(|e| e.name).collect();
+    let names: Vec<String> = sort_ls_entries(entries)
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
     assert_eq!(names, vec!["alpha", "zeta", "A.txt", "b.txt"]);
 }
 

@@ -133,10 +133,7 @@ pub fn assistant_run_tokens_per_second(steps: &[AssistantRunStep]) -> Option<f64
         .iter()
         .map(|step| (step.streamed.unwrap_or(0) - step.created).max(0))
         .sum();
-    let tokens: i64 = steps
-        .iter()
-        .map(|step| step.output + step.reasoning)
-        .sum();
+    let tokens: i64 = steps.iter().map(|step| step.output + step.reasoning).sum();
     if tokens <= 0 || total_ms <= 0 {
         return None;
     }

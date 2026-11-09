@@ -80,10 +80,7 @@ pub fn model_key(provider_id: &str, model_id: &str) -> String {
 
 /// `true` when the limit call falls back without reading the cache
 /// (TS: `if (!providerID || !modelID) return DEFAULT_CONTEXT_LIMIT`).
-pub fn should_use_default_limit(
-    provider_id: Option<&str>,
-    model_id: Option<&str>,
-) -> bool {
+pub fn should_use_default_limit(provider_id: Option<&str>, model_id: Option<&str>) -> bool {
     !is_present(provider_id) || !is_present(model_id)
 }
 
@@ -113,19 +110,13 @@ pub fn should_adopt_agent(agent: Option<&str>) -> bool {
 
 /// `true` when a model adopt is attempted
 /// (TS: `if (model?.providerID && model.id)`).
-pub fn should_attempt_model_adopt(
-    provider_id: Option<&str>,
-    model_id: Option<&str>,
-) -> bool {
+pub fn should_attempt_model_adopt(provider_id: Option<&str>, model_id: Option<&str>) -> bool {
     is_present(provider_id) && is_present(model_id)
 }
 
 /// Variant stored for the pulled model
 /// (TS: `isSessionModel ? model.variant || "default" : "default"`).
-pub fn resolve_pulled_variant(
-    is_session_model: bool,
-    session_variant: Option<&str>,
-) -> String {
+pub fn resolve_pulled_variant(is_session_model: bool, session_variant: Option<&str>) -> String {
     if is_session_model {
         if let Some(variant) = session_variant {
             if !variant.is_empty() {

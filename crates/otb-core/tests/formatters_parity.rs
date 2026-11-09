@@ -54,10 +54,7 @@ fn slice20b_format_duration_hours() {
 #[test]
 fn slice20b_format_duration_hours_minutes_seconds() {
     assert_eq!(format_duration(3_600_000 + 15 * 60_000), "1h 15m");
-    assert_eq!(
-        format_duration(3_600_000 + 2 * 60_000 + 3_000),
-        "1h 2m 3s"
-    );
+    assert_eq!(format_duration(3_600_000 + 2 * 60_000 + 3_000), "1h 2m 3s");
 }
 
 #[test]
@@ -199,7 +196,11 @@ fn slice20b_count_execute_nested() {
     assert_eq!(
         count_tool_call(
             "execute",
-            &[("read", "completed"), ("bash", "error"), ("grep", "running")]
+            &[
+                ("read", "completed"),
+                ("bash", "error"),
+                ("grep", "running")
+            ]
         ),
         ToolCallCounts {
             commands: 0,
@@ -500,7 +501,11 @@ fn starting_card(description: &str, status: &str) -> SubagentCard {
 #[test]
 fn slice20b_subagent_starting_with_task() {
     assert_eq!(
-        render_subagent_card(&starting_card("task description", "running"), "en", 1_000_000),
+        render_subagent_card(
+            &starting_card("task description", "running"),
+            "en",
+            1_000_000
+        ),
         "🧩 Starting task: task description"
     );
 }

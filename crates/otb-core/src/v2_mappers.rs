@@ -308,7 +308,10 @@ pub struct V1GlobalSession {
 
 /// The V1 session plus a null project (TS: `toV1GlobalSession`).
 pub fn to_v1_global_session(session: &V2SessionInfo) -> V1GlobalSession {
-    V1GlobalSession { inner: to_v1_session(session), project: None }
+    V1GlobalSession {
+        inner: to_v1_session(session),
+        project: None,
+    }
 }
 
 /// V2 project row (TS: `Project` from `@opencode/client`).
@@ -375,7 +378,10 @@ pub fn to_v1_error_payload(error: Option<&V2StructuredError>) -> V1ErrorPayload 
             message.or(err_type).map(str::to_string)
         })
         .unwrap_or_else(|| "Unknown error".to_string());
-    V1ErrorPayload { name: "UnknownError".to_string(), data_message }
+    V1ErrorPayload {
+        name: "UnknownError".to_string(),
+        data_message,
+    }
 }
 
 /// Model reference on a V2 assistant message.
@@ -417,18 +423,44 @@ pub struct V2UserMessage {
 /// V2 tool-call state (TS: `streaming` / `running` / `completed` / error).
 #[derive(Debug, Clone, PartialEq)]
 pub enum V2ToolState {
-    Streaming { raw_input: JsonMap },
-    Running { input: JsonMap, metadata: Option<JsonMap> },
-    Completed { input: JsonMap, content: Vec<V2ContentItem>, metadata: Option<JsonMap> },
-    Failed { input: JsonMap, message: String, metadata: Option<JsonMap> },
+    Streaming {
+        raw_input: JsonMap,
+    },
+    Running {
+        input: JsonMap,
+        metadata: Option<JsonMap>,
+    },
+    Completed {
+        input: JsonMap,
+        content: Vec<V2ContentItem>,
+        metadata: Option<JsonMap>,
+    },
+    Failed {
+        input: JsonMap,
+        message: String,
+        metadata: Option<JsonMap>,
+    },
 }
 
 /// V2 assistant content item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum V2Content {
-    Text { text: String },
-    Reasoning { text: String, created: Option<i64>, completed: Option<i64> },
-    Tool { id: String, name: String, state: V2ToolState, created: i64, ran: Option<i64>, completed: Option<i64> },
+    Text {
+        text: String,
+    },
+    Reasoning {
+        text: String,
+        created: Option<i64>,
+        completed: Option<i64>,
+    },
+    Tool {
+        id: String,
+        name: String,
+        state: V2ToolState,
+        created: i64,
+        ran: Option<i64>,
+        completed: Option<i64>,
+    },
 }
 
 /// V2 assistant message fields the mapper reads.
@@ -457,7 +489,11 @@ pub enum V2Message {
 /// V1 message info half (TS: `UserMessage` / `AssistantMessage`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum V1MessageInfo {
-    User { id: String, session_id: String, created: i64 },
+    User {
+        id: String,
+        session_id: String,
+        created: i64,
+    },
     Assistant {
         id: String,
         session_id: String,
@@ -478,19 +514,63 @@ pub enum V1MessageInfo {
 /// V1 tool-call state (TS: `ToolState`; `streaming` becomes `pending`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum V1ToolState {
-    Pending { raw: JsonMap },
-    Running { input: JsonMap, metadata: Option<JsonMap>, start: i64 },
-    Completed { input: JsonMap, output: String, metadata: JsonMap, start: i64, end: i64 },
-    Failed { input: JsonMap, error: String, metadata: Option<JsonMap>, start: i64, end: i64 },
+    Pending {
+        raw: JsonMap,
+    },
+    Running {
+        input: JsonMap,
+        metadata: Option<JsonMap>,
+        start: i64,
+    },
+    Completed {
+        input: JsonMap,
+        output: String,
+        metadata: JsonMap,
+        start: i64,
+        end: i64,
+    },
+    Failed {
+        input: JsonMap,
+        error: String,
+        metadata: Option<JsonMap>,
+        start: i64,
+        end: i64,
+    },
 }
 
 /// V1 message part.
 #[derive(Debug, Clone, PartialEq)]
 pub enum V1Part {
-    Text { id: String, session_id: String, message_id: String, text: String },
-    File { id: String, session_id: String, message_id: String, mime: String, filename: Option<String>, url: String },
-    Reasoning { id: String, session_id: String, message_id: String, text: String, start: i64, end: Option<i64> },
-    Tool { id: String, session_id: String, message_id: String, call_id: String, tool: String, state: V1ToolState },
+    Text {
+        id: String,
+        session_id: String,
+        message_id: String,
+        text: String,
+    },
+    File {
+        id: String,
+        session_id: String,
+        message_id: String,
+        mime: String,
+        filename: Option<String>,
+        url: String,
+    },
+    Reasoning {
+        id: String,
+        session_id: String,
+        message_id: String,
+        text: String,
+        start: i64,
+        end: Option<i64>,
+    },
+    Tool {
+        id: String,
+        session_id: String,
+        message_id: String,
+        call_id: String,
+        tool: String,
+        state: V1ToolState,
+    },
 }
 
 /// Mapped V1 message with its parts (TS: `V1MessageWithParts`).
@@ -517,7 +597,11 @@ fn to_v1_user_message(message: &V2UserMessage, session_id: &str) -> V1MessageWit
         // `data:<mime>;base64,<data>` URL is built.
         let url = match &file.source_uri {
             Some(uri) => uri.clone(),
-            None => format!("data:{};base64,{}", file.mime, file.data.as_deref().unwrap_or("")),
+            None => format!(
+                "data:{};base64,{}",
+                file.mime,
+                file.data.as_deref().unwrap_or("")
+            ),
         };
         parts.push(V1Part::File {
             id: format!("{}:file:{index}", message.id),
@@ -541,13 +625,19 @@ fn to_v1_tool_state(
     let start = ran.unwrap_or(created);
     let end = completed.unwrap_or(start);
     match state {
-        V2ToolState::Streaming { raw_input } => V1ToolState::Pending { raw: raw_input.clone() },
+        V2ToolState::Streaming { raw_input } => V1ToolState::Pending {
+            raw: raw_input.clone(),
+        },
         V2ToolState::Running { input, metadata } => V1ToolState::Running {
             input: to_v1_tool_input(tool_name, input),
             metadata: metadata.as_ref().map(|m| to_v1_tool_metadata(tool_name, m)),
             start,
         },
-        V2ToolState::Completed { input, content, metadata } => V1ToolState::Completed {
+        V2ToolState::Completed {
+            input,
+            content,
+            metadata,
+        } => V1ToolState::Completed {
             input: to_v1_tool_input(tool_name, input),
             output: tool_content_text(Some(content)),
             metadata: metadata
@@ -557,7 +647,11 @@ fn to_v1_tool_state(
             start,
             end,
         },
-        V2ToolState::Failed { input, message, metadata } => V1ToolState::Failed {
+        V2ToolState::Failed {
+            input,
+            message,
+            metadata,
+        } => V1ToolState::Failed {
             input: to_v1_tool_input(tool_name, input),
             error: message.clone(),
             metadata: metadata.as_ref().map(|m| to_v1_tool_metadata(tool_name, m)),
@@ -587,7 +681,10 @@ fn to_v1_assistant_message(
         finish: message.finish.clone(),
         cost: message.cost.unwrap_or(0.0),
         tokens: message.tokens.clone(),
-        error: message.error.as_ref().map(|err| to_v1_error_payload(Some(err))),
+        error: message
+            .error
+            .as_ref()
+            .map(|err| to_v1_error_payload(Some(err))),
     };
     let parts = message
         .content
@@ -600,7 +697,11 @@ fn to_v1_assistant_message(
                 message_id: message.id.clone(),
                 text: text.clone(),
             },
-            V2Content::Reasoning { text, created, completed } => V1Part::Reasoning {
+            V2Content::Reasoning {
+                text,
+                created,
+                completed,
+            } => V1Part::Reasoning {
                 id: format!("{}:reasoning:{index}", message.id),
                 session_id: session_id.to_string(),
                 message_id: message.id.clone(),
@@ -608,7 +709,14 @@ fn to_v1_assistant_message(
                 start: created.unwrap_or(message.time.created),
                 end: *completed,
             },
-            V2Content::Tool { id, name, state, created, ran, completed } => {
+            V2Content::Tool {
+                id,
+                name,
+                state,
+                created,
+                ran,
+                completed,
+            } => {
                 let tool_name = to_v1_tool_name(name).to_string();
                 V1Part::Tool {
                     id: id.clone(),
@@ -797,7 +905,10 @@ pub fn to_v1_model(model: &V2Model) -> V1Model {
     let cost = model.cost.first();
     let mut variants = BTreeMap::new();
     for variant in &model.variants {
-        variants.insert(variant.id.clone(), variant.settings.clone().unwrap_or_default());
+        variants.insert(
+            variant.id.clone(),
+            variant.settings.clone().unwrap_or_default(),
+        );
     }
     V1Model {
         id: model.id.clone(),
@@ -882,7 +993,10 @@ pub struct V1Provider {
 pub fn to_v1_providers(providers: &[V2ProviderRef], models: &[V2Model]) -> Vec<V1Provider> {
     let mut out: Vec<V1Provider> = Vec::new();
     for model in models.iter().filter(|model| model.enabled) {
-        let index = match out.iter().position(|provider| provider.id == model.provider_id) {
+        let index = match out
+            .iter()
+            .position(|provider| provider.id == model.provider_id)
+        {
             Some(index) => index,
             None => {
                 let name = providers
@@ -898,7 +1012,9 @@ pub fn to_v1_providers(providers: &[V2ProviderRef], models: &[V2Model]) -> Vec<V
                 out.len() - 1
             }
         };
-        out[index].models.insert(model.id.clone(), to_v1_model(model));
+        out[index]
+            .models
+            .insert(model.id.clone(), to_v1_model(model));
     }
     out
 }
@@ -1008,18 +1124,22 @@ pub fn to_v1_mcp_status(servers: &[V2McpServer]) -> BTreeMap<String, V1McpStatus
         .iter()
         .map(|server| {
             let status = match server.status.as_str() {
-                "connected" | "disabled" => {
-                    V1McpStatus { status: server.status.clone(), error: None }
-                }
-                "needs_auth" => {
-                    V1McpStatus { status: "needs_auth".to_string(), error: None }
-                }
-                "failed" => {
-                    V1McpStatus { status: "failed".to_string(), error: server.error.clone() }
-                }
-                unknown => {
-                    V1McpStatus { status: "failed".to_string(), error: Some(unknown.to_string()) }
-                }
+                "connected" | "disabled" => V1McpStatus {
+                    status: server.status.clone(),
+                    error: None,
+                },
+                "needs_auth" => V1McpStatus {
+                    status: "needs_auth".to_string(),
+                    error: None,
+                },
+                "failed" => V1McpStatus {
+                    status: "failed".to_string(),
+                    error: server.error.clone(),
+                },
+                unknown => V1McpStatus {
+                    status: "failed".to_string(),
+                    error: Some(unknown.to_string()),
+                },
             };
             (server.name.clone(), status)
         })
@@ -1163,7 +1283,11 @@ pub fn visible_form_fields(form: &V2Form) -> Vec<V2FormField> {
                     .find(|other| other.key == condition.key)
                     .map(|other| &other.default);
                 let matches = value == Some(&condition.value);
-                if condition.op == "eq" { matches } else { !matches }
+                if condition.op == "eq" {
+                    matches
+                } else {
+                    !matches
+                }
             })
         })
         .cloned()
@@ -1189,7 +1313,11 @@ fn field_question_text(field: &V2FormField, form: &V2Form) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    if joined.is_empty() { field.key.clone() } else { joined }
+    if joined.is_empty() {
+        field.key.clone()
+    } else {
+        joined
+    }
 }
 
 fn to_question_option(option: &V2FormOption) -> V1QuestionOption {
@@ -1241,7 +1369,13 @@ fn to_question_info(field: &V2FormField, form: &V2Form) -> V1Question {
             custom: Some(false),
         };
     }
-    V1Question { question, header, options: vec![], multiple: false, custom: None }
+    V1Question {
+        question,
+        header,
+        options: vec![],
+        multiple: false,
+        custom: None,
+    }
 }
 
 /// Visible form fields mapped into the question UI; a form with no
@@ -1258,9 +1392,16 @@ pub fn to_v1_question(form: &V2Form) -> V1QuestionRequest {
             custom: None,
         }]
     } else {
-        fields.iter().map(|field| to_question_info(field, form)).collect()
+        fields
+            .iter()
+            .map(|field| to_question_info(field, form))
+            .collect()
     };
-    V1QuestionRequest { id: form.id.clone(), session_id: form.session_id.clone(), questions }
+    V1QuestionRequest {
+        id: form.id.clone(),
+        session_id: form.session_id.clone(),
+        questions,
+    }
 }
 
 fn option_value(options: &[V2FormOption], item: &str) -> String {
@@ -1279,10 +1420,18 @@ fn to_field_answer(
     field: &V2FormField,
     answer: &[String],
 ) -> Result<Option<FormAnswerValue>, String> {
-    let invalid = || format!("Answer for \"{}\" is not a valid {}", field.key, field.field_type);
+    let invalid = || {
+        format!(
+            "Answer for \"{}\" is not a valid {}",
+            field.key, field.field_type
+        )
+    };
     match field.field_type.as_str() {
         "multiselect" => Ok(Some(FormAnswerValue::List(
-            answer.iter().map(|item| option_value(&field.options, item)).collect(),
+            answer
+                .iter()
+                .map(|item| option_value(&field.options, item))
+                .collect(),
         ))),
         "string" => Ok(answer
             .first()

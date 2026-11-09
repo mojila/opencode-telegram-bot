@@ -21,8 +21,14 @@ fn plain(s: &str) -> RichText {
 
 fn photo_sizes() -> Vec<PhotoSize> {
     vec![
-        PhotoSize { file_id: "p-small".to_string(), file_size: None },
-        PhotoSize { file_id: "p-large".to_string(), file_size: Some(2048) },
+        PhotoSize {
+            file_id: "p-small".to_string(),
+            file_size: None,
+        },
+        PhotoSize {
+            file_id: "p-large".to_string(),
+            file_size: Some(2048),
+        },
     ]
 }
 
@@ -30,7 +36,10 @@ fn photo_sizes() -> Vec<PhotoSize> {
 
 #[test]
 fn slice39_01_plain_paragraph_passes_through() {
-    let out = convert_rich_message(&[RichBlock::Paragraph(plain("How are you feeling today?"))], 0);
+    let out = convert_rich_message(
+        &[RichBlock::Paragraph(plain("How are you feeling today?"))],
+        0,
+    );
     assert_eq!(out.text, "How are you feeling today?");
     assert!(out.photos.is_empty());
     assert_eq!(out.skipped_media_count, 0);
@@ -47,7 +56,10 @@ fn slice39_02_empty_blocks_convert_to_empty() {
 #[test]
 fn slice39_03_blocks_join_with_blank_line() {
     let out = convert_rich_message(
-        &[RichBlock::Paragraph(plain("a")), RichBlock::Paragraph(plain("b"))],
+        &[
+            RichBlock::Paragraph(plain("a")),
+            RichBlock::Paragraph(plain("b")),
+        ],
         0,
     );
     assert_eq!(out.text, "a\n\nb");
@@ -62,7 +74,10 @@ fn slice39_04_output_is_trimmed() {
 #[test]
 fn slice39_05_photo_only_yields_empty_text_plus_photo() {
     let out = convert_rich_message(
-        &[RichBlock::Photo { sizes: photo_sizes(), caption: None }],
+        &[RichBlock::Photo {
+            sizes: photo_sizes(),
+            caption: None,
+        }],
         42,
     );
     assert_eq!(out.text, "");
@@ -73,7 +88,10 @@ fn slice39_05_photo_only_yields_empty_text_plus_photo() {
 #[test]
 fn slice39_06_skipped_only_yields_empty_text_plus_count() {
     let out = convert_rich_message(
-        &[RichBlock::SkippedMedia { caption: None }, RichBlock::SkippedMedia { caption: None }],
+        &[
+            RichBlock::SkippedMedia { caption: None },
+            RichBlock::SkippedMedia { caption: None },
+        ],
         0,
     );
     assert_eq!(out.text, "");
@@ -85,7 +103,14 @@ fn slice39_06_skipped_only_yields_empty_text_plus_count() {
 #[test]
 fn slice39_07_heading_prefixes_hashes_by_size() {
     assert_eq!(
-        convert_rich_message(&[RichBlock::Heading { size: 2, text: plain("Report") }], 0).text,
+        convert_rich_message(
+            &[RichBlock::Heading {
+                size: 2,
+                text: plain("Report")
+            }],
+            0
+        )
+        .text,
         "## Report"
     );
 }
@@ -93,11 +118,25 @@ fn slice39_07_heading_prefixes_hashes_by_size() {
 #[test]
 fn slice39_08_heading_level_one_and_three() {
     assert_eq!(
-        convert_rich_message(&[RichBlock::Heading { size: 1, text: plain("T") }], 0).text,
+        convert_rich_message(
+            &[RichBlock::Heading {
+                size: 1,
+                text: plain("T")
+            }],
+            0
+        )
+        .text,
         "# T"
     );
     assert_eq!(
-        convert_rich_message(&[RichBlock::Heading { size: 3, text: plain("T") }], 0).text,
+        convert_rich_message(
+            &[RichBlock::Heading {
+                size: 3,
+                text: plain("T")
+            }],
+            0
+        )
+        .text,
         "### T"
     );
 }
@@ -105,7 +144,10 @@ fn slice39_08_heading_level_one_and_three() {
 #[test]
 fn slice39_09_pre_wraps_fence_with_language() {
     let out = convert_rich_message(
-        &[RichBlock::Pre { language: Some("ts".to_string()), text: plain("const value = 1;") }],
+        &[RichBlock::Pre {
+            language: Some("ts".to_string()),
+            text: plain("const value = 1;"),
+        }],
         0,
     );
     assert_eq!(out.text, "```ts\nconst value = 1;\n```");
@@ -114,7 +156,10 @@ fn slice39_09_pre_wraps_fence_with_language() {
 #[test]
 fn slice39_10_pre_without_language_uses_bare_fence() {
     let out = convert_rich_message(
-        &[RichBlock::Pre { language: None, text: plain("x") }],
+        &[RichBlock::Pre {
+            language: None,
+            text: plain("x"),
+        }],
         0,
     );
     assert_eq!(out.text, "```\nx\n```");
@@ -123,7 +168,10 @@ fn slice39_10_pre_without_language_uses_bare_fence() {
 #[test]
 fn slice39_11_pre_with_triple_backticks_uses_quad_fence() {
     let out = convert_rich_message(
-        &[RichBlock::Pre { language: Some("ts".to_string()), text: plain("a ``` b") }],
+        &[RichBlock::Pre {
+            language: Some("ts".to_string()),
+            text: plain("a ``` b"),
+        }],
         0,
     );
     assert!(out.text.starts_with("````ts\n"));
@@ -138,7 +186,13 @@ fn slice39_12_divider_renders_rule() {
 #[test]
 fn slice39_13_math_block_wraps_dollars() {
     assert_eq!(
-        convert_rich_message(&[RichBlock::Math { expression: "E = mc^2".to_string() }], 0).text,
+        convert_rich_message(
+            &[RichBlock::Math {
+                expression: "E = mc^2".to_string()
+            }],
+            0
+        )
+        .text,
         "$$\nE = mc^2\n$$"
     );
 }
@@ -146,7 +200,13 @@ fn slice39_13_math_block_wraps_dollars() {
 #[test]
 fn slice39_14_anchor_renders_named_tag() {
     assert_eq!(
-        convert_rich_message(&[RichBlock::Anchor { name: "sec".to_string() }], 0).text,
+        convert_rich_message(
+            &[RichBlock::Anchor {
+                name: "sec".to_string()
+            }],
+            0
+        )
+        .text,
         "<a name=\"sec\"></a>"
     );
 }
@@ -157,9 +217,12 @@ fn slice39_14_anchor_renders_named_tag() {
 fn slice39_15_list_plain_items_use_dash() {
     let out = convert_rich_message(
         &[RichBlock::List {
-            items: vec![
-                RichListItem { has_checkbox: false, is_checked: false, label: "-".to_string(), blocks: vec![RichBlock::Paragraph(plain("first"))] },
-            ],
+            items: vec![RichListItem {
+                has_checkbox: false,
+                is_checked: false,
+                label: "-".to_string(),
+                blocks: vec![RichBlock::Paragraph(plain("first"))],
+            }],
         }],
         0,
     );
@@ -185,7 +248,10 @@ fn slice39_18_list_custom_label_marker() {
 #[test]
 fn slice39_19_blockquote_prefixes_lines() {
     let out = convert_rich_message(
-        &[RichBlock::Blockquote { blocks: vec![RichBlock::Paragraph(plain("quoted"))], credit: None }],
+        &[RichBlock::Blockquote {
+            blocks: vec![RichBlock::Paragraph(plain("quoted"))],
+            credit: None,
+        }],
         0,
     );
     assert_eq!(out.text, "> quoted");
@@ -207,7 +273,10 @@ fn slice39_20_blockquote_appends_credit() {
 #[test]
 fn slice39_21_pullquote_renders_with_credit() {
     let out = convert_rich_message(
-        &[RichBlock::Pullquote { text: plain("wise"), credit: Some(plain("sage")) }],
+        &[RichBlock::Pullquote {
+            text: plain("wise"),
+            credit: Some(plain("sage")),
+        }],
         0,
     );
     assert!(out.text.contains("> wise"));
@@ -230,12 +299,24 @@ fn slice39_22_collage_joins_blocks_and_caption() {
 fn slice39_23_table_renders_header_and_alignment() {
     let cells = vec![
         vec![
-            TableCell { text: plain("Name"), align: CellAlign::Left },
-            TableCell { text: plain("Value"), align: CellAlign::Right },
+            TableCell {
+                text: plain("Name"),
+                align: CellAlign::Left,
+            },
+            TableCell {
+                text: plain("Value"),
+                align: CellAlign::Right,
+            },
         ],
         vec![
-            TableCell { text: plain("A"), align: CellAlign::Left },
-            TableCell { text: plain("1"), align: CellAlign::Right },
+            TableCell {
+                text: plain("A"),
+                align: CellAlign::Left,
+            },
+            TableCell {
+                text: plain("1"),
+                align: CellAlign::Right,
+            },
         ],
     ];
     assert_eq!(
@@ -254,7 +335,9 @@ fn slice39_24_details_open_and_closed() {
         }],
         0,
     );
-    assert!(open.text.starts_with("<details open><summary>More</summary>"));
+    assert!(open
+        .text
+        .starts_with("<details open><summary>More</summary>"));
     let closed = convert_rich_message(
         &[RichBlock::Details {
             summary: plain("More"),
@@ -270,7 +353,10 @@ fn slice39_24_details_open_and_closed() {
 
 #[test]
 fn slice39_25_largest_photo_is_last_size() {
-    assert_eq!(largest_photo_file_id(&photo_sizes()), Some("p-large".to_string()));
+    assert_eq!(
+        largest_photo_file_id(&photo_sizes()),
+        Some("p-large".to_string())
+    );
 }
 
 #[test]
@@ -281,7 +367,10 @@ fn slice39_26_rich_photo_filename_pattern() {
 #[test]
 fn slice39_27_photo_conversion_keeps_source_and_size() {
     let out = convert_rich_message(
-        &[RichBlock::Photo { sizes: photo_sizes(), caption: None }],
+        &[RichBlock::Photo {
+            sizes: photo_sizes(),
+            caption: None,
+        }],
         42,
     );
     assert_eq!(
@@ -298,7 +387,10 @@ fn slice39_27_photo_conversion_keeps_source_and_size() {
 #[test]
 fn slice39_28_photo_caption_renders_when_no_other_text() {
     let out = convert_rich_message(
-        &[RichBlock::Photo { sizes: photo_sizes(), caption: Some(plain("look")) }],
+        &[RichBlock::Photo {
+            sizes: photo_sizes(),
+            caption: Some(plain("look")),
+        }],
         1,
     );
     assert_eq!(out.text, "look");
@@ -307,7 +399,9 @@ fn slice39_28_photo_caption_renders_when_no_other_text() {
 #[test]
 fn slice39_29_skipped_media_keeps_caption() {
     let out = convert_rich_message(
-        &[RichBlock::SkippedMedia { caption: Some(plain("Video caption")) }],
+        &[RichBlock::SkippedMedia {
+            caption: Some(plain("Video caption")),
+        }],
         0,
     );
     assert_eq!(out.text, "Video caption");
@@ -319,7 +413,10 @@ fn slice39_30_nested_collage_counts_each_skipped_block() {
     let out = convert_rich_message(
         &[RichBlock::Collage {
             blocks: vec![
-                RichBlock::Photo { sizes: photo_sizes(), caption: None },
+                RichBlock::Photo {
+                    sizes: photo_sizes(),
+                    caption: None,
+                },
                 RichBlock::SkippedMedia { caption: None },
                 RichBlock::SkippedMedia { caption: None },
             ],
@@ -366,7 +463,9 @@ fn slice39_33_inline_code_single_and_double_fence() {
 #[test]
 fn slice39_34_custom_emoji_uses_alt_text() {
     assert_eq!(
-        render_rich_text(&RichText::CustomEmoji { alternative_text: "🔥".to_string() }),
+        render_rich_text(&RichText::CustomEmoji {
+            alternative_text: "🔥".to_string()
+        }),
         "🔥"
     );
 }
@@ -374,7 +473,9 @@ fn slice39_34_custom_emoji_uses_alt_text() {
 #[test]
 fn slice39_35_inline_math_wraps_dollars() {
     assert_eq!(
-        render_rich_text(&RichText::Math { expression: "x^2".to_string() }),
+        render_rich_text(&RichText::Math {
+            expression: "x^2".to_string()
+        }),
         "$x^2$"
     );
 }
@@ -435,7 +536,10 @@ fn slice39_39_plain_strips_bold_but_keeps_text() {
 
 #[test]
 fn slice39_40_plain_keeps_code_verbatim() {
-    assert_eq!(plain_rich_text(&RichText::Code("a ` b".to_string())), "a ` b");
+    assert_eq!(
+        plain_rich_text(&RichText::Code("a ` b".to_string())),
+        "a ` b"
+    );
 }
 
 #[test]
@@ -476,7 +580,10 @@ fn slice39_46_slash_token_extracted_from_leading_word() {
         Some("/status".to_string())
     );
     assert!(should_expose_bot_command("/status extra"));
-    assert_eq!(slash_command_entity_length("/status extra"), Some("/status".len()));
+    assert_eq!(
+        slash_command_entity_length("/status extra"),
+        Some("/status".len())
+    );
 }
 
 #[test]

@@ -33,7 +33,10 @@ fn worktree_cb_page_prefix_value_parity() {
 
 #[test]
 fn worktree_project_missing_key_value_parity() {
-    assert_eq!(WORKTREE_PROJECT_MISSING_KEY, "worktree.project_not_selected");
+    assert_eq!(
+        WORKTREE_PROJECT_MISSING_KEY,
+        "worktree.project_not_selected"
+    );
 }
 
 #[test]

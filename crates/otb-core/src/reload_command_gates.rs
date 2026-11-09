@@ -112,7 +112,9 @@ pub fn reload_result_key(completion: ReloadCompletion<'_>) -> &'static str {
 pub fn should_refresh_model_views(completion: ReloadCompletion<'_>) -> bool {
     matches!(
         completion,
-        ReloadCompletion::Success { model_changed: true }
+        ReloadCompletion::Success {
+            model_changed: true
+        }
     )
 }
 

@@ -49,17 +49,8 @@ fn inline_menu_kinds_table_parity() {
     // cancel flow.
     assert_eq!(INLINE_MENU_KINDS.len(), 11);
     for kind in [
-        "project",
-        "session",
-        "recent",
-        "model",
-        "agent",
-        "variant",
-        "context",
-        "open",
-        "ls",
-        "worktree",
-        "settings",
+        "project", "session", "recent", "model", "agent", "variant", "context", "open", "ls",
+        "worktree", "settings",
     ] {
         assert!(is_inline_menu_kind(kind), "missing kind: {kind}");
     }
@@ -81,7 +72,10 @@ fn inline_key_values_parity() {
 fn inline_project_cancel_data_parity() {
     // TS: the cancel button on a project keyboard carries
     // `inline:cancel:project` (test lines 57-67).
-    assert_eq!(inline_cancel_callback_data("project"), "inline:cancel:project");
+    assert_eq!(
+        inline_cancel_callback_data("project"),
+        "inline:cancel:project"
+    );
 }
 
 #[test]
@@ -191,7 +185,10 @@ fn inline_prefixed_known_kind_resolves_parity() {
 #[test]
 fn inline_prefixed_unknown_kind_is_unhandled_parity() {
     // TS: a prefixed payload with an unknown kind returns false.
-    assert_eq!(resolve_inline_cancel_kind(Some("inline:cancel:compact")), None);
+    assert_eq!(
+        resolve_inline_cancel_kind(Some("inline:cancel:compact")),
+        None
+    );
     assert_eq!(resolve_inline_cancel_kind(Some("inline:cancel:")), None);
 }
 
@@ -267,9 +264,27 @@ fn inline_unknown_kind_and_missing_ids_are_stale_parity() {
         "compact",
         Some(99)
     ));
-    assert!(!is_active_inline_menu(true, None, Some(99), "session", Some(99)));
-    assert!(!is_active_inline_menu(true, Some("session"), None, "session", Some(99)));
-    assert!(!is_active_inline_menu(true, Some("session"), Some(99), "session", None));
+    assert!(!is_active_inline_menu(
+        true,
+        None,
+        Some(99),
+        "session",
+        Some(99)
+    ));
+    assert!(!is_active_inline_menu(
+        true,
+        Some("session"),
+        None,
+        "session",
+        Some(99)
+    ));
+    assert!(!is_active_inline_menu(
+        true,
+        Some("session"),
+        Some(99),
+        "session",
+        None
+    ));
 }
 
 // ---- clear gate (2) ----

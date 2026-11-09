@@ -148,8 +148,14 @@ fn is_last_question_branches() {
 
 #[test]
 fn is_question_request_gone_tag_variants() {
-    assert!(is_question_request_gone(Some("QuestionNotFoundError"), false));
-    assert!(is_question_request_gone(Some("FormAlreadySettledError"), false));
+    assert!(is_question_request_gone(
+        Some("QuestionNotFoundError"),
+        false
+    ));
+    assert!(is_question_request_gone(
+        Some("FormAlreadySettledError"),
+        false
+    ));
 }
 
 #[test]
@@ -218,8 +224,14 @@ fn slice_on_safe_boundary_branches() {
 #[test]
 fn truncate_question_segments_fits() {
     let segments = vec![
-        QuestionSegment { label: None, rest: "ab".to_string() },
-        QuestionSegment { label: None, rest: "cd".to_string() },
+        QuestionSegment {
+            label: None,
+            rest: "ab".to_string(),
+        },
+        QuestionSegment {
+            label: None,
+            rest: "cd".to_string(),
+        },
     ];
     assert_eq!(truncate_question_segments(&segments, 100), segments);
 }
@@ -227,14 +239,26 @@ fn truncate_question_segments_fits() {
 #[test]
 fn truncate_question_segments_cuts_tail() {
     let segments = vec![
-        QuestionSegment { label: None, rest: "aaaa".to_string() },
-        QuestionSegment { label: None, rest: "bbbb".to_string() },
+        QuestionSegment {
+            label: None,
+            rest: "aaaa".to_string(),
+        },
+        QuestionSegment {
+            label: None,
+            rest: "bbbb".to_string(),
+        },
     ];
     assert_eq!(
         truncate_question_segments(&segments, 8),
         vec![
-            QuestionSegment { label: None, rest: "aaaa".to_string() },
-            QuestionSegment { label: None, rest: "b…".to_string() },
+            QuestionSegment {
+                label: None,
+                rest: "aaaa".to_string()
+            },
+            QuestionSegment {
+                label: None,
+                rest: "b…".to_string()
+            },
         ]
     );
 }
@@ -242,8 +266,14 @@ fn truncate_question_segments_cuts_tail() {
 #[test]
 fn question_fallback_text_joins_with_blank_line() {
     let segments = vec![
-        QuestionSegment { label: Some("T".to_string()), rest: String::new() },
-        QuestionSegment { label: None, rest: "body".to_string() },
+        QuestionSegment {
+            label: Some("T".to_string()),
+            rest: String::new(),
+        },
+        QuestionSegment {
+            label: None,
+            rest: "body".to_string(),
+        },
     ];
     assert_eq!(question_fallback_text(&segments), "T\n\nbody");
 }
@@ -331,7 +361,9 @@ fn is_permission_request_not_found_matches() {
         message: Some("boom".to_string()),
         ..Default::default()
     }));
-    assert!(!is_permission_request_not_found(&PermissionErrorShape::default()));
+    assert!(!is_permission_request_not_found(
+        &PermissionErrorShape::default()
+    ));
 }
 
 #[test]
@@ -373,21 +405,13 @@ fn classify_permission_outcome_line_branches() {
 
 #[test]
 fn format_permission_text_no_patterns() {
-    assert_eq!(
-        format_permission_text("H", &[], "", None),
-        "H"
-    );
+    assert_eq!(format_permission_text("H", &[], "", None), "H");
 }
 
 #[test]
 fn format_permission_text_with_patterns_grouped_and_status() {
     assert_eq!(
-        format_permission_text(
-            "H",
-            &["ls".to_string()],
-            " (2)",
-            Some("done")
-        ),
+        format_permission_text("H", &["ls".to_string()], " (2)", Some("done")),
         "H• ls\n (2)\ndone"
     );
 }
@@ -423,7 +447,10 @@ fn inline_menu_kind_parse_branches() {
     assert!(is_inline_menu_kind("worktree"));
     assert!(!is_inline_menu_kind("nope"));
     assert!(!is_inline_menu_kind(""));
-    assert_eq!(parse_inline_menu_kind("context"), Some(InlineMenuKind::Context));
+    assert_eq!(
+        parse_inline_menu_kind("context"),
+        Some(InlineMenuKind::Context)
+    );
     assert_eq!(parse_inline_menu_kind("nope"), None);
 }
 

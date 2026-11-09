@@ -32,14 +32,20 @@ fn slice21b_03_agent_display_name() {
 #[test]
 fn slice21b_04_agent_button_label() {
     assert_eq!(get_agent_button_label("build"), "🛠️ Build Agent");
-    assert_eq!(get_agent_button_label("customAgent"), "🤖 CustomAgent Agent");
+    assert_eq!(
+        get_agent_button_label("customAgent"),
+        "🤖 CustomAgent Agent"
+    );
 }
 
 // --- model.ts (4 its) ---
 
 #[test]
 fn slice21b_05_model_button_no_truncation() {
-    assert_eq!(format_model_for_button("openai", "gpt-4o"), "🧠 openai\ngpt-4o");
+    assert_eq!(
+        format_model_for_button("openai", "gpt-4o"),
+        "🧠 openai\ngpt-4o"
+    );
 }
 
 #[test]
@@ -60,8 +66,16 @@ fn slice21b_07_model_display() {
 
 #[test]
 fn slice21b_08_is_same_model() {
-    let a = ModelInfo { provider_id: "p".into(), model_id: "m".into(), variant: None };
-    let b = ModelInfo { provider_id: "p".into(), model_id: "m".into(), variant: None };
+    let a = ModelInfo {
+        provider_id: "p".into(),
+        model_id: "m".into(),
+        variant: None,
+    };
+    let b = ModelInfo {
+        provider_id: "p".into(),
+        model_id: "m".into(),
+        variant: None,
+    };
     let c = ModelInfo {
         provider_id: "p".into(),
         model_id: "m".into(),
@@ -97,7 +111,10 @@ fn slice21b_12_mode_empty_v2_is_service() {
 
 #[test]
 fn slice21b_13_mode_standalone_accepted() {
-    assert_eq!(resolve_server_mode("v2", Some("Standalone")), Ok("standalone"));
+    assert_eq!(
+        resolve_server_mode("v2", Some("Standalone")),
+        Ok("standalone")
+    );
 }
 
 #[test]
@@ -326,7 +343,10 @@ fn slice21b_43_health_valid_and_overflow() {
 fn slice21b_44_tts_defaults_per_provider() {
     assert_eq!(tts_default_model("elevenlabs"), "eleven_flash_v2_5");
     assert_eq!(tts_default_voice("elevenlabs"), "21m00Tcm4TlvDq8ikWAM");
-    assert_eq!(parse_tts_provider(Some("elevenlabs"), "openai"), "elevenlabs");
+    assert_eq!(
+        parse_tts_provider(Some("elevenlabs"), "openai"),
+        "elevenlabs"
+    );
 }
 
 #[test]

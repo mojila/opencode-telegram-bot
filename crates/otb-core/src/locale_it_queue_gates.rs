@@ -84,12 +84,14 @@ pub const IT_QUEUE_KEYS: [&str; 8] = [
 ];
 
 /// Verbatim `it` template (TS: `src/i18n/it.ts` line 466).
-pub const IT_QUEUE_ADDED: &str = "📥 Aggiunto alla coda ({count}/{max}). Verrà inviato quando l'attività corrente termina.";
+pub const IT_QUEUE_ADDED: &str =
+    "📥 Aggiunto alla coda ({count}/{max}). Verrà inviato quando l'attività corrente termina.";
 /// Verbatim `it` queue-full template (TS: `src/i18n/it.ts` line 467).
 pub const IT_QUEUE_FULL: &str =
     "⚠️ La coda è piena ({max}). Rimuovi un messaggio o attendi che l'attività corrente termini.";
 /// Verbatim `it` media-limit template (TS: `src/i18n/it.ts` line 468).
-pub const IT_QUEUE_MEDIA_LIMIT: &str = "⚠️ I media in coda sono limitati a {maxSizeMb} MiB. Attendi l'invio di un elemento e riprova.";
+pub const IT_QUEUE_MEDIA_LIMIT: &str =
+    "⚠️ I media in coda sono limitati a {maxSizeMb} MiB. Attendi l'invio di un elemento e riprova.";
 /// Verbatim `it` queue-removed template (TS: `src/i18n/it.ts` line 469).
 pub const IT_QUEUE_REMOVED: &str = "🗑 Messaggio rimosso dalla coda.";
 /// Verbatim `it` queue-not-found template (TS: `src/i18n/it.ts` line 470).
@@ -151,8 +153,7 @@ fn interpolate_it(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

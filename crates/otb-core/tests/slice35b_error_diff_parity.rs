@@ -36,7 +36,9 @@ use otb_core::error_diff_display::*;
 fn slice35b_01_expected_unavailable_core_markers() {
     assert!(is_expected_opencode_unavailable("fetch failed"));
     assert!(is_expected_opencode_unavailable("ECONNREFUSED"));
-    assert!(is_expected_opencode_unavailable("connection reset: econnreset"));
+    assert!(is_expected_opencode_unavailable(
+        "connection reset: econnreset"
+    ));
 }
 
 #[test]
@@ -307,7 +309,9 @@ fn slice35b_25_first_patch_file_add_header_and_crlf() {
 #[test]
 fn slice35b_26_updated_file_from_title() {
     assert_eq!(
-        extract_first_updated_file_from_title("Success. Updated the following files:\nM src/one.ts"),
+        extract_first_updated_file_from_title(
+            "Success. Updated the following files:\nM src/one.ts"
+        ),
         "src/one.ts"
     );
     assert_eq!(
@@ -325,7 +329,11 @@ fn slice35b_27_updated_file_from_title_miss() {
 #[test]
 fn slice35b_28_patch_entry_path_priority() {
     assert_eq!(
-        pick_patch_entry_path(Some("D:/repo/src/moved.ts"), Some("src/old.ts"), Some("src/x.ts")),
+        pick_patch_entry_path(
+            Some("D:/repo/src/moved.ts"),
+            Some("src/old.ts"),
+            Some("src/x.ts")
+        ),
         Some("D:/repo/src/moved.ts".to_string())
     );
     assert_eq!(
@@ -387,10 +395,7 @@ fn slice35b_32_normalize_backslashes_and_dot() {
 
 #[test]
 fn slice35b_33_normalize_passthrough_and_trailing_slash() {
-    assert_eq!(
-        normalize_display_path("src/app.ts", None),
-        "src/app.ts"
-    );
+    assert_eq!(normalize_display_path("src/app.ts", None), "src/app.ts");
     assert_eq!(
         normalize_display_path("D:/repo/src/a.ts", Some("D:/repo/")),
         "src/a.ts"
@@ -413,10 +418,7 @@ fn slice35b_34_format_diff_text_renders_hunks() {
         "\\ No newline at end of file",
     ]
     .join("\n");
-    assert_eq!(
-        format_diff_text(&diff),
-        " line1\n- line2\n+ line2-updated"
-    );
+    assert_eq!(format_diff_text(&diff), " line1\n- line2\n+ line2-updated");
 }
 
 #[test]
@@ -492,7 +494,10 @@ fn slice35b_42_truncate_tool_text_long() {
 fn slice35b_43_truncate_tool_text_short_and_tiny() {
     assert_eq!(truncate_tool_text("npm test", 128), "npm test");
     assert_eq!(truncate_tool_text("abcdef", 3), "...");
-    assert_eq!(truncate_tool_text("hello world, this is long", 8), "hello...");
+    assert_eq!(
+        truncate_tool_text("hello world, this is long", 8),
+        "hello..."
+    );
 }
 
 #[test]
@@ -519,18 +524,17 @@ fn slice35b_45_todo_markers_and_budget() {
 #[test]
 fn slice35b_46_running_task_line_full() {
     assert_eq!(
-        format_running_task_line(
-            Some("Count Kotlin files"),
-            128,
-            "🤖 Running Task"
-        ),
+        format_running_task_line(Some("Count Kotlin files"), 128, "🤖 Running Task"),
         "🤖 Running Task: Count Kotlin files"
     );
 }
 
 #[test]
 fn slice35b_47_running_task_line_bare_and_collapsed() {
-    assert_eq!(format_running_task_line(None, 128, "🤖 Running Task"), "🤖 Running Task");
+    assert_eq!(
+        format_running_task_line(None, 128, "🤖 Running Task"),
+        "🤖 Running Task"
+    );
     assert_eq!(
         format_running_task_line(Some(" \n\t "), 128, "🤖 Running Task"),
         "🤖 Running Task"

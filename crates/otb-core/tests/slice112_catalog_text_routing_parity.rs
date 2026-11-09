@@ -161,7 +161,10 @@ fn slice112_19_blank_command_args_report_without_execute_or_delete() {
 fn slice112_20_catalog_falls_through_to_skill_result() {
     // TS `text-message-handler.ts`: `handleCatalogTextArguments` returns
     // the command result when handled, otherwise the skill result.
-    assert!(catalog_text_handled(true, should_try_skill_text_args(true) && false));
+    assert!(catalog_text_handled(
+        true,
+        should_try_skill_text_args(true) && false
+    ));
     assert!(catalog_text_handled(false, true));
     assert!(!catalog_text_handled(false, false));
     assert!(should_try_skill_text_args(false));

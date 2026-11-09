@@ -28,7 +28,10 @@ use otb_core::app_types_gates::*;
 
 #[test]
 fn slice118_01_parses_all_interaction_kinds() {
-    assert_eq!(parse_interaction_kind("inline"), Some(InteractionKind::Inline));
+    assert_eq!(
+        parse_interaction_kind("inline"),
+        Some(InteractionKind::Inline)
+    );
     assert_eq!(
         parse_interaction_kind("permission"),
         Some(InteractionKind::Permission)
@@ -37,9 +40,15 @@ fn slice118_01_parses_all_interaction_kinds() {
         parse_interaction_kind("question"),
         Some(InteractionKind::Question)
     );
-    assert_eq!(parse_interaction_kind("rename"), Some(InteractionKind::Rename));
+    assert_eq!(
+        parse_interaction_kind("rename"),
+        Some(InteractionKind::Rename)
+    );
     assert_eq!(parse_interaction_kind("task"), Some(InteractionKind::Task));
-    assert_eq!(parse_interaction_kind("custom"), Some(InteractionKind::Custom));
+    assert_eq!(
+        parse_interaction_kind("custom"),
+        Some(InteractionKind::Custom)
+    );
 }
 
 #[test]
@@ -79,9 +88,15 @@ fn slice118_04_only_payload_kinds_are_stateful() {
 
 #[test]
 fn slice118_05_parses_expected_input() {
-    assert_eq!(parse_expected_input("callback"), Some(ExpectedInput::Callback));
+    assert_eq!(
+        parse_expected_input("callback"),
+        Some(ExpectedInput::Callback)
+    );
     assert_eq!(parse_expected_input("text"), Some(ExpectedInput::Text));
-    assert_eq!(parse_expected_input("command"), Some(ExpectedInput::Command));
+    assert_eq!(
+        parse_expected_input("command"),
+        Some(ExpectedInput::Command)
+    );
     assert_eq!(parse_expected_input("mixed"), Some(ExpectedInput::Mixed));
     assert_eq!(parse_expected_input("other"), None);
 }

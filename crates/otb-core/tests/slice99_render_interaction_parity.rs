@@ -333,10 +333,7 @@ fn photo_bytes_sum_parity() {
 fn photo_bytes_invalid_parity() {
     assert_eq!(sum_photo_media_bytes(&[None]), None);
     assert_eq!(sum_photo_media_bytes(&[Some(-1)]), None);
-    assert_eq!(
-        sum_photo_media_bytes(&[Some(i64::MAX), Some(1)]),
-        None
-    );
+    assert_eq!(sum_photo_media_bytes(&[Some(i64::MAX), Some(1)]), None);
 }
 
 // ---- message-router (7) ----

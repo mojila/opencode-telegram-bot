@@ -251,8 +251,7 @@ pub fn join_url(base_url: &str, path: &str) -> String {
 pub fn basic_auth_header(username: &str, password: &str) -> String {
     // Base64 without pulling in a new crate: reqwest has no btoa helper, so
     // encode the `username:password` bytes by hand (standard alphabet).
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let input = format!("{username}:{password}");
     let bytes = input.as_bytes();
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
@@ -289,9 +288,7 @@ pub fn server_username_from_env() -> String {
     std::env::var(OPENCODE_SERVER_USERNAME_ENV)
         .ok()
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| {
-            otb_core::runtime_bootstrap_gates::DEFAULT_SERVER_USERNAME.to_string()
-        })
+        .unwrap_or_else(|| otb_core::runtime_bootstrap_gates::DEFAULT_SERVER_USERNAME.to_string())
 }
 
 /// Server password from the environment (Node: `config.opencode.password`);
@@ -470,10 +467,7 @@ impl OpencodeClient {
             }
         };
         let version = read_probe_version(&self.server_version, &body);
-        Ok(HealthProbe {
-            ok: true,
-            version,
-        })
+        Ok(HealthProbe { ok: true, version })
     }
 
     /// Session list (read-only). Returns raw session values; shaping stays
@@ -549,10 +543,7 @@ impl OpencodeClient {
     /// `{"data":[...]}` envelope; anything else yields an empty list.
     /// The directory is folded for the API (`\` -> `/`, Node
     /// `normalizeDirectoryForCommandApi` parity) and sent as `?directory=`.
-    pub async fn list_commands(
-        &self,
-        directory: &str,
-    ) -> Result<Vec<Value>, reqwest::Error> {
+    pub async fn list_commands(&self, directory: &str) -> Result<Vec<Value>, reqwest::Error> {
         let normalized =
             otb_core::session_pick_catalog_gates::normalize_catalog_api_directory(directory);
         let mut request = self.get(command_path(&self.server_version));
@@ -568,10 +559,7 @@ impl OpencodeClient {
     /// the `source == "skill"` shaping stays with the caller. V1 shares
     /// the `command.list` endpoint (the filter splits them); V2 reads its
     /// own `skill.list` path.
-    pub async fn list_skills(
-        &self,
-        directory: &str,
-    ) -> Result<Vec<Value>, reqwest::Error> {
+    pub async fn list_skills(&self, directory: &str) -> Result<Vec<Value>, reqwest::Error> {
         let normalized =
             otb_core::session_pick_catalog_gates::normalize_catalog_api_directory(directory);
         let mut request = self.get(skill_path(&self.server_version));
@@ -645,10 +633,7 @@ impl OpencodeClient {
     /// Agent list (read-only). Returns raw agent values (`name`, `mode`,
     /// `hidden`, ...); filtering (`hidden`/`mode`) stays with the caller.
     /// Accepts a bare array or a `{"data":[...]}` envelope.
-    pub async fn list_agents(
-        &self,
-        directory: &str,
-    ) -> Result<Vec<Value>, reqwest::Error> {
+    pub async fn list_agents(&self, directory: &str) -> Result<Vec<Value>, reqwest::Error> {
         let normalized =
             otb_core::session_pick_catalog_gates::normalize_catalog_api_directory(directory);
         let mut request = self.get(agents_path(&self.server_version));
@@ -714,11 +699,7 @@ impl OpencodeClient {
 
     /// Session prompt (parity only; the scaffold never calls it, keeping the
     /// default path read-only).
-    pub async fn send_prompt(
-        &self,
-        session_id: &str,
-        text: &str,
-    ) -> Result<Value, reqwest::Error> {
+    pub async fn send_prompt(&self, session_id: &str, text: &str) -> Result<Value, reqwest::Error> {
         let path = format!("{}/{}", session_path(&self.server_version), session_id);
         let payload = serde_json::json!({ "text": text });
         let response = self
@@ -968,8 +949,9 @@ pub fn split_sse_frames(buffer: &str) -> (Vec<String>, String) {
                     data.clear();
                 }
                 consumed_through = boundary;
-            } else if let Some(payload) =
-                line.strip_prefix("data:").map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+            } else if let Some(payload) = line
+                .strip_prefix("data:")
+                .map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
             {
                 data.push(payload);
             }
@@ -998,10 +980,8 @@ fn normalize_frame(directory: &str, frame: &str) -> Option<EventEnvelope> {
             return None;
         }
     }
-    let resolved = otb_core::event_transport_gates::resolve_global_event_directory(
-        event_directory,
-        directory,
-    );
+    let resolved =
+        otb_core::event_transport_gates::resolve_global_event_directory(event_directory, directory);
     Some(EventEnvelope {
         directory: resolved,
         event_type,
@@ -1056,7 +1036,10 @@ mod tests {
     #[test]
     fn basic_auth_header_matches_node_get_auth() {
         // Node: `Basic base64("username:password")`.
-        assert_eq!(basic_auth_header("aladdin", "open sesame"), "Basic YWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        assert_eq!(
+            basic_auth_header("aladdin", "open sesame"),
+            "Basic YWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        );
         assert_eq!(basic_auth_header("user", ""), "Basic dXNlcjo=");
     }
 
@@ -1118,7 +1101,10 @@ mod tests {
             prompt_payload("v1", "hi"),
             serde_json::json!({ "parts": [{ "type": "text", "text": "hi" }] })
         );
-        assert_eq!(prompt_payload("v2", "hi"), serde_json::json!({ "text": "hi" }));
+        assert_eq!(
+            prompt_payload("v2", "hi"),
+            serde_json::json!({ "text": "hi" })
+        );
     }
 
     #[test]

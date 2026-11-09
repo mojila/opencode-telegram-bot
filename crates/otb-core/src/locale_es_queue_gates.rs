@@ -79,7 +79,8 @@ pub const ES_QUEUE_KEYS: [&str; 8] = [
 ];
 
 /// Verbatim `es` template (TS: `src/i18n/es.ts` lines 467-468).
-pub const ES_QUEUE_ADDED: &str = "📥 Añadido a la cola ({count}/{max}). Se enviará cuando termine la tarea actual.";
+pub const ES_QUEUE_ADDED: &str =
+    "📥 Añadido a la cola ({count}/{max}). Se enviará cuando termine la tarea actual.";
 /// Verbatim `es` queue-full template (TS: `src/i18n/es.ts` lines 470-471).
 pub const ES_QUEUE_FULL: &str =
     "⚠️ La cola está llena ({max}). Elimina un mensaje o espera a que termine la tarea actual.";
@@ -146,8 +147,7 @@ fn interpolate_es(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

@@ -87,8 +87,16 @@ fn parses_search_result_index_parity() {
 
 #[test]
 fn search_metadata_eligibility_parity() {
-    assert!(is_search_metadata_eligible("custom", Some("model-search"), true));
-    assert!(!is_search_metadata_eligible("inline", Some("model-search"), true));
+    assert!(is_search_metadata_eligible(
+        "custom",
+        Some("model-search"),
+        true
+    ));
+    assert!(!is_search_metadata_eligible(
+        "inline",
+        Some("model-search"),
+        true
+    ));
     assert!(!is_search_metadata_eligible("custom", Some("other"), true));
     assert!(!is_search_metadata_eligible("custom", None, true));
     assert!(!is_search_metadata_eligible(

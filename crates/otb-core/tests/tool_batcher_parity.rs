@@ -43,10 +43,7 @@ fn recorders() -> Recorders {
     }
 }
 
-fn build(
-    rec: &Recorders,
-    take_text_gate: Option<TakeTextGateFn>,
-) -> ToolMessageBatcher {
+fn build(rec: &Recorders, take_text_gate: Option<TakeTextGateFn>) -> ToolMessageBatcher {
     let texts = Rc::clone(&rec.texts);
     let files = Rc::clone(&rec.files);
     ToolMessageBatcher::new(ToolMessageBatcherOptions {

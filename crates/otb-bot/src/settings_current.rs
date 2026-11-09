@@ -120,9 +120,9 @@ pub fn write_current_session(
 ) -> Result<(), String> {
     let path = settings_file_path(app_home);
     let mut value: Value = match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Value::Object(
-            serde_json::Map::new(),
-        )),
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or(Value::Object(serde_json::Map::new()))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             Value::Object(serde_json::Map::new())
         }
@@ -167,7 +167,10 @@ fn persist_settings_value(path: &std::path::PathBuf, value: &Value) -> Result<()
         .map_err(|err| format!("cannot serialize settings: {err}"))?;
     if let Err(err) = std::fs::write(&tmp_path, serialized) {
         let _ = std::fs::remove_file(&tmp_path);
-        tracing::warn!("[otb-bot] settings: cannot write temp file ({})", err.kind());
+        tracing::warn!(
+            "[otb-bot] settings: cannot write temp file ({})",
+            err.kind()
+        );
         return Err(format!("cannot write settings: {}", err.kind()));
     }
     // Nothing to back up on the very first write (Node parity).
@@ -182,7 +185,10 @@ fn persist_settings_value(path: &std::path::PathBuf, value: &Value) -> Result<()
     }
     if let Err(err) = std::fs::rename(&tmp_path, path) {
         let _ = std::fs::remove_file(&tmp_path);
-        tracing::warn!("[otb-bot] settings: cannot replace settings file ({})", err.kind());
+        tracing::warn!(
+            "[otb-bot] settings: cannot replace settings file ({})",
+            err.kind()
+        );
         return Err(format!("cannot write settings: {}", err.kind()));
     }
     Ok(())
@@ -200,9 +206,9 @@ pub fn write_current_project(
 ) -> Result<(), String> {
     let path = settings_file_path(app_home);
     let mut value: Value = match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Value::Object(
-            serde_json::Map::new(),
-        )),
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or(Value::Object(serde_json::Map::new()))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             Value::Object(serde_json::Map::new())
         }
@@ -251,9 +257,9 @@ pub fn write_current_model(
 ) -> Result<(), String> {
     let path = settings_file_path(app_home);
     let mut value: Value = match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Value::Object(
-            serde_json::Map::new(),
-        )),
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or(Value::Object(serde_json::Map::new()))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             Value::Object(serde_json::Map::new())
         }
@@ -296,9 +302,9 @@ pub fn write_current_model(
 pub fn write_current_agent(app_home: &Path, name: &str) -> Result<(), String> {
     let path = settings_file_path(app_home);
     let mut value: Value = match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or(Value::Object(
-            serde_json::Map::new(),
-        )),
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or(Value::Object(serde_json::Map::new()))
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             Value::Object(serde_json::Map::new())
         }
@@ -315,10 +321,7 @@ pub fn write_current_agent(app_home: &Path, name: &str) -> Result<(), String> {
         value = Value::Object(serde_json::Map::new());
     }
     if let Some(object) = value.as_object_mut() {
-        object.insert(
-            "currentAgent".to_string(),
-            Value::String(name.to_string()),
-        );
+        object.insert("currentAgent".to_string(), Value::String(name.to_string()));
     }
     if let Some(parent) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
@@ -435,10 +438,8 @@ mod tests {
     #[test]
     fn write_current_session_round_trips_atomically() {
         // Temp-dir App Home only; removed afterwards (never a live path).
-        let dir = std::env::temp_dir().join(format!(
-            "otb-settings-write-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("otb-settings-write-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::write(
             dir.join(SETTINGS_FILE_NAME),
@@ -452,10 +453,7 @@ mod tests {
         assert_eq!(current.session_title.as_deref(), Some("Fix bug"));
         assert_eq!(current.session_directory.as_deref(), Some("/work/proj"));
         // Unrelated keys are preserved (Node parity).
-        assert_eq!(
-            current.project_worktree.as_deref(),
-            Some("/work/proj")
-        );
+        assert_eq!(current.project_worktree.as_deref(), Some("/work/proj"));
 
         // Second write rotates the previous file to `.bak`.
         write_current_session(&dir, "ses_2", "Next", "/work/proj").expect("rewrite");
@@ -469,10 +467,8 @@ mod tests {
     #[test]
     fn write_current_project_round_trips_and_resets_session() {
         // Temp-dir App Home only; removed afterwards (never a live path).
-        let dir = std::env::temp_dir().join(format!(
-            "otb-settings-project-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("otb-settings-project-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         std::fs::write(
             dir.join(SETTINGS_FILE_NAME),
@@ -502,10 +498,8 @@ mod tests {
     #[test]
     fn clear_current_session_drops_only_the_session() {
         // Temp-dir App Home only; removed afterwards (never a live path).
-        let dir = std::env::temp_dir().join(format!(
-            "otb-settings-clear-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("otb-settings-clear-test-{}", std::process::id()));
         // A missing file is a no-op success (already detached).
         clear_current_session(&dir).expect("missing file clears");
         std::fs::create_dir_all(&dir).expect("temp dir");
@@ -523,10 +517,7 @@ mod tests {
         let current = read_settings_current(&dir);
         assert_eq!(current.session_id, None);
         // The project survives the detach (Node `clearSession` parity).
-        assert_eq!(
-            current.project_worktree.as_deref(),
-            Some("/work/proj")
-        );
+        assert_eq!(current.project_worktree.as_deref(), Some("/work/proj"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }

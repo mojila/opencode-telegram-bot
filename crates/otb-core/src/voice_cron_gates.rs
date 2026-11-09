@@ -200,8 +200,7 @@ pub fn validate_cron_minutes_frequency(cron: &str) -> Result<(), String> {
     if minute_field.is_empty() {
         return Err("Invalid cron expression returned by parser".to_string());
     }
-    let minute_values =
-        expand_cron_minute_field(minute_field).map_err(|e| e.to_string())?;
+    let minute_values = expand_cron_minute_field(minute_field).map_err(|e| e.to_string())?;
     if minute_values.len() <= 1 {
         return Ok(());
     }
@@ -233,7 +232,11 @@ pub fn extract_fenced_json(raw_text: &str) -> Option<String> {
     let trimmed = raw_text.trim();
     let open = trimmed.find("```")?;
     let mut rest = &trimmed[open + 3..];
-    if rest.get(..4).map(|tag| tag.eq_ignore_ascii_case("json")).unwrap_or(false) {
+    if rest
+        .get(..4)
+        .map(|tag| tag.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
         rest = &rest[4..];
     }
     let close = rest.find("```")?;
@@ -294,10 +297,7 @@ fn is_valid_iso_time_part(time: &str) -> bool {
         rest = &after_colon[2..];
     }
     if let Some(after_dot) = rest.strip_prefix('.') {
-        let frac_len = after_dot
-            .bytes()
-            .take_while(|b| b.is_ascii_digit())
-            .count();
+        let frac_len = after_dot.bytes().take_while(|b| b.is_ascii_digit()).count();
         if frac_len == 0 {
             return false;
         }

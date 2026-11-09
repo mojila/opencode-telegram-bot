@@ -52,14 +52,8 @@ fn it_queue_templates_value_parity() {
         IT_QUEUE_MEDIA_LIMIT,
         "⚠️ I media in coda sono limitati a {maxSizeMb} MiB. Attendi l'invio di un elemento e riprova."
     );
-    assert_eq!(
-        IT_QUEUE_REMOVED,
-        "🗑 Messaggio rimosso dalla coda."
-    );
-    assert_eq!(
-        IT_QUEUE_NOT_FOUND,
-        "Questo messaggio non è più in coda."
-    );
+    assert_eq!(IT_QUEUE_REMOVED, "🗑 Messaggio rimosso dalla coda.");
+    assert_eq!(IT_QUEUE_NOT_FOUND, "Questo messaggio non è più in coda.");
     assert_eq!(
         IT_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."

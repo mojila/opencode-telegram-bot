@@ -45,8 +45,7 @@ pub const SETTINGS_CALLBACK_PREFIX: &str = "settings:";
 /// Compact-output toggle callback.
 pub const SETTINGS_COMPACT_OUTPUT_CALLBACK: &str = "settings:compact_output";
 /// Delete-compact-progress-on-finish toggle callback.
-pub const SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK: &str =
-    "settings:delete_progress_on_finish";
+pub const SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK: &str = "settings:delete_progress_on_finish";
 /// Thinking-content toggle callback.
 pub const SETTINGS_THINKING_CONTENT_CALLBACK: &str = "settings:thinking_content";
 /// Response-streaming toggle callback.
@@ -58,8 +57,7 @@ pub const SETTINGS_ASSISTANT_FOOTER_CALLBACK: &str = "settings:assistant_footer"
 /// Pin-session-dashboard toggle callback.
 pub const SETTINGS_PIN_SESSION_DASHBOARD_CALLBACK: &str = "settings:pin_session_dashboard";
 /// Background-notifications toggle callback.
-pub const SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK: &str =
-    "settings:background_notifications";
+pub const SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK: &str = "settings:background_notifications";
 /// TTS mode cycle callback.
 pub const SETTINGS_TTS_CALLBACK: &str = "settings:tts";
 /// Prompt-queue mode cycle callback.
@@ -211,10 +209,7 @@ pub fn should_block_tts_toggle(next_mode: TtsMode, tts_configured: bool) -> bool
 /// `t(getTtsSavedMessageKey(nextMode))`; every other handled branch
 /// answers `t("settings.saved")`; the fallback answers
 /// `t("callback.processing_error")`).
-pub fn settings_answer_key(
-    action: SettingsCallbackAction,
-    tts_mode: TtsMode,
-) -> &'static str {
+pub fn settings_answer_key(action: SettingsCallbackAction, tts_mode: TtsMode) -> &'static str {
     match action {
         SettingsCallbackAction::Tts => tts_saved_message_key(tts_mode),
         SettingsCallbackAction::Unknown => "callback.processing_error",

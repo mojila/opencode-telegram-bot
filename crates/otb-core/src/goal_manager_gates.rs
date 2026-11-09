@@ -223,7 +223,12 @@ fn goal_status_slug(status: GoalStatus) -> &'static str {
 
 /// Announced-notice dedupe key (TS: `noticeKey`).
 pub fn notice_key(goal: &GoalState) -> String {
-    format!("{}:{}:{}", goal.id, goal_status_slug(goal.status), goal.updated_at)
+    format!(
+        "{}:{}:{}",
+        goal.id,
+        goal_status_slug(goal.status),
+        goal.updated_at
+    )
 }
 
 /// Status-to-label select (TS: `formatGoalStatus`; labels are injected

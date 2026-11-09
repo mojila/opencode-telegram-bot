@@ -13,7 +13,7 @@
 
 use otb_core::i18n::extract_placeholders;
 use otb_core::i18n_full::{
-    FULL_CALLBACK_KEYS, FULL_KEYS, GOAL_KEYS, PROMPT_KEYS, QUEUE_KEYS, STATUS_KEYS, t_full,
+    t_full, FULL_CALLBACK_KEYS, FULL_KEYS, GOAL_KEYS, PROMPT_KEYS, QUEUE_KEYS, STATUS_KEYS,
 };
 use std::collections::BTreeSet;
 
@@ -197,7 +197,10 @@ fn slice33b_019_goal_status_line_en() {
 
 #[test]
 fn slice33b_020_goal_status_label_en() {
-    assert_eq!(otb_core::i18n_full::goal_status_label("en", "active"), "active");
+    assert_eq!(
+        otb_core::i18n_full::goal_status_label("en", "active"),
+        "active"
+    );
 }
 
 #[test]

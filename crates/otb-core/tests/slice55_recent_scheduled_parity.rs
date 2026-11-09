@@ -67,7 +67,13 @@ fn two_segment_name_keeps_first_and_last() {
     let shortened = shorten_project(&format!("{}/{}", "A".repeat(30), "B".repeat(30)));
     assert_eq!(
         shortened,
-        format!("{}…{}/{}…{}", "A".repeat(5), "A".repeat(18), "B".repeat(7), "B".repeat(7))
+        format!(
+            "{}…{}/{}…{}",
+            "A".repeat(5),
+            "A".repeat(18),
+            "B".repeat(7),
+            "B".repeat(7)
+        )
     );
 }
 
@@ -128,8 +134,20 @@ fn shortened_collision_falls_back_to_indexed_excerpt() {
     assert_eq!(
         labels,
         vec![
-            format!("…{}X{}…/{}…{}", "A".repeat(8), "B".repeat(13), "A".repeat(6), "B".repeat(5)),
-            format!("…{}Y{}…/{}…{}", "A".repeat(8), "B".repeat(13), "A".repeat(6), "B".repeat(5)),
+            format!(
+                "…{}X{}…/{}…{}",
+                "A".repeat(8),
+                "B".repeat(13),
+                "A".repeat(6),
+                "B".repeat(5)
+            ),
+            format!(
+                "…{}Y{}…/{}…{}",
+                "A".repeat(8),
+                "B".repeat(13),
+                "A".repeat(6),
+                "B".repeat(5)
+            ),
         ]
     );
 }
@@ -138,7 +156,10 @@ fn shortened_collision_falls_back_to_indexed_excerpt() {
 
 #[test]
 fn build_recent_callback_uses_prefix() {
-    assert_eq!(build_recent_callback(3), format!("{RECENT_CALLBACK_PREFIX}3"));
+    assert_eq!(
+        build_recent_callback(3),
+        format!("{RECENT_CALLBACK_PREFIX}3")
+    );
 }
 
 #[test]
@@ -189,29 +210,35 @@ fn long_recent_title_cuts_to_64_with_ellipsis() {
 
 #[test]
 fn short_task_text_passes_through() {
-    assert_eq!(truncate_task_text("hello", MAX_TASK_BUTTON_LABEL_LENGTH), "hello");
+    assert_eq!(
+        truncate_task_text("hello", MAX_TASK_BUTTON_LABEL_LENGTH),
+        "hello"
+    );
 }
 
 #[test]
 fn long_task_text_cuts_with_trim_end_and_dots() {
     let text = format!("{}   b", "a".repeat(61));
-    assert_eq!(truncate_task_text(&text, 64), format!("{}...", "a".repeat(61)));
+    assert_eq!(
+        truncate_task_text(&text, 64),
+        format!("{}...", "a".repeat(61))
+    );
 }
 
 #[test]
 fn task_cut_trims_trailing_spaces_before_dots() {
     let text = format!("{}          b", "a".repeat(59));
-    assert_eq!(truncate_task_text(&text, 64), format!("{}...", "a".repeat(59)));
+    assert_eq!(
+        truncate_task_text(&text, 64),
+        format!("{}...", "a".repeat(59))
+    );
 }
 
 // --- normalize_task_prompt ---
 
 #[test]
 fn prompt_whitespace_collapses_to_single_spaces() {
-    assert_eq!(
-        normalize_task_prompt("  fix   the\n\tbug  "),
-        "fix the bug"
-    );
+    assert_eq!(normalize_task_prompt("  fix   the\n\tbug  "), "fix the bug");
 }
 
 // --- task_state_prefix ---
@@ -339,7 +366,10 @@ fn parse_delete_callback_rejects_wrong_prefix() {
 fn parse_toggle_on_callback() {
     assert_eq!(
         parse_tasklist_toggle_callback("tasklist:toggle:on:abc"),
-        Some(TasklistToggle { action: ToggleAction::On, id: "abc".to_string() })
+        Some(TasklistToggle {
+            action: ToggleAction::On,
+            id: "abc".to_string()
+        })
     );
 }
 
@@ -347,13 +377,19 @@ fn parse_toggle_on_callback() {
 fn parse_toggle_off_callback() {
     assert_eq!(
         parse_tasklist_toggle_callback("tasklist:toggle:off:abc"),
-        Some(TasklistToggle { action: ToggleAction::Off, id: "abc".to_string() })
+        Some(TasklistToggle {
+            action: ToggleAction::Off,
+            id: "abc".to_string()
+        })
     );
 }
 
 #[test]
 fn parse_toggle_rejects_bad_action() {
-    assert_eq!(parse_tasklist_toggle_callback("tasklist:toggle:maybe:abc"), None);
+    assert_eq!(
+        parse_tasklist_toggle_callback("tasklist:toggle:maybe:abc"),
+        None
+    );
 }
 
 #[test]
@@ -365,7 +401,10 @@ fn parse_toggle_rejects_empty_id() {
 fn parse_toggle_ignores_extra_segments() {
     assert_eq!(
         parse_tasklist_toggle_callback("tasklist:toggle:on:abc:def"),
-        Some(TasklistToggle { action: ToggleAction::On, id: "abc".to_string() })
+        Some(TasklistToggle {
+            action: ToggleAction::On,
+            id: "abc".to_string()
+        })
     );
 }
 

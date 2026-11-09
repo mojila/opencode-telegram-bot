@@ -37,7 +37,10 @@ fn settings_delete_progress_callback_value_parity() {
 
 #[test]
 fn settings_thinking_content_callback_value_parity() {
-    assert_eq!(SETTINGS_THINKING_CONTENT_CALLBACK, "settings:thinking_content");
+    assert_eq!(
+        SETTINGS_THINKING_CONTENT_CALLBACK,
+        "settings:thinking_content"
+    );
 }
 
 #[test]
@@ -55,7 +58,10 @@ fn settings_diff_files_callback_value_parity() {
 
 #[test]
 fn settings_assistant_footer_callback_value_parity() {
-    assert_eq!(SETTINGS_ASSISTANT_FOOTER_CALLBACK, "settings:assistant_footer");
+    assert_eq!(
+        SETTINGS_ASSISTANT_FOOTER_CALLBACK,
+        "settings:assistant_footer"
+    );
 }
 
 #[test]

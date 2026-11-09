@@ -279,10 +279,7 @@ pub fn matches_shown_goal(
     match action {
         GoalAction::Start => read_kind == GoalReadKind::None,
         GoalAction::Resume => {
-            read_kind == GoalReadKind::Goal
-                && goal_id_matches
-                && json_matches
-                && status_is_paused
+            read_kind == GoalReadKind::Goal && goal_id_matches && json_matches && status_is_paused
         }
     }
 }

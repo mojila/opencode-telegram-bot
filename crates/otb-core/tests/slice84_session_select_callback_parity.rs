@@ -40,10 +40,7 @@ fn candidate(role: &str, summary: bool, created: i64, texts: &[&str]) -> Assista
         role: role.to_string(),
         summary,
         created,
-        parts: texts
-            .iter()
-            .map(|t| part("text", Some(t)))
-            .collect(),
+        parts: texts.iter().map(|t| part("text", Some(t))).collect(),
     }
 }
 
@@ -239,7 +236,10 @@ fn pick_skips_without_preview_parity() {
 #[test]
 fn extract_none_when_no_text_parts_parity() {
     assert_eq!(extract_session_text_parts(&[], true), None);
-    assert_eq!(extract_session_text_parts(&[part("image", None)], true), None);
+    assert_eq!(
+        extract_session_text_parts(&[part("image", None)], true),
+        None
+    );
 }
 
 #[test]

@@ -108,7 +108,9 @@ fn slice47_12_modified_without_not_is_not_tolerated() {
 
 #[test]
 fn slice47_13_chat_not_found_is_not_tolerated() {
-    assert!(!is_message_not_modified_message("Bad Request: chat not found"));
+    assert!(!is_message_not_modified_message(
+        "Bad Request: chat not found"
+    ));
 }
 
 #[test]

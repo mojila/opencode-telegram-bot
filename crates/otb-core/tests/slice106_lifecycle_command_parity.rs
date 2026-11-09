@@ -74,7 +74,10 @@ fn start_prefers_stored_context_info_parity() {
         tokens_used: 120,
         tokens_limit: 200_000,
     };
-    assert_eq!(resolve_start_context_info(Some(stored), 200_000), Some(stored));
+    assert_eq!(
+        resolve_start_context_info(Some(stored), 200_000),
+        Some(stored)
+    );
 }
 
 #[test]

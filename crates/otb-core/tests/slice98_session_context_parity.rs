@@ -86,10 +86,7 @@ fn default_limit_when_model_empty_parity() {
 #[test]
 fn default_limit_not_when_both_present_parity() {
     assert!(!should_use_default_limit(Some("openai"), Some("gpt-4")));
-    assert!(!should_use_default_limit(
-        Some("   "),
-        Some("gpt-4")
-    ));
+    assert!(!should_use_default_limit(Some("   "), Some("gpt-4")));
 }
 
 #[test]
@@ -159,16 +156,16 @@ fn attempt_model_adopt_not_when_half_missing_parity() {
 
 #[test]
 fn pulled_variant_keeps_session_variant_parity() {
-    assert_eq!(
-        resolve_pulled_variant(true, Some("pro")),
-        "pro".to_string()
-    );
+    assert_eq!(resolve_pulled_variant(true, Some("pro")), "pro".to_string());
 }
 
 #[test]
 fn pulled_variant_defaults_when_session_variant_missing_parity() {
     assert_eq!(resolve_pulled_variant(true, None), "default".to_string());
-    assert_eq!(resolve_pulled_variant(true, Some("")), "default".to_string());
+    assert_eq!(
+        resolve_pulled_variant(true, Some("")),
+        "default".to_string()
+    );
 }
 
 #[test]
@@ -236,7 +233,10 @@ fn missing_notice_plain_key_parity() {
 
 #[test]
 fn missing_notice_keys_differ_parity() {
-    assert_ne!(MISSING_FOLDER_NOTICE_KEY, MISSING_FOLDER_WORKTREE_NOTICE_KEY);
+    assert_ne!(
+        MISSING_FOLDER_NOTICE_KEY,
+        MISSING_FOLDER_WORKTREE_NOTICE_KEY
+    );
 }
 
 // ---- prompt-inbox (7) ----

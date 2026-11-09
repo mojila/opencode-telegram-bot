@@ -416,9 +416,9 @@ pub fn find_project_by_worktree<'a>(
     is_win32_platform: bool,
 ) -> Option<&'a InternalProject> {
     let key = project_worktree_key(worktree, is_win32_platform);
-    projects.iter().find(|project| {
-        project_worktree_key(&project.worktree, is_win32_platform) == key
-    })
+    projects
+        .iter()
+        .find(|project| project_worktree_key(&project.worktree, is_win32_platform) == key)
 }
 
 /// Exact `getProjectByWorktree` throw text:

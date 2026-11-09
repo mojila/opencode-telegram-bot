@@ -54,7 +54,10 @@ fn slice23b_05_model_display_without_variant() {
 #[test]
 fn slice23b_06_model_display_fallback_unknown() {
     assert_eq!(format_model_display_name(None, None, None), "Unknown");
-    assert_eq!(format_model_display_name(Some("openai"), None, None), "Unknown");
+    assert_eq!(
+        format_model_display_name(Some("openai"), None, None),
+        "Unknown"
+    );
 }
 
 // --- pinned format: context + cost lines ---
@@ -73,7 +76,10 @@ fn slice23b_08_context_line_unknown_limit() {
         format_context_line(3500, Some(0)),
         "Context: 3K / Unknown (0%)"
     );
-    assert_eq!(format_context_line(3500, None), "Context: 3K / Unknown (0%)");
+    assert_eq!(
+        format_context_line(3500, None),
+        "Context: 3K / Unknown (0%)"
+    );
 }
 
 #[test]
@@ -104,10 +110,30 @@ fn slice23b_12_context_info_pair_when_known() {
 #[test]
 fn slice23b_13_history_prefers_latest_non_summary_nonzero() {
     let messages = vec![
-        HistoryMessage { summary: false, input_tokens: 300, cache_read_tokens: 100, cost: 0.5 },
-        HistoryMessage { summary: false, input_tokens: 900, cache_read_tokens: 100, cost: 0.25 },
-        HistoryMessage { summary: false, input_tokens: 0, cache_read_tokens: 0, cost: 0.1 },
-        HistoryMessage { summary: true, input_tokens: 1500, cache_read_tokens: 0, cost: 4.0 },
+        HistoryMessage {
+            summary: false,
+            input_tokens: 300,
+            cache_read_tokens: 100,
+            cost: 0.5,
+        },
+        HistoryMessage {
+            summary: false,
+            input_tokens: 900,
+            cache_read_tokens: 100,
+            cost: 0.25,
+        },
+        HistoryMessage {
+            summary: false,
+            input_tokens: 0,
+            cache_read_tokens: 0,
+            cost: 0.1,
+        },
+        HistoryMessage {
+            summary: true,
+            input_tokens: 1500,
+            cache_read_tokens: 0,
+            cost: 4.0,
+        },
     ];
     let (tokens, cost) = summarize_history_context(&messages);
     assert_eq!(tokens, 400);
@@ -136,9 +162,21 @@ fn slice23b_16_fallback_default_limit() {
 #[test]
 fn slice23b_17_diff_ignores_entries_without_file() {
     let entries = vec![
-        RawDiffEntry { file: Some("D:/repo/src/a.ts".into()), additions: 3, deletions: 1 },
-        RawDiffEntry { file: None, additions: 9, deletions: 9 },
-        RawDiffEntry { file: Some("D:/repo/src/b.ts".into()), additions: 0, deletions: 2 },
+        RawDiffEntry {
+            file: Some("D:/repo/src/a.ts".into()),
+            additions: 3,
+            deletions: 1,
+        },
+        RawDiffEntry {
+            file: None,
+            additions: 9,
+            deletions: 9,
+        },
+        RawDiffEntry {
+            file: Some("D:/repo/src/b.ts".into()),
+            additions: 0,
+            deletions: 2,
+        },
     ];
     assert_eq!(
         filter_diff_entries(&entries),
@@ -234,26 +272,38 @@ fn slice23b_27_dashboard_gating() {
 
 #[test]
 fn slice23b_28_not_modified_is_delivered() {
-    assert!(is_not_modified_error("Bad Request: message is not modified"));
+    assert!(is_not_modified_error(
+        "Bad Request: message is not modified"
+    ));
     assert!(!is_not_modified_error("Bad Request: chat not found"));
 }
 
 #[test]
 fn slice23b_29_deleted_message_recreates_dashboard() {
-    assert!(is_message_deleted_error("Bad Request: message to edit not found"));
-    assert!(!is_message_deleted_error("Bad Request: message is not modified"));
+    assert!(is_message_deleted_error(
+        "Bad Request: message to edit not found"
+    ));
+    assert!(!is_message_deleted_error(
+        "Bad Request: message is not modified"
+    ));
 }
 
 #[test]
 fn slice23b_30_unpin_not_found_forgets_leftover() {
-    assert!(is_unpin_not_found_error("Bad Request: message to unpin not found"));
+    assert!(is_unpin_not_found_error(
+        "Bad Request: message to unpin not found"
+    ));
     assert!(!is_unpin_not_found_error("Bad Request: too many requests"));
 }
 
 #[test]
 fn slice23b_31_transient_errors_keep_ownership() {
-    assert!(is_transient_telegram_error("Bad Request: too many requests"));
-    assert!(!is_transient_telegram_error("Bad Request: message to edit not found"));
+    assert!(is_transient_telegram_error(
+        "Bad Request: too many requests"
+    ));
+    assert!(!is_transient_telegram_error(
+        "Bad Request: message to edit not found"
+    ));
 }
 
 // --- project / branch / worktree lines ---
@@ -381,24 +431,46 @@ fn slice23b_41_search_matches_provider_id() {
 #[test]
 fn slice23b_42_providers_shaped_sorted_skip_empty() {
     let catalog = vec![
-        CatalogProvider { id: "openai".into(), name: Some("OpenAI".into()), models: vec!["gpt-4o".into(), "gpt-3.5".into()] },
-        CatalogProvider { id: "anthropic".into(), name: None, models: vec![] },
-        CatalogProvider { id: "google".into(), name: None, models: vec!["gemini-pro".into()] },
+        CatalogProvider {
+            id: "openai".into(),
+            name: Some("OpenAI".into()),
+            models: vec!["gpt-4o".into(), "gpt-3.5".into()],
+        },
+        CatalogProvider {
+            id: "anthropic".into(),
+            name: None,
+            models: vec![],
+        },
+        CatalogProvider {
+            id: "google".into(),
+            name: None,
+            models: vec!["gemini-pro".into()],
+        },
     ];
     assert_eq!(
         shape_providers(&catalog),
         vec![
-            ProviderInfo { id: "google".into(), name: "google".into(), model_count: 1 },
-            ProviderInfo { id: "openai".into(), name: "OpenAI".into(), model_count: 2 },
+            ProviderInfo {
+                id: "google".into(),
+                name: "google".into(),
+                model_count: 1
+            },
+            ProviderInfo {
+                id: "openai".into(),
+                name: "OpenAI".into(),
+                model_count: 2
+            },
         ]
     );
 }
 
 #[test]
 fn slice23b_43_provider_models_sorted() {
-    let catalog = vec![
-        CatalogProvider { id: "openai".into(), name: None, models: vec!["gpt-4o".into(), "gpt-3.5".into()] },
-    ];
+    let catalog = vec![CatalogProvider {
+        id: "openai".into(),
+        name: None,
+        models: vec!["gpt-4o".into(), "gpt-3.5".into()],
+    }];
     assert_eq!(
         provider_models(&catalog, "openai"),
         vec![
@@ -444,7 +516,10 @@ fn slice23b_46_adoptability_with_warmup() {
     assert!(is_model_adoptable(ModelAvailability::Offered, false));
     assert!(is_model_adoptable(ModelAvailability::Unknown, false));
     assert!(is_model_adoptable(ModelAvailability::ProviderMissing, true));
-    assert!(!is_model_adoptable(ModelAvailability::ProviderMissing, false));
+    assert!(!is_model_adoptable(
+        ModelAvailability::ProviderMissing,
+        false
+    ));
     assert!(!is_model_adoptable(ModelAvailability::ModelMissing, true));
 }
 
@@ -458,10 +533,7 @@ fn slice23b_47_build_favorites_adds_offered_default_once() {
     let favorites = build_favorites(&file_favorites, Some(&default), Some(&keys));
     assert!(favorites.contains(&ModelRef::new("openai", "gpt-4o")));
     assert!(favorites.contains(&default));
-    assert_eq!(
-        favorites.iter().filter(|m| **m == default).count(),
-        1
-    );
+    assert_eq!(favorites.iter().filter(|m| **m == default).count(), 1);
 }
 
 #[test]

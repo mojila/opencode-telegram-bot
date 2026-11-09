@@ -35,7 +35,10 @@ fn slice74_resolve_name_none_falls_back_parity() {
 
 #[test]
 fn slice74_resolve_name_empty_falls_back_parity() {
-    assert_eq!(resolve_project_name(Some(""), "/home/user/repo-a"), "/home/user/repo-a");
+    assert_eq!(
+        resolve_project_name(Some(""), "/home/user/repo-a"),
+        "/home/user/repo-a"
+    );
 }
 
 #[test]
@@ -310,7 +313,10 @@ fn slice74_merge_keeps_api_identity_parity() {
 #[test]
 fn slice74_merge_sorts_recency_desc_parity() {
     let merged = merge_projects(
-        vec![api_row("old", "/o", "O", 1.0), api_row("new", "/n", "N", 9.0)],
+        vec![
+            api_row("old", "/o", "O", 1.0),
+            api_row("new", "/n", "N", 9.0),
+        ],
         vec![],
         false,
     );
@@ -390,7 +396,10 @@ fn slice74_filter_excluded_trailing_separator_parity() {
 
 #[test]
 fn slice74_filter_worktree_trailing_separator_parity() {
-    let rows = vec![api_row("p1", "/a/", "A", 0.0), api_row("p2", "/b/", "B", 0.0)];
+    let rows = vec![
+        api_row("p1", "/a/", "A", 0.0),
+        api_row("p2", "/b/", "B", 0.0),
+    ];
     assert_eq!(
         filter_excluded_projects(rows, &["/b"], false)
             .iter()
@@ -426,7 +435,10 @@ fn slice74_find_by_id_parity() {
 
 #[test]
 fn slice74_unknown_id_message_parity() {
-    assert_eq!(unknown_project_id_message("nope"), "Project with id nope not found");
+    assert_eq!(
+        unknown_project_id_message("nope"),
+        "Project with id nope not found"
+    );
 }
 
 // --- find_project_by_worktree ---
@@ -438,7 +450,10 @@ fn slice74_find_by_worktree_parity() {
         find_project_by_worktree(&rows, "/home/user/repo", false),
         Some(&rows[0])
     );
-    assert_eq!(find_project_by_worktree(&rows, "/home/user/other", false), None);
+    assert_eq!(
+        find_project_by_worktree(&rows, "/home/user/other", false),
+        None
+    );
 }
 
 #[test]

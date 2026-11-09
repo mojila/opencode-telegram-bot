@@ -274,8 +274,7 @@ pub const MAX_QUEUED_MEDIA_BYTES: u64 = 20 * 1024 * 1024;
 /// button press (TS: `isQueueablePrompt`).
 pub fn is_queueable_prompt(text: &str, file_part_count: usize, photo_count: usize) -> bool {
     let normalized = text.trim();
-    let has_content =
-        !normalized.is_empty() || file_part_count > 0 || photo_count > 0;
+    let has_content = !normalized.is_empty() || file_part_count > 0 || photo_count > 0;
     has_content
         && !normalized.starts_with('/')
         && !crate::keyboards::is_reply_keyboard_button_text(text)

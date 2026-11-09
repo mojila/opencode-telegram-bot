@@ -176,10 +176,7 @@ pub fn is_fresh_context(tokens_used: u64) -> bool {
 
 /// Blocked-input i18n key by interaction kind and reason
 /// (TS: `getInteractionBlockedMessage`).
-pub fn interaction_blocked_message_key(
-    kind: Option<&str>,
-    reason: Option<&str>,
-) -> &'static str {
+pub fn interaction_blocked_message_key(kind: Option<&str>, reason: Option<&str>) -> &'static str {
     match kind {
         Some("permission") => match reason {
             Some("command_not_allowed") => "permission.blocked.command_not_allowed",

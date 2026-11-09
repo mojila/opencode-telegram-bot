@@ -202,10 +202,7 @@ fn slice46_32_pipe_after_closing_fence_escaped() {
 
 #[test]
 fn slice46_33_multiple_pipes_each_escaped() {
-    assert_eq!(
-        escape_markdown_v2_pipes_outside_code("a|b|c"),
-        "a\\|b\\|c"
-    );
+    assert_eq!(escape_markdown_v2_pipes_outside_code("a|b|c"), "a\\|b\\|c");
 }
 
 #[test]
@@ -259,10 +256,7 @@ fn slice46_39_single_short_raw_part_unwrapped() {
 fn slice46_40_multi_part_raw_parts_wrapped_in_fences() {
     assert_eq!(
         format_summary_with_mode("aaa\nbbb", MessageFormatMode::Raw, 12),
-        vec![
-            "```\naaa\n```".to_string(),
-            "```\nbbb\n```".to_string()
-        ]
+        vec!["```\naaa\n```".to_string(), "```\nbbb\n```".to_string()]
     );
 }
 
@@ -316,7 +310,8 @@ fn slice46_46_blank_markdown_yields_no_parts() {
 
 #[test]
 fn slice46_47_short_markdown_yields_single_nonempty_part() {
-    let parts = format_summary_with_mode("hello", MessageFormatMode::Markdown, TELEGRAM_MESSAGE_LIMIT);
+    let parts =
+        format_summary_with_mode("hello", MessageFormatMode::Markdown, TELEGRAM_MESSAGE_LIMIT);
     assert_eq!(parts.len(), 1);
     assert!(!parts[0].is_empty());
 }
@@ -326,5 +321,7 @@ fn slice46_48_long_markdown_splits_within_limit() {
     let text: String = "a ".repeat(3000);
     let parts = format_summary_with_mode(&text, MessageFormatMode::Markdown, 100);
     assert!(parts.len() >= 2);
-    assert!(parts.iter().all(|part| !part.is_empty() && part.len() <= 100));
+    assert!(parts
+        .iter()
+        .all(|part| !part.is_empty() && part.len() <= 100));
 }

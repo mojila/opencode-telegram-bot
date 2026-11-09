@@ -50,7 +50,10 @@ fn question_processing_key_value_parity() {
 
 #[test]
 fn permission_inactive_key_value_parity() {
-    assert_eq!(PERMISSION_INACTIVE_TOAST_KEY, "permission.inactive_callback");
+    assert_eq!(
+        PERMISSION_INACTIVE_TOAST_KEY,
+        "permission.inactive_callback"
+    );
 }
 
 #[test]
@@ -264,11 +267,7 @@ fn finish_dismissal_already_closed_parity() {
 #[test]
 fn finish_dismissal_settled_answered_parity() {
     assert_eq!(
-        decide_finish_dismissal(
-            true,
-            Some(SettledKind::Answered),
-            DismissalResult::Failed
-        ),
+        decide_finish_dismissal(true, Some(SettledKind::Answered), DismissalResult::Failed),
         FinishDismissal::SettledAnswered
     );
 }
@@ -288,11 +287,7 @@ fn finish_dismissal_accepted_or_settled_cancelled_close_parity() {
         FinishDismissal::CloseCancelled
     );
     assert_eq!(
-        decide_finish_dismissal(
-            true,
-            Some(SettledKind::Cancelled),
-            DismissalResult::Failed
-        ),
+        decide_finish_dismissal(true, Some(SettledKind::Cancelled), DismissalResult::Failed),
         FinishDismissal::CloseCancelled
     );
 }

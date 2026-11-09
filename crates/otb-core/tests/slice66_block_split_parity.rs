@@ -38,7 +38,10 @@ fn slice66_telegram_text_message_limit_parity() {
 fn slice66_normalize_defaults_parity() {
     assert_eq!(
         normalize_block_split_limits(None, None),
-        BlockSplitLimits { max_chars: 32_000, max_blocks: 480 }
+        BlockSplitLimits {
+            max_chars: 32_000,
+            max_blocks: 480
+        }
     );
 }
 
@@ -46,7 +49,10 @@ fn slice66_normalize_defaults_parity() {
 fn slice66_normalize_explicit_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(100.0), Some(10.0)),
-        BlockSplitLimits { max_chars: 100, max_blocks: 10 }
+        BlockSplitLimits {
+            max_chars: 100,
+            max_blocks: 10
+        }
     );
 }
 
@@ -54,7 +60,10 @@ fn slice66_normalize_explicit_parity() {
 fn slice66_normalize_floors_fraction_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(100.9), Some(10.9)),
-        BlockSplitLimits { max_chars: 100, max_blocks: 10 }
+        BlockSplitLimits {
+            max_chars: 100,
+            max_blocks: 10
+        }
     );
 }
 
@@ -62,7 +71,10 @@ fn slice66_normalize_floors_fraction_parity() {
 fn slice66_normalize_clamps_zero_to_one_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(0.0), Some(0.0)),
-        BlockSplitLimits { max_chars: 1, max_blocks: 1 }
+        BlockSplitLimits {
+            max_chars: 1,
+            max_blocks: 1
+        }
     );
 }
 
@@ -70,7 +82,10 @@ fn slice66_normalize_clamps_zero_to_one_parity() {
 fn slice66_normalize_clamps_negative_to_one_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(-5.0), Some(-2.0)),
-        BlockSplitLimits { max_chars: 1, max_blocks: 1 }
+        BlockSplitLimits {
+            max_chars: 1,
+            max_blocks: 1
+        }
     );
 }
 
@@ -78,7 +93,10 @@ fn slice66_normalize_clamps_negative_to_one_parity() {
 fn slice66_normalize_partial_chars_only_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(50.0), None),
-        BlockSplitLimits { max_chars: 50, max_blocks: 480 }
+        BlockSplitLimits {
+            max_chars: 50,
+            max_blocks: 480
+        }
     );
 }
 
@@ -86,7 +104,10 @@ fn slice66_normalize_partial_chars_only_parity() {
 fn slice66_normalize_partial_blocks_only_parity() {
     assert_eq!(
         normalize_block_split_limits(None, Some(7.0)),
-        BlockSplitLimits { max_chars: 32_000, max_blocks: 7 }
+        BlockSplitLimits {
+            max_chars: 32_000,
+            max_blocks: 7
+        }
     );
 }
 
@@ -94,7 +115,10 @@ fn slice66_normalize_partial_blocks_only_parity() {
 fn slice66_normalize_fraction_below_one_clamps_parity() {
     assert_eq!(
         normalize_block_split_limits(Some(0.5), Some(0.9)),
-        BlockSplitLimits { max_chars: 1, max_blocks: 1 }
+        BlockSplitLimits {
+            max_chars: 1,
+            max_blocks: 1
+        }
     );
 }
 
@@ -107,12 +131,18 @@ fn slice66_chunks_empty_returns_none_parity() {
 
 #[test]
 fn slice66_chunks_short_returns_single_parity() {
-    assert_eq!(split_text_into_chunks("hello", 10.0), vec!["hello".to_string()]);
+    assert_eq!(
+        split_text_into_chunks("hello", 10.0),
+        vec!["hello".to_string()]
+    );
 }
 
 #[test]
 fn slice66_chunks_exact_limit_single_parity() {
-    assert_eq!(split_text_into_chunks("abcde", 5.0), vec!["abcde".to_string()]);
+    assert_eq!(
+        split_text_into_chunks("abcde", 5.0),
+        vec!["abcde".to_string()]
+    );
 }
 
 #[test]
@@ -185,22 +215,36 @@ fn slice66_chunks_trailing_newline_kept_parity() {
 
 #[test]
 fn slice66_fits_small_paragraph_parity() {
-    let block = TelegramBlock::Paragraph { text: "hi".to_string() };
-    let limits = BlockSplitLimits { max_chars: 32_000, max_blocks: 480 };
+    let block = TelegramBlock::Paragraph {
+        text: "hi".to_string(),
+    };
+    let limits = BlockSplitLimits {
+        max_chars: 32_000,
+        max_blocks: 480,
+    };
     assert!(block_fits_limits(&block, &limits));
 }
 
 #[test]
 fn slice66_fits_oversize_code_rejected_parity() {
-    let block = TelegramBlock::Code { language: None, text: "x".repeat(100) };
-    let limits = BlockSplitLimits { max_chars: 10, max_blocks: 480 };
+    let block = TelegramBlock::Code {
+        language: None,
+        text: "x".repeat(100),
+    };
+    let limits = BlockSplitLimits {
+        max_chars: 10,
+        max_blocks: 480,
+    };
     assert!(!block_fits_limits(&block, &limits));
 }
 
 #[test]
 fn slice66_fits_rule_parity() {
     let block = TelegramBlock::Rule;
-    let limits = BlockSplitLimits { max_chars: 32_000, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 32_000,
+        max_blocks: 480,
+    };
     assert!(block_fits_limits(&block, &limits));
 }
 
@@ -208,16 +252,25 @@ fn slice66_fits_rule_parity() {
 
 #[test]
 fn slice66_code_short_single_block_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
     assert_eq!(
         split_code_block("a\nb", Some("rust"), &limits),
-        vec![TelegramBlock::Code { language: Some("rust".to_string()), text: "a\nb".to_string() }]
+        vec![TelegramBlock::Code {
+            language: Some("rust".to_string()),
+            text: "a\nb".to_string()
+        }]
     );
 }
 
 #[test]
 fn slice66_code_keeps_language_per_piece_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    };
     let pieces = split_code_block("ab\ncdef\ngh", Some("js"), &limits);
     assert!(pieces.len() >= 2);
     for piece in &pieces {
@@ -232,23 +285,35 @@ fn slice66_code_keeps_language_per_piece_parity() {
 
 #[test]
 fn slice66_code_no_language_stays_none_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
     assert_eq!(
         split_code_block("hi", None, &limits),
-        vec![TelegramBlock::Code { language: None, text: "hi".to_string() }]
+        vec![TelegramBlock::Code {
+            language: None,
+            text: "hi".to_string()
+        }]
     );
 }
 
 #[test]
 fn slice66_code_long_line_chunked_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    };
     let pieces = split_code_block(&"x".repeat(10), None, &limits);
     assert!(pieces.len() >= 2);
     assert_eq!(
-        pieces.iter().map(|b| match b {
-            TelegramBlock::Code { text, .. } => text.clone(),
-            other => panic!("expected code, got {other:?}"),
-        }).collect::<String>(),
+        pieces
+            .iter()
+            .map(|b| match b {
+                TelegramBlock::Code { text, .. } => text.clone(),
+                other => panic!("expected code, got {other:?}"),
+            })
+            .collect::<String>(),
         "x".repeat(10)
     );
 }
@@ -257,7 +322,10 @@ fn slice66_code_long_line_chunked_parity() {
 
 #[test]
 fn slice66_table_single_header_only_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
     let rows = vec![vec!["h1".to_string(), "h2".to_string()]];
     assert_eq!(
         split_table_block(&rows, None, &limits),
@@ -267,14 +335,20 @@ fn slice66_table_single_header_only_parity() {
 
 #[test]
 fn slice66_table_empty_rows_empty_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
     let rows: Vec<Vec<String>> = vec![];
     assert_eq!(split_table_block(&rows, None, &limits), vec![]);
 }
 
 #[test]
 fn slice66_table_header_repeated_per_group_parity() {
-    let limits = BlockSplitLimits { max_chars: 6, max_blocks: 3 };
+    let limits = BlockSplitLimits {
+        max_chars: 6,
+        max_blocks: 3,
+    };
     let rows = vec![
         vec!["h".to_string()],
         vec!["a".to_string()],
@@ -295,8 +369,15 @@ fn slice66_table_header_repeated_per_group_parity() {
 
 #[test]
 fn slice66_table_keeps_align_parity() {
-    let limits = BlockSplitLimits { max_chars: 6, max_blocks: 3 };
-    let rows = vec![vec!["h".to_string()], vec!["a".to_string()], vec!["b".to_string()]];
+    let limits = BlockSplitLimits {
+        max_chars: 6,
+        max_blocks: 3,
+    };
+    let rows = vec![
+        vec!["h".to_string()],
+        vec!["a".to_string()],
+        vec!["b".to_string()],
+    ];
     let align = vec!["center".to_string()];
     let pieces = split_table_block(&rows, Some(align.as_slice()), &limits);
     for piece in &pieces {
@@ -313,8 +394,13 @@ fn slice66_table_keeps_align_parity() {
 
 #[test]
 fn slice66_quote_short_single_quote_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
-    let inner = vec![TelegramBlock::Paragraph { text: "hi".to_string() }];
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
+    let inner = vec![TelegramBlock::Paragraph {
+        text: "hi".to_string(),
+    }];
     assert_eq!(
         split_blockquote_block(&inner, &limits),
         vec![TelegramBlock::Blockquote { blocks: inner }]
@@ -323,10 +409,17 @@ fn slice66_quote_short_single_quote_parity() {
 
 #[test]
 fn slice66_quote_inner_blocks_preserved_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
     let inner = vec![
-        TelegramBlock::Paragraph { text: "a".to_string() },
-        TelegramBlock::Paragraph { text: "b".to_string() },
+        TelegramBlock::Paragraph {
+            text: "a".to_string(),
+        },
+        TelegramBlock::Paragraph {
+            text: "b".to_string(),
+        },
     ];
     let pieces = split_blockquote_block(&inner, &limits);
     assert_eq!(pieces.len(), 1);
@@ -340,44 +433,72 @@ fn slice66_quote_inner_blocks_preserved_parity() {
 
 #[test]
 fn slice66_oversize_fitting_returns_same_parity() {
-    let limits = BlockSplitLimits { max_chars: 100, max_blocks: 480 };
-    let block = TelegramBlock::Paragraph { text: "hi".to_string() };
+    let limits = BlockSplitLimits {
+        max_chars: 100,
+        max_blocks: 480,
+    };
+    let block = TelegramBlock::Paragraph {
+        text: "hi".to_string(),
+    };
     assert_eq!(split_oversize_telegram_block(&block, &limits), vec![block]);
 }
 
 #[test]
 fn slice66_oversize_code_splits_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 480 };
-    let block = TelegramBlock::Code { language: None, text: "ab\ncdef\nghij".to_string() };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    };
+    let block = TelegramBlock::Code {
+        language: None,
+        text: "ab\ncdef\nghij".to_string(),
+    };
     let pieces = split_oversize_telegram_block(&block, &limits);
     assert!(pieces.len() >= 2);
 }
 
 #[test]
 fn slice66_oversize_single_row_table_degrades_plain_parity() {
-    let limits = BlockSplitLimits { max_chars: 3, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 3,
+        max_blocks: 480,
+    };
     let block = TelegramBlock::Table {
         rows: vec![vec!["abcdef".to_string()]],
         align: None,
     };
     let pieces = split_oversize_telegram_block(&block, &limits);
-    assert!(pieces.iter().all(|b| matches!(b, TelegramBlock::Plain { .. })));
+    assert!(pieces
+        .iter()
+        .all(|b| matches!(b, TelegramBlock::Plain { .. })));
 }
 
 #[test]
 fn slice66_oversize_plain_splits_to_plain_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 480 };
-    let block = TelegramBlock::Plain { text: "abcdefgh".to_string() };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    };
+    let block = TelegramBlock::Plain {
+        text: "abcdefgh".to_string(),
+    };
     let pieces = split_oversize_telegram_block(&block, &limits);
     assert!(pieces.len() >= 2);
-    assert!(pieces.iter().all(|b| matches!(b, TelegramBlock::Plain { .. })));
+    assert!(pieces
+        .iter()
+        .all(|b| matches!(b, TelegramBlock::Plain { .. })));
 }
 
 #[test]
 fn slice66_oversize_list_splits_by_items_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 480 };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    };
     let item = |t: &str| TelegramListItem {
-        blocks: vec![TelegramBlock::Paragraph { text: t.to_string() }],
+        blocks: vec![TelegramBlock::Paragraph {
+            text: t.to_string(),
+        }],
         checked: None,
     };
     let block = TelegramBlock::List {
@@ -391,15 +512,24 @@ fn slice66_oversize_list_splits_by_items_parity() {
 
 #[test]
 fn slice66_oversize_quote_splits_parity() {
-    let limits = BlockSplitLimits { max_chars: 4, max_blocks: 2 };
+    let limits = BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 2,
+    };
     let block = TelegramBlock::Blockquote {
         blocks: vec![
-            TelegramBlock::Paragraph { text: "aaaaaaaa".to_string() },
-            TelegramBlock::Paragraph { text: "bbbbbbbb".to_string() },
+            TelegramBlock::Paragraph {
+                text: "aaaaaaaa".to_string(),
+            },
+            TelegramBlock::Paragraph {
+                text: "bbbbbbbb".to_string(),
+            },
         ],
     };
     let pieces = split_oversize_telegram_block(&block, &limits);
-    assert!(pieces.iter().all(|b| matches!(b, TelegramBlock::Blockquote { .. })));
+    assert!(pieces
+        .iter()
+        .all(|b| matches!(b, TelegramBlock::Blockquote { .. })));
 }
 
 // --- split_oversize_telegram_blocks ---
@@ -411,7 +541,9 @@ fn slice66_blocks_empty_returns_empty_parity() {
 
 #[test]
 fn slice66_blocks_default_limits_used_parity() {
-    let blocks = vec![TelegramBlock::Paragraph { text: "hi".to_string() }];
+    let blocks = vec![TelegramBlock::Paragraph {
+        text: "hi".to_string(),
+    }];
     assert_eq!(split_oversize_telegram_blocks(&blocks, None), blocks);
 }
 
@@ -421,7 +553,10 @@ fn slice66_blocks_custom_limits_split_parity() {
         language: None,
         text: "ab\ncdef\nghij".to_string(),
     }];
-    let limits = Some(BlockSplitLimits { max_chars: 4, max_blocks: 480 });
+    let limits = Some(BlockSplitLimits {
+        max_chars: 4,
+        max_blocks: 480,
+    });
     let pieces = split_oversize_telegram_blocks(&blocks, limits);
     assert!(pieces.len() >= 2);
 }
@@ -429,8 +564,12 @@ fn slice66_blocks_custom_limits_split_parity() {
 #[test]
 fn slice66_blocks_order_preserved_parity() {
     let blocks = vec![
-        TelegramBlock::Paragraph { text: "first".to_string() },
-        TelegramBlock::Paragraph { text: "second".to_string() },
+        TelegramBlock::Paragraph {
+            text: "first".to_string(),
+        },
+        TelegramBlock::Paragraph {
+            text: "second".to_string(),
+        },
     ];
     let out = split_oversize_telegram_blocks(&blocks, None);
     assert_eq!(out, blocks);

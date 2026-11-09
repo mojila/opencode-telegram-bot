@@ -77,7 +77,11 @@ fn permission_request(id: &str, session: &str) -> PermissionRequest {
 #[test]
 fn slice27b_01_poll_starts_and_moves_through_questions() {
     let mut poll = QuestionPoll::new();
-    assert!(poll.start_questions(vec![single_question(), multiple_question()], "req-1", "session-1"));
+    assert!(poll.start_questions(
+        vec![single_question(), multiple_question()],
+        "req-1",
+        "session-1"
+    ));
     assert!(poll.is_active());
     assert_eq!(poll.request_id().as_deref(), Some("req-1"));
     assert_eq!(poll.current_index(), 0);
@@ -114,7 +118,10 @@ fn slice27b_03_answer_send_lifecycle_and_settle_flag() {
     assert!(poll.is_settling_from_telegram());
     assert!(!poll.is_waiting_for_custom_input(0));
     poll.note_settled_while_sending(SettledOutcome::Cancelled);
-    assert_eq!(poll.settled_while_sending(), Some(SettledOutcome::Cancelled));
+    assert_eq!(
+        poll.settled_while_sending(),
+        Some(SettledOutcome::Cancelled)
+    );
     poll.fail_answer();
     assert!(!poll.is_answering());
     assert_eq!(poll.settled_while_sending(), None);
@@ -151,14 +158,26 @@ fn slice27b_06_in_flight_first_ending_wins() {
     poll.end_in_flight("req-1", InFlightEnding::Cancelled);
     poll.end_in_flight_for_session("session-1", InFlightEnding::Answered);
     poll.end_in_flight("req-untracked", InFlightEnding::Cancelled);
-    assert_eq!(poll.in_flight_ending("req-1"), Some(InFlightEnding::NotAnswered));
+    assert_eq!(
+        poll.in_flight_ending("req-1"),
+        Some(InFlightEnding::NotAnswered)
+    );
     assert_eq!(poll.in_flight_ending("req-2"), None);
-    assert_eq!(poll.in_flight_ending("req-3"), Some(InFlightEnding::Answered));
+    assert_eq!(
+        poll.in_flight_ending("req-3"),
+        Some(InFlightEnding::Answered)
+    );
     assert_eq!(poll.in_flight_ending("req-untracked"), None);
     poll.end_all_in_flight(InFlightEnding::NotAnswered);
-    assert_eq!(poll.in_flight_ending("req-2"), Some(InFlightEnding::NotAnswered));
+    assert_eq!(
+        poll.in_flight_ending("req-2"),
+        Some(InFlightEnding::NotAnswered)
+    );
     poll.track_in_flight("req-2", "session-2");
-    assert_eq!(poll.in_flight_ending("req-2"), Some(InFlightEnding::NotAnswered));
+    assert_eq!(
+        poll.in_flight_ending("req-2"),
+        Some(InFlightEnding::NotAnswered)
+    );
     poll.untrack_in_flight("req-2");
     assert_eq!(poll.in_flight_ending("req-2"), None);
 }
@@ -294,10 +313,16 @@ fn slice27b_13_single_custom_answer_splits_lines_first() {
     poll.start_questions(vec![single_question()], "req-3d", "session-1");
     poll.set_custom_answer(0, "First line\nSecond line");
     assert!(!poll.is_custom_answer_selected(0));
-    assert_eq!(poll.answer_items(0), vec!["First line".to_string(), "Second line".to_string()]);
+    assert_eq!(
+        poll.answer_items(0),
+        vec!["First line".to_string(), "Second line".to_string()]
+    );
     assert_eq!(
         poll.all_answers(),
-        vec![("Pick one option".to_string(), "First line\nSecond line".to_string())]
+        vec![(
+            "Pick one option".to_string(),
+            "First line\nSecond line".to_string()
+        )]
     );
 }
 
@@ -349,11 +374,17 @@ fn slice27b_14_reply_items_send_choice_values() {
     poll.select_option(1, 0);
     poll.set_custom_answer(1, "Blue");
     assert_eq!(poll.reply_items(0), vec!["disable".to_string()]);
-    assert_eq!(poll.reply_items(1), vec!["g".to_string(), "r".to_string(), "Blue".to_string()]);
+    assert_eq!(
+        poll.reply_items(1),
+        vec!["g".to_string(), "r".to_string(), "Blue".to_string()]
+    );
     assert_eq!(
         poll.all_answers(),
         vec![
-            ("Allow web search?".to_string(), "* Disable web search: ".to_string()),
+            (
+                "Allow web search?".to_string(),
+                "* Disable web search: ".to_string()
+            ),
             (
                 "Pick colours".to_string(),
                 "* Green: Line one\nline two\n* Red: The colour red\nBlue".to_string()
@@ -533,7 +564,11 @@ fn slice27b_27_queue_keeps_insertion_order() {
     queue.add("third", 0);
     assert_eq!(
         queue.list_texts(),
-        vec!["first".to_string(), "second".to_string(), "third".to_string()]
+        vec![
+            "first".to_string(),
+            "second".to_string(),
+            "third".to_string()
+        ]
     );
 }
 
@@ -565,8 +600,14 @@ fn slice27b_30_queue_removes_middle_keeps_order() {
     queue.add("first", 0);
     let second = queue.add("second", 0).expect("queued");
     queue.add("third", 0);
-    assert_eq!(queue.remove_by_id(&second.id).map(|item| item.text), Some("second".to_string()));
-    assert_eq!(queue.list_texts(), vec!["first".to_string(), "third".to_string()]);
+    assert_eq!(
+        queue.remove_by_id(&second.id).map(|item| item.text),
+        Some("second".to_string())
+    );
+    assert_eq!(
+        queue.list_texts(),
+        vec!["first".to_string(), "third".to_string()]
+    );
 }
 
 #[test]
@@ -580,7 +621,9 @@ fn slice27b_31_queue_remove_unknown_returns_none() {
 #[test]
 fn slice27b_32_queue_releases_media_on_remove() {
     let mut queue = PromptQueue::new();
-    let queued = queue.add("photo", MAX_QUEUED_MEDIA_BYTES - 1).expect("queued");
+    let queued = queue
+        .add("photo", MAX_QUEUED_MEDIA_BYTES - 1)
+        .expect("queued");
     queue.remove_by_id(&queued.id);
     assert_eq!(queue.media_size(), 0);
     assert!(queue.can_accept_media(MAX_QUEUED_MEDIA_BYTES));
@@ -591,8 +634,14 @@ fn slice27b_33_queue_takes_fifo() {
     let mut queue = PromptQueue::new();
     queue.add("first", 0);
     queue.add("second", 0);
-    assert_eq!(queue.take_next().map(|item| item.text), Some("first".to_string()));
-    assert_eq!(queue.take_next().map(|item| item.text), Some("second".to_string()));
+    assert_eq!(
+        queue.take_next().map(|item| item.text),
+        Some("first".to_string())
+    );
+    assert_eq!(
+        queue.take_next().map(|item| item.text),
+        Some("second".to_string())
+    );
     assert_eq!(queue.take_next(), None);
 }
 
@@ -601,7 +650,10 @@ fn slice27b_34_queue_attachment_without_text() {
     let mut queue = PromptQueue::new();
     let item = queue.add_attachment("  ").expect("queued");
     assert_eq!(item.display_text, "[Attachment]");
-    assert_eq!(queue.take_next().map(|taken| taken.display_text), Some("[Attachment]".to_string()));
+    assert_eq!(
+        queue.take_next().map(|taken| taken.display_text),
+        Some("[Attachment]".to_string())
+    );
 }
 
 #[test]
@@ -657,7 +709,10 @@ fn slice27b_39_queue_reservation_confirms_to_mirror_item() {
         .expect("mirror");
     assert_eq!(item.display_text, "Also check the tests");
     assert_eq!(item.media_bytes, 0);
-    assert_eq!(queue.find_by_inbox_id("msg-1").map(|found| found.id), Some(item.id));
+    assert_eq!(
+        queue.find_by_inbox_id("msg-1").map(|found| found.id),
+        Some(item.id)
+    );
     assert_eq!(queue.size(), 1);
     assert!(!queue.is_full());
 }
@@ -679,7 +734,10 @@ fn slice27b_41_queue_handover_empties_and_frees_cap() {
     queue.add("second", 0);
     let handed_over = queue.hand_over("ses-1");
     assert_eq!(
-        handed_over.iter().map(|item| item.text.clone()).collect::<Vec<_>>(),
+        handed_over
+            .iter()
+            .map(|item| item.text.clone())
+            .collect::<Vec<_>>(),
         vec!["first".to_string(), "second".to_string()]
     );
     assert_eq!(queue.size(), 0);
@@ -704,7 +762,10 @@ fn slice27b_43_slot_starts_with_defaults() {
     let state = slot.start("custom", "callback", None, None);
     assert_eq!(state.kind, "custom");
     assert_eq!(state.expected_input, "callback");
-    assert_eq!(state.allowed_commands, default_allowed_interaction_commands());
+    assert_eq!(
+        state.allowed_commands,
+        default_allowed_interaction_commands()
+    );
     assert_eq!(state.expires_at_ms, None);
     assert!(slot.is_active());
 }
@@ -712,8 +773,20 @@ fn slice27b_43_slot_starts_with_defaults() {
 #[test]
 fn slice27b_44_slot_normalizes_and_dedupes_commands() {
     assert_eq!(
-        normalize_allowed_commands(Some(&["/Help", "status", "/help", " /STATUS@MyBot ", "detach", "", " / "])),
-        vec!["/help".to_string(), "/status".to_string(), "/detach".to_string()]
+        normalize_allowed_commands(Some(&[
+            "/Help",
+            "status",
+            "/help",
+            " /STATUS@MyBot ",
+            "detach",
+            "",
+            " / "
+        ])),
+        vec![
+            "/help".to_string(),
+            "/status".to_string(),
+            "/detach".to_string()
+        ]
     );
 }
 
@@ -721,7 +794,9 @@ fn slice27b_44_slot_normalizes_and_dedupes_commands() {
 fn slice27b_45_slot_transition_updates_input_and_expiry() {
     let mut slot = InteractionSlot::new();
     slot.start("custom", "text", None, None);
-    let next = slot.transition(Some("mixed"), Some(&["/abort"]), Some(Some(5000))).expect("transition");
+    let next = slot
+        .transition(Some("mixed"), Some(&["/abort"]), Some(Some(5000)))
+        .expect("transition");
     assert_eq!(next.kind, "custom");
     assert_eq!(next.expected_input, "mixed");
     assert_eq!(next.allowed_commands, vec!["/abort".to_string()]);
@@ -734,7 +809,10 @@ fn slice27b_46_waiting_queue_replaces_same_session_poll() {
     waiting.wait_question("req-b-old", "session-b");
     waiting.wait_question("req-c", "session-c");
     waiting.wait_question("req-b-new", "session-b");
-    assert_eq!(waiting.waiting_question_ids(), vec!["req-b-new".to_string(), "req-c".to_string()]);
+    assert_eq!(
+        waiting.waiting_question_ids(),
+        vec!["req-b-new".to_string(), "req-c".to_string()]
+    );
 }
 
 #[test]
@@ -743,7 +821,10 @@ fn slice27b_47_waiting_queue_dedupes_permission_and_drops() {
     waiting.wait_permission("perm-1", "session-1");
     waiting.wait_permission("perm-1", "session-1");
     waiting.wait_permission("perm-2", "session-1");
-    assert_eq!(waiting.waiting_permission_ids(), vec!["perm-1".to_string(), "perm-2".to_string()]);
+    assert_eq!(
+        waiting.waiting_permission_ids(),
+        vec!["perm-1".to_string(), "perm-2".to_string()]
+    );
     waiting.drop_waiting_permission("perm-1");
     assert_eq!(waiting.waiting_kind(), Some(WaitingKind::Permission));
     waiting.drop_waiting_permission("perm-2");
@@ -761,7 +842,10 @@ fn slice27b_48_waiting_queue_at_head_and_session_drops() {
     waiting.wait_question_at_head("req-b", "session-b");
     waiting.wait_permission_at_head("perm-1", "session-1");
     assert_eq!(waiting.waiting_kind(), Some(WaitingKind::Permission));
-    assert_eq!(waiting.waiting_question_ids(), vec!["req-b".to_string(), "req-c".to_string()]);
+    assert_eq!(
+        waiting.waiting_question_ids(),
+        vec!["req-b".to_string(), "req-c".to_string()]
+    );
     waiting.drop_waiting_permissions_for_session("session-1");
     waiting.drop_waiting_questions_for_session("session-b");
     assert_eq!(waiting.waiting_permission_ids(), Vec::<String>::new());

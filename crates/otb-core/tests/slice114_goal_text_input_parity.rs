@@ -58,17 +58,31 @@ fn slice114_06_non_goal_flow_or_stage_misses() {
 
 #[test]
 fn slice114_07_any_attached_media_blocks() {
-    assert!(should_block_goal_media(true, false, false, false, false, false));
-    assert!(should_block_goal_media(false, true, false, false, false, false));
-    assert!(should_block_goal_media(false, false, true, false, false, false));
-    assert!(should_block_goal_media(false, false, false, true, false, false));
-    assert!(should_block_goal_media(false, false, false, false, true, false));
-    assert!(should_block_goal_media(false, false, false, false, false, true));
+    assert!(should_block_goal_media(
+        true, false, false, false, false, false
+    ));
+    assert!(should_block_goal_media(
+        false, true, false, false, false, false
+    ));
+    assert!(should_block_goal_media(
+        false, false, true, false, false, false
+    ));
+    assert!(should_block_goal_media(
+        false, false, false, true, false, false
+    ));
+    assert!(should_block_goal_media(
+        false, false, false, false, true, false
+    ));
+    assert!(should_block_goal_media(
+        false, false, false, false, false, true
+    ));
 }
 
 #[test]
 fn slice114_08_text_only_does_not_block() {
-    assert!(!should_block_goal_media(false, false, false, false, false, false));
+    assert!(!should_block_goal_media(
+        false, false, false, false, false, false
+    ));
 }
 
 // --- is_goal_text_eligible (2) ---

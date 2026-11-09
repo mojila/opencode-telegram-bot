@@ -168,7 +168,9 @@ fn normalize_drops_entries_with_bad_shapes() {
             raw_dir(Some(""), Some(2.0)),
         ]),
     };
-    assert!(normalize_cache_data(Some(&raw), false).directories.is_empty());
+    assert!(normalize_cache_data(Some(&raw), false)
+        .directories
+        .is_empty());
 }
 
 #[test]
@@ -177,7 +179,9 @@ fn normalize_drops_root_worktree() {
         last_synced_updated_at: Some(0.0),
         directories: Some(vec![raw_dir(Some("/"), Some(1.0))]),
     };
-    assert!(normalize_cache_data(Some(&raw), false).directories.is_empty());
+    assert!(normalize_cache_data(Some(&raw), false)
+        .directories
+        .is_empty());
 }
 
 #[test]
@@ -237,9 +241,8 @@ fn dedupe_windows_keys_fold_case() {
 
 #[test]
 fn dedupe_caps_at_ten_newest() {
-    let input: Vec<CachedSessionDirectory> = (0..12)
-        .map(|n| dir(&format!("/d{n}"), n as f64))
-        .collect();
+    let input: Vec<CachedSessionDirectory> =
+        (0..12).map(|n| dir(&format!("/d{n}"), n as f64)).collect();
     let out = dedupe_and_trim_directories(input, false);
     assert_eq!(out.len(), 10);
     assert_eq!(out[0], dir("/d11", 11.0));
@@ -427,10 +430,7 @@ fn storage_roots_tolerates_trailing_separators() {
 #[test]
 fn storage_roots_home_first_and_deduped() {
     assert_eq!(
-        get_storage_root_candidates(
-            Some("/home/u"),
-            Some("/home/u/.local/state/opencode")
-        ),
+        get_storage_root_candidates(Some("/home/u"), Some("/home/u/.local/state/opencode")),
         vec!["/home/u/.local/share/opencode".to_string()]
     );
 }

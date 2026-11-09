@@ -198,8 +198,13 @@ pub enum WaitingKind {
 
 #[derive(Debug, Clone)]
 enum WaitingEntry {
-    Question { request_id: String, session_id: String },
-    PermissionGroup { requests: Vec<(String, String)> },
+    Question {
+        request_id: String,
+        session_id: String,
+    },
+    PermissionGroup {
+        requests: Vec<(String, String)>,
+    },
 }
 
 /// Pure waiting queue: order, same-session replace, at-head requeue, drops.
@@ -209,7 +214,9 @@ pub struct WaitingQueue {
 
 impl WaitingQueue {
     pub fn new() -> Self {
-        Self { waiting: Vec::new() }
+        Self {
+            waiting: Vec::new(),
+        }
     }
 
     pub fn wait_question(&mut self, request_id: &str, session_id: &str) {
@@ -254,7 +261,11 @@ impl WaitingQueue {
     }
 
     fn push_permission(&mut self, request_id: &str, session_id: &str, at_head: bool) {
-        if self.waiting_permission_ids().iter().any(|id| id == request_id) {
+        if self
+            .waiting_permission_ids()
+            .iter()
+            .any(|id| id == request_id)
+        {
             return;
         }
         let neighbour_is_permission = if self.waiting.is_empty() {
@@ -366,9 +377,10 @@ impl WaitingQueue {
         self.waiting
             .iter()
             .flat_map(|entry| match entry {
-                WaitingEntry::PermissionGroup { requests } => {
-                    requests.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>()
-                }
+                WaitingEntry::PermissionGroup { requests } => requests
+                    .iter()
+                    .map(|(id, _)| id.clone())
+                    .collect::<Vec<_>>(),
                 _ => Vec::new(),
             })
             .collect()
@@ -823,10 +835,12 @@ impl QuestionPoll {
     }
 
     pub fn track_in_flight(&mut self, request_id: &str, session_id: &str) {
-        self.in_flight.entry(request_id.to_string()).or_insert(InFlightEntry {
-            session_id: session_id.to_string(),
-            ending: None,
-        });
+        self.in_flight
+            .entry(request_id.to_string())
+            .or_insert(InFlightEntry {
+                session_id: session_id.to_string(),
+                ending: None,
+            });
     }
 
     pub fn untrack_in_flight(&mut self, request_id: &str) {
@@ -907,7 +921,10 @@ impl QuestionPoll {
     }
 
     pub fn message_ids(&self) -> Vec<i64> {
-        self.state.as_ref().map(|s| s.message_ids.clone()).unwrap_or_default()
+        self.state
+            .as_ref()
+            .map(|s| s.message_ids.clone())
+            .unwrap_or_default()
     }
 
     pub fn cancel(&mut self) {
@@ -987,11 +1004,7 @@ impl PermissionRegistry {
         StartPermissionResult::Started
     }
 
-    pub fn drop_reason(
-        &self,
-        request_id: &str,
-        generation: u64,
-    ) -> Option<StartPermissionResult> {
+    pub fn drop_reason(&self, request_id: &str, generation: u64) -> Option<StartPermissionResult> {
         if generation != self.generation {
             return Some(StartPermissionResult::Stale);
         }

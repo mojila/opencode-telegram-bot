@@ -263,3 +263,51 @@ pub enum PromptPickup {
 pub fn pickup_closes_run(pickup: PromptPickup) -> bool {
     pickup == PromptPickup::Queue
 }
+
+// --- Reselect heal + reconnect/idle remainder (TS: `src/opencode/events.ts`) ---
+//
+// `attach-service.ts` re-selecting the same `(id, directory)` must heal a dead
+// SSE subscription: the same-directory fast path only swaps the callback when
+// the underlying stream is alive, otherwise it tears down and resubscribes.
+// The live SSE loop stays in TS; these gates decide when to heal.
+
+/// True when the same-directory fast path may only swap the callback
+/// (TS: `isListening && same directory && eventStream !== null`).
+pub fn should_keep_same_directory_subscription(
+    is_listening: bool,
+    same_directory: bool,
+    has_stream: bool,
+) -> bool {
+    is_listening && same_directory && has_stream
+}
+
+/// True when re-selecting the same directory must resubscribe instead of
+/// swapping the callback (TS: listening on the same directory but the stream
+/// is missing: ended, errored, or between reconnect attempts).
+pub fn should_heal_same_directory_subscription(
+    is_listening: bool,
+    same_directory: bool,
+    has_stream: bool,
+) -> bool {
+    is_listening && same_directory && !has_stream
+}
+
+/// True when the subscription counts as active for `attach-service` healing
+/// (TS: `isEventSubscriptionActive`: listening, same directory, stream set).
+pub fn is_subscription_active_for_reselect(
+    is_listening: bool,
+    same_directory: bool,
+    has_stream: bool,
+) -> bool {
+    should_keep_same_directory_subscription(is_listening, same_directory, has_stream)
+}
+
+/// Idle-timeout budget for the SSE read (TS: `sseIdleTimeoutMs`, 30s).
+pub const SSE_IDLE_TIMEOUT_MS: u64 = 30_000;
+
+/// True when the reconnect backoff should keep waiting
+/// (TS: `waitWithAbort` resolved `true`; `false` means the new subscription
+/// aborted the wait).
+pub fn should_continue_reconnect(wait_resolved: bool) -> bool {
+    wait_resolved
+}

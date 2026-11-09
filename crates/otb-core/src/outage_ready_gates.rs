@@ -299,8 +299,24 @@ pub fn escape_plain_text_for_telegram_markdown_v2(text: &str) -> String {
     for ch in text.chars() {
         if matches!(
             ch,
-            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|' | '{'
-                | '}' | '.' | '!' | '\\'
+            '_' | '*'
+                | '['
+                | ']'
+                | '('
+                | ')'
+                | '~'
+                | '`'
+                | '>'
+                | '#'
+                | '+'
+                | '-'
+                | '='
+                | '|'
+                | '{'
+                | '}'
+                | '.'
+                | '!'
+                | '\\'
         ) {
             out.push('\\');
         }
@@ -366,9 +382,6 @@ pub fn build_quoted_notification(
             separator,
             build_quoted_markdown_text(body)
         ),
-        raw_fallback_text: format!(
-            "{title}{separator}{}",
-            build_quoted_plain_text(body)
-        ),
+        raw_fallback_text: format!("{title}{separator}{}", build_quoted_plain_text(body)),
     }
 }

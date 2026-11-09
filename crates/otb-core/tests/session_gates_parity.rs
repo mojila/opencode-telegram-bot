@@ -21,16 +21,32 @@ use otb_core::session_gates::*;
 fn slice26b_01_abort_suppresses_one_aborted_error() {
     reset_user_abort_suppression();
     mark_user_abort_requested("session-1", 1_000);
-    assert!(should_suppress_user_abort_session_error("session-1", " Aborted ", 1_000));
-    assert!(!should_suppress_user_abort_session_error("session-1", "Aborted", 1_000));
+    assert!(should_suppress_user_abort_session_error(
+        "session-1",
+        " Aborted ",
+        1_000
+    ));
+    assert!(!should_suppress_user_abort_session_error(
+        "session-1",
+        "Aborted",
+        1_000
+    ));
 }
 
 #[test]
 fn slice26b_02_abort_ignores_unrelated_errors() {
     reset_user_abort_suppression();
     mark_user_abort_requested("session-1", 1_000);
-    assert!(!should_suppress_user_abort_session_error("session-1", "Model not found", 1_000));
-    assert!(should_suppress_user_abort_session_error("session-1", "Aborted", 1_000));
+    assert!(!should_suppress_user_abort_session_error(
+        "session-1",
+        "Model not found",
+        1_000
+    ));
+    assert!(should_suppress_user_abort_session_error(
+        "session-1",
+        "Aborted",
+        1_000
+    ));
 }
 
 #[test]
@@ -77,7 +93,11 @@ fn slice26b_05_abort_prunes_expired_markers_on_new_mark() {
 fn slice26b_06_abort_case_insensitive_match() {
     reset_user_abort_suppression();
     mark_user_abort_requested("session-1", 1_000);
-    assert!(should_suppress_user_abort_session_error("session-1", "ABORTED", 1_000));
+    assert!(should_suppress_user_abort_session_error(
+        "session-1",
+        "ABORTED",
+        1_000
+    ));
 }
 
 // --- external input suppression (6) ---
@@ -108,12 +128,19 @@ fn slice26b_09_external_ignores_different_text() {
 fn slice26b_10_external_expires_stale_entries() {
     let mut manager = ExternalUserInputSuppressionManager::new();
     manager.register("session-1", "Review README", 1_000);
-    assert!(!manager.consume("session-1", "Review README", 1_000 + EXTERNAL_INPUT_SUPPRESSION_TTL_MS + 1));
+    assert!(!manager.consume(
+        "session-1",
+        "Review README",
+        1_000 + EXTERNAL_INPUT_SUPPRESSION_TTL_MS + 1
+    ));
 }
 
 #[test]
 fn slice26b_11_external_normalizes_crlf_and_trims() {
-    assert_eq!(normalize_external_user_input_text("Review\r\nREADME  "), "Review\nREADME");
+    assert_eq!(
+        normalize_external_user_input_text("Review\r\nREADME  "),
+        "Review\nREADME"
+    );
     let mut manager = ExternalUserInputSuppressionManager::new();
     manager.register("session-1", "Review README", 1_000);
     assert!(manager.consume("session-1", "  Review README\r\n", 1_000));
@@ -177,13 +204,21 @@ fn slice26b_15_run_sealed_steps_belong_to_next_run() {
     state.record_step("ses-1", run_step("next", 4, 2));
     let finished = state.finish_run("ses-1", "idle").expect("run");
     assert_eq!(
-        finished.steps.iter().map(|step| step.message_id.clone()).collect::<Vec<_>>(),
+        finished
+            .steps
+            .iter()
+            .map(|step| step.message_id.clone())
+            .collect::<Vec<_>>(),
         vec!["old".to_string()]
     );
     state.start_run("ses-1", AssistantRunStartInfo { started_at: 5 });
     let finished = state.finish_run("ses-1", "next").expect("run");
     assert_eq!(
-        finished.steps.iter().map(|step| step.message_id.clone()).collect::<Vec<_>>(),
+        finished
+            .steps
+            .iter()
+            .map(|step| step.message_id.clone())
+            .collect::<Vec<_>>(),
         vec!["next".to_string()]
     );
 }
@@ -250,9 +285,15 @@ fn slice26b_22_background_notifies_on_idle_after_assistant_done() {
     let notification = tracker
         .idle_notification("session-2", "session-1")
         .expect("notification");
-    assert_eq!(notification.kind, BackgroundNotificationKind::AssistantResponse);
+    assert_eq!(
+        notification.kind,
+        BackgroundNotificationKind::AssistantResponse
+    );
     assert_eq!(notification.session_id, "session-2");
-    assert_eq!(notification.session_title.as_deref(), Some("Background Task"));
+    assert_eq!(
+        notification.session_title.as_deref(),
+        Some("Background Task")
+    );
     assert_eq!(notification.message_id.as_deref(), Some("message-1"));
 }
 
@@ -292,10 +333,20 @@ fn slice26b_25_background_notifies_questions_and_permissions() {
 #[test]
 fn slice26b_26_background_dedupes_request_ids() {
     let mut tracker = BackgroundSessionTracker::new();
-    assert!(tracker.question_notification("session-2", "req-1", "session-1").is_some());
-    assert_eq!(tracker.question_notification("session-2", "req-1", "session-1"), None);
-    assert!(tracker.permission_notification("session-2", "req-2", "session-1").is_some());
-    assert_eq!(tracker.permission_notification("session-2", "req-2", "session-1"), None);
+    assert!(tracker
+        .question_notification("session-2", "req-1", "session-1")
+        .is_some());
+    assert_eq!(
+        tracker.question_notification("session-2", "req-1", "session-1"),
+        None
+    );
+    assert!(tracker
+        .permission_notification("session-2", "req-2", "session-1")
+        .is_some());
+    assert_eq!(
+        tracker.permission_notification("session-2", "req-2", "session-1"),
+        None
+    );
 }
 
 #[test]
@@ -318,7 +369,10 @@ fn slice26b_28_background_clear_on_directory_change() {
 #[test]
 fn slice26b_29_background_question_silent_for_current_session() {
     let mut tracker = BackgroundSessionTracker::new();
-    assert_eq!(tracker.question_notification("session-1", "req-1", "session-1"), None);
+    assert_eq!(
+        tracker.question_notification("session-1", "req-1", "session-1"),
+        None
+    );
 }
 
 // --- message patterns (8) ---
@@ -355,8 +409,12 @@ fn slice26b_34_pattern_matches_agent_labels_with_descriptors() {
 
 #[test]
 fn slice26b_35_pattern_matches_queued_prompt_labels() {
-    assert!(is_queued_prompt_button_text(&format_queued_prompt_button_label(1, "Fix the bug")));
-    assert!(is_queued_prompt_button_text(&format_queued_prompt_button_label(12, "Fix the bug")));
+    assert!(is_queued_prompt_button_text(
+        &format_queued_prompt_button_label(1, "Fix the bug")
+    ));
+    assert!(is_queued_prompt_button_text(
+        &format_queued_prompt_button_label(12, "Fix the bug")
+    ));
 }
 
 #[test]
@@ -371,7 +429,9 @@ fn slice26b_36_pattern_rejects_non_queued_labels() {
 fn slice26b_37_pattern_recognises_reply_keyboard_buttons() {
     assert!(is_reply_keyboard_button_text("🛠️ Build Agent"));
     assert!(is_reply_keyboard_button_text("💡 Default"));
-    assert!(is_reply_keyboard_button_text(&format_queued_prompt_button_label(1, "queued")));
+    assert!(is_reply_keyboard_button_text(
+        &format_queued_prompt_button_label(1, "queued")
+    ));
     assert!(!is_reply_keyboard_button_text("Create a migration plan"));
 }
 
@@ -381,7 +441,11 @@ fn slice26b_37_pattern_recognises_reply_keyboard_buttons() {
 fn slice26b_38_goal_rejects_empty_and_reserved_controls() {
     assert_eq!(parse_goal_objective("  "), GoalObjective::Empty);
     for value in ["PAUSE", "Resume", "clear", " \"PAUSE\" "] {
-        assert_eq!(parse_goal_objective(value), GoalObjective::Reserved, "{value}");
+        assert_eq!(
+            parse_goal_objective(value),
+            GoalObjective::Reserved,
+            "{value}"
+        );
     }
     assert_eq!(
         parse_goal_objective("pause now"),
@@ -392,7 +456,10 @@ fn slice26b_38_goal_rejects_empty_and_reserved_controls() {
 #[test]
 fn slice26b_39_goal_rejects_objective_past_server_limit() {
     let text = "x".repeat(GOAL_OBJECTIVE_LIMIT + 1);
-    assert_eq!(parse_goal_objective(&text), GoalObjective::TooLong(text.len()));
+    assert_eq!(
+        parse_goal_objective(&text),
+        GoalObjective::TooLong(text.len())
+    );
 }
 
 #[test]
@@ -404,7 +471,10 @@ fn slice26b_40_goal_accepts_objective_at_limit() {
 #[test]
 fn slice26b_41_goal_quoted_reserved_is_reserved() {
     assert_eq!(parse_goal_objective("'pause'"), GoalObjective::Reserved);
-    assert_eq!(parse_goal_objective("\"pause'"), GoalObjective::Objective("\"pause'".to_string()));
+    assert_eq!(
+        parse_goal_objective("\"pause'"),
+        GoalObjective::Objective("\"pause'".to_string())
+    );
 }
 
 #[test]

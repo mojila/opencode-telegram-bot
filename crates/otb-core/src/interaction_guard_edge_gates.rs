@@ -54,8 +54,7 @@
 pub const BUSY_ALLOWED_OUTSIDE_INTERACTION_COMMANDS: &[&str] = &["/reload", "/goal"];
 
 /// Static busy allow-list (TS: `BUSY_ALLOWED_COMMANDS`).
-const BUSY_ALLOWED_COMMANDS: &[&str] =
-    &["/abort", "/detach", "/status", "/help", "/opencode_stop"];
+const BUSY_ALLOWED_COMMANDS: &[&str] = &["/abort", "/detach", "/status", "/help", "/opencode_stop"];
 
 /// Static busy allow-list plus the local-registry fallback
 /// (TS: `isBusyAllowedCommand`: `/abort`, `/detach`, `/status`, `/help`,
@@ -65,9 +64,7 @@ pub fn is_busy_allowed_with_registry(
     registry_allows_when_busy: bool,
 ) -> bool {
     match command {
-        Some(c) if !c.is_empty() => {
-            BUSY_ALLOWED_COMMANDS.contains(&c) || registry_allows_when_busy
-        }
+        Some(c) if !c.is_empty() => BUSY_ALLOWED_COMMANDS.contains(&c) || registry_allows_when_busy,
         _ => false,
     }
 }
@@ -147,8 +144,7 @@ pub fn decide_goal_label_while_busy(
 /// (TS: `state?.metadata.flow === "goal" && (data === "goal:cancel" ||
 /// data === "goal:confirm")`).
 pub fn is_goal_flow_shortcut(flow: Option<&str>, callback_data: Option<&str>) -> bool {
-    flow == Some("goal")
-        && matches!(callback_data, Some("goal:cancel" | "goal:confirm"))
+    flow == Some("goal") && matches!(callback_data, Some("goal:cancel" | "goal:confirm"))
 }
 
 // ---------------------------------------------------------------------------
@@ -170,11 +166,7 @@ pub fn is_allowed_rename_cancel(
 /// `task:cancel` / `task:retry-schedule` arrive during a task interaction
 /// (TS: `isAllowedTaskCallback`; values from `scheduled-task-menu.ts`).
 pub fn is_allowed_task_callback(kind: Option<&str>, callback_data: Option<&str>) -> bool {
-    kind == Some("task")
-        && matches!(
-            callback_data,
-            Some("task:cancel" | "task:retry-schedule")
-        )
+    kind == Some("task") && matches!(callback_data, Some("task:cancel" | "task:retry-schedule"))
 }
 
 // ---------------------------------------------------------------------------
@@ -240,10 +232,7 @@ pub enum BusyBlockedChannel {
 
 /// `has_callback_query` is `ctx.callbackQuery != null`; `has_chat` is
 /// `ctx.chat != null`.
-pub fn decide_busy_blocked_channel(
-    has_callback_query: bool,
-    has_chat: bool,
-) -> BusyBlockedChannel {
+pub fn decide_busy_blocked_channel(has_callback_query: bool, has_chat: bool) -> BusyBlockedChannel {
     if has_callback_query {
         BusyBlockedChannel::AnswerCallback
     } else if has_chat {

@@ -363,9 +363,7 @@ fn parse_json_value(bytes: &[u8], pos: &mut usize) -> Result<JsonShape, ()> {
         Some(b't') => parse_json_literal(bytes, pos, b"true").map(|()| JsonShape::Other),
         Some(b'f') => parse_json_literal(bytes, pos, b"false").map(|()| JsonShape::Other),
         Some(b'n') => parse_json_literal(bytes, pos, b"null").map(|()| JsonShape::Other),
-        Some(b'-') | Some(b'0'..=b'9') => {
-            parse_json_number(bytes, pos).map(|()| JsonShape::Other)
-        }
+        Some(b'-') | Some(b'0'..=b'9') => parse_json_number(bytes, pos).map(|()| JsonShape::Other),
         _ => Err(()),
     }
 }
@@ -391,9 +389,7 @@ pub fn parse_initial_settings_preset(raw: Option<&str>) -> Result<String, String
                 )
             }
         }
-        Ok(JsonShape::Other) => {
-            Err("INITIAL_SETTINGS_PRESET must be a JSON object.".to_string())
-        }
+        Ok(JsonShape::Other) => Err("INITIAL_SETTINGS_PRESET must be a JSON object.".to_string()),
         Err(()) => Err(
             "INITIAL_SETTINGS_PRESET contains invalid JSON. Fix or unset the variable.".to_string(),
         ),
@@ -410,7 +406,9 @@ fn supported_locales() -> &'static [&'static str] {
 /// Locale: normalize regional tags (`ru-RU` -> `ru`), unsupported ->
 /// default.
 pub fn normalize_locale_tag(raw: Option<&str>, default: &str) -> String {
-    let normalized = raw.map(|value| value.trim().to_lowercase()).unwrap_or_default();
+    let normalized = raw
+        .map(|value| value.trim().to_lowercase())
+        .unwrap_or_default();
     if normalized.is_empty() {
         return default.to_string();
     }
@@ -438,7 +436,9 @@ pub fn resolve_server_mode(version: &str, raw: Option<&str>) -> Result<&'static 
     if version != "v2" {
         return Ok("service");
     }
-    let normalized = raw.map(|value| value.trim().to_lowercase()).unwrap_or_default();
+    let normalized = raw
+        .map(|value| value.trim().to_lowercase())
+        .unwrap_or_default();
     if normalized.is_empty() || normalized == "service" {
         return Ok("service");
     }
@@ -650,5 +650,9 @@ pub fn default_prompt_queue_mode(server_version: &str) -> &'static str {
 
 /// Legacy `ttsEnabled` boolean migration: `true` -> `all`, `false` -> `off`.
 pub fn migrate_tts_enabled(old_value: bool) -> &'static str {
-    if old_value { "all" } else { "off" }
+    if old_value {
+        "all"
+    } else {
+        "off"
+    }
 }

@@ -19,13 +19,13 @@
 //! `tool_activity_gates` is ported (only the constant-value tests pass).
 
 use otb_core::tool_activity_gates::{
-    SUBAGENT_STREAM_PREFIX, TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH,
-    TOOL_ELAPSED_MAX_TRACKING_HOURS, TOOL_STREAM_KEY_DEFAULT, TOOL_STREAM_KEY_TODO, RUNNING_ICON,
     count_text_lines, failed_while_composing, first_file_is_text, heartbeat_active,
     is_background_tool, is_composing, is_terminal_status, live_tool_prefix,
     prepare_document_caption, seen_failing, should_send_tool_file_attachment,
     should_skip_tool_delivery, subagent_pin_active, subagent_stream_key, tool_stream_key,
-    tracks_elapsed, use_first_line_duration,
+    tracks_elapsed, use_first_line_duration, RUNNING_ICON, SUBAGENT_STREAM_PREFIX,
+    TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH, TOOL_ELAPSED_MAX_TRACKING_HOURS, TOOL_STREAM_KEY_DEFAULT,
+    TOOL_STREAM_KEY_TODO,
 };
 
 // --- constants ---
@@ -361,7 +361,10 @@ fn not_seen_failing_when_never_stored_parity() {
 
 #[test]
 fn count_text_lines_counts_data_less_entries_with_lines_parity() {
-    assert_eq!(count_text_lines(&[false, true, false], &[true, true, false]), 1);
+    assert_eq!(
+        count_text_lines(&[false, true, false], &[true, true, false]),
+        1
+    );
 }
 
 #[test]

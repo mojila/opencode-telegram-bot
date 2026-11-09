@@ -179,7 +179,16 @@ fn metadata_rejects_non_custom_kind_parity() {
 
 #[test]
 fn metadata_rejects_wrong_flow_parity() {
-    let state = raw_state(true, "commands", "list", Some(7), Some("/repo"), true, 2, None);
+    let state = raw_state(
+        true,
+        "commands",
+        "list",
+        Some(7),
+        Some("/repo"),
+        true,
+        2,
+        None,
+    );
     assert_eq!(parse_mcps_metadata(&state), None);
 }
 
@@ -242,7 +251,16 @@ fn metadata_accepts_detail_stage_parity() {
 
 #[test]
 fn metadata_rejects_detail_missing_server_name_parity() {
-    let state = raw_state(true, "mcps", "detail", Some(7), Some("/repo"), true, 2, None);
+    let state = raw_state(
+        true,
+        "mcps",
+        "detail",
+        Some(7),
+        Some("/repo"),
+        true,
+        2,
+        None,
+    );
     assert_eq!(parse_mcps_metadata(&state), None);
 }
 
@@ -263,7 +281,16 @@ fn metadata_rejects_detail_blank_server_name_parity() {
 
 #[test]
 fn metadata_rejects_unknown_stage_parity() {
-    let state = raw_state(true, "mcps", "confirm", Some(7), Some("/repo"), true, 2, None);
+    let state = raw_state(
+        true,
+        "mcps",
+        "confirm",
+        Some(7),
+        Some("/repo"),
+        true,
+        2,
+        None,
+    );
     assert_eq!(parse_mcps_metadata(&state), None);
 }
 
@@ -296,8 +323,14 @@ fn mismatch_different_ids_blocks_parity() {
 
 #[test]
 fn back_requires_detail_stage_parity() {
-    assert!(!mcps_stage_allows(McpsCallbackAction::Back, McpsStage::List));
-    assert!(mcps_stage_allows(McpsCallbackAction::Back, McpsStage::Detail));
+    assert!(!mcps_stage_allows(
+        McpsCallbackAction::Back,
+        McpsStage::List
+    ));
+    assert!(mcps_stage_allows(
+        McpsCallbackAction::Back,
+        McpsStage::Detail
+    ));
 }
 
 #[test]
@@ -314,7 +347,10 @@ fn toggle_requires_detail_stage_parity() {
 
 #[test]
 fn select_requires_list_stage_parity() {
-    assert!(mcps_stage_allows(McpsCallbackAction::Select, McpsStage::List));
+    assert!(mcps_stage_allows(
+        McpsCallbackAction::Select,
+        McpsStage::List
+    ));
     assert!(!mcps_stage_allows(
         McpsCallbackAction::Select,
         McpsStage::Detail
@@ -323,7 +359,10 @@ fn select_requires_list_stage_parity() {
 
 #[test]
 fn cancel_is_stage_free_parity() {
-    assert!(mcps_stage_allows(McpsCallbackAction::Cancel, McpsStage::List));
+    assert!(mcps_stage_allows(
+        McpsCallbackAction::Cancel,
+        McpsStage::List
+    ));
     assert!(mcps_stage_allows(
         McpsCallbackAction::Cancel,
         McpsStage::Detail
@@ -334,12 +373,18 @@ fn cancel_is_stage_free_parity() {
 
 #[test]
 fn resolve_server_by_name_hit_parity() {
-    assert_eq!(resolve_mcps_server_by_name(&["fetch", "grep"], "grep"), Some(1));
+    assert_eq!(
+        resolve_mcps_server_by_name(&["fetch", "grep"], "grep"),
+        Some(1)
+    );
 }
 
 #[test]
 fn resolve_server_by_name_miss_parity() {
-    assert_eq!(resolve_mcps_server_by_name(&["fetch", "grep"], "missing"), None);
+    assert_eq!(
+        resolve_mcps_server_by_name(&["fetch", "grep"], "missing"),
+        None
+    );
 }
 
 #[test]

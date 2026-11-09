@@ -84,7 +84,10 @@ pub fn normalize_task_prompt(prompt: &str) -> String {
     if normalized.chars().count() <= TASK_DESCRIPTION_PREVIEW_LENGTH {
         return normalized;
     }
-    let head: String = normalized.chars().take(TASK_DESCRIPTION_PREVIEW_LENGTH).collect();
+    let head: String = normalized
+        .chars()
+        .take(TASK_DESCRIPTION_PREVIEW_LENGTH)
+        .collect();
     format!("{head}...")
 }
 
@@ -167,11 +170,7 @@ pub fn is_invalid_once_run_at(run_at_present: bool, run_at_valid: bool) -> bool 
 /// Next-run resolution after success: `"null"` (disabled cron), `"keep"`
 /// (activation pending), or `"computed"`
 /// (TS: `handleSuccessfulExecution` / `handleFailedExecution` mapping).
-pub fn next_run_after_success(
-    kind: &str,
-    enabled: bool,
-    activation_pending: bool,
-) -> &'static str {
+pub fn next_run_after_success(kind: &str, enabled: bool, activation_pending: bool) -> &'static str {
     // TS success: `kind === "cron" && enabled === false ? null
     //   : kind === "cron" && activationPending ? current.nextRunAt : nextRunAt`.
     // A `once` success removes the task before this mapping applies; it falls

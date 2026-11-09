@@ -124,10 +124,7 @@ fn adjust_for_xml_entity(buf: &[u8], split_at: usize) -> usize {
 /// Splits text into chunks of at most `byte_length` UTF-8 bytes
 /// (TS: `splitTextByByteLength`; panics on `0` like TS throws on `<= 0`).
 pub fn split_text_by_byte_length(text: &str, byte_length: usize) -> Vec<String> {
-    assert!(
-        byte_length > 0,
-        "byteLength must be greater than 0"
-    );
+    assert!(byte_length > 0, "byteLength must be greater than 0");
     let mut rest: &[u8] = text.as_bytes();
     let mut chunks: Vec<String> = Vec::new();
     while rest.len() > byte_length {
@@ -379,8 +376,7 @@ fn sha256_rounds(state: &[u32; 8], words: &[u32], first_round: usize) -> [u32; 8
             .wrapping_add(g ^ (e & (f ^ g)))
             .wrapping_add(constants[index])
             .wrapping_add(words[index]);
-        let t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22))
-            .wrapping_add((a & b) | (c & (a | b)));
+        let t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)).wrapping_add((a & b) | (c & (a | b)));
         h = g;
         g = f;
         f = e;
@@ -409,9 +405,7 @@ fn expand_schedule(words: &mut Vec<u32>, first_word: usize) {
 /// 7-byte salt (TS: `sha256Init`).
 fn sha256_init(data: &[u8]) -> [u32; 8] {
     let mut words: Vec<u32> = vec![0; 14];
-    words.push(
-        (u32::from(data[0]) << 16) | (u32::from(data[1]) << 8) | u32::from(data[2]),
-    );
+    words.push((u32::from(data[0]) << 16) | (u32::from(data[1]) << 8) | u32::from(data[2]));
     words.push(
         (u32::from(data[3]) << 24)
             | (u32::from(data[4]) << 16)
@@ -512,10 +506,8 @@ fn words_le4_even(data: &[u8]) -> Vec<u32> {
 /// CS64 digest: the custom keyed hash half of the v2 token
 /// (TS: `cs64Digest`).
 fn cs64_digest(data: &[u8], digest: &[u8; 32]) -> (u32, u32) {
-    let key_a =
-        u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) | 1;
-    let key_b =
-        u32::from_le_bytes([digest[4], digest[5], digest[6], digest[7]]) | 1;
+    let key_a = u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]]) | 1;
+    let key_b = u32::from_le_bytes([digest[4], digest[5], digest[6], digest[7]]) | 1;
     let factors = [
         key_a.wrapping_mul(CS64_FACTOR),
         key_b.wrapping_mul(CS64_FACTOR),

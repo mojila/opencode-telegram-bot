@@ -299,11 +299,8 @@ pub fn query_external_session_directories(
     db_path: &Path,
     limit: i64,
 ) -> Option<Vec<CachedSessionDirectory>> {
-    let conn = Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
+    let conn =
+        Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
     let mut stmt = conn
         .prepare(
             "SELECT directory, MAX(time_updated) AS updated
@@ -373,10 +370,7 @@ mod tests {
 
     #[test]
     fn external_query_matches_node_fallback_sql() {
-        let file = std::env::temp_dir().join(format!(
-            "otb-store-test-{}.db",
-            std::process::id()
-        ));
+        let file = std::env::temp_dir().join(format!("otb-store-test-{}.db", std::process::id()));
         // Seed a temp-file DB so the read-only helper has a real file to
         // open (isolated temp path, never a live DB).
         {
@@ -387,8 +381,7 @@ mod tests {
             )
             .expect("seed");
         }
-        let rows =
-            query_external_session_directories(&file, FALLBACK_QUERY_LIMIT).expect("rows");
+        let rows = query_external_session_directories(&file, FALLBACK_QUERY_LIMIT).expect("rows");
         std::fs::remove_file(&file).ok();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].worktree, "/work/a");

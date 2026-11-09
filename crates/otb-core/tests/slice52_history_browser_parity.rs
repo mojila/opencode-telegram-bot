@@ -156,7 +156,10 @@ fn slice52_08_sort_user_messages_desc_by_created() {
     let mut messages = vec![user_item("a", 3), user_item("b", 1), user_item("c", 2)];
     sort_user_messages_desc(&mut messages);
     assert_eq!(
-        messages.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+        messages
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
         vec!["a", "c", "b"]
     );
 }
@@ -173,10 +176,7 @@ fn slice52_09_revert_slice_drops_through_revert_message() {
 #[test]
 fn slice52_10_revert_slice_missing_id_keeps_all() {
     let messages = vec![user_item("a", 3), user_item("b", 2)];
-    assert_eq!(
-        apply_revert_slice(messages.clone(), Some("gone")),
-        messages
-    );
+    assert_eq!(apply_revert_slice(messages.clone(), Some("gone")), messages);
 }
 
 #[test]
@@ -265,10 +265,7 @@ fn slice52_17_display_path_home_becomes_tilde() {
 
 #[test]
 fn slice52_18_display_path_under_home_uses_tilde_prefix() {
-    assert_eq!(
-        path_to_display_path("/home/u/docs", "/home/u"),
-        "~/docs"
-    );
+    assert_eq!(path_to_display_path("/home/u/docs", "/home/u"), "~/docs");
     assert_eq!(path_to_display_path("/home/u2", "/home/u"), "/home/u2");
 }
 
@@ -385,7 +382,10 @@ fn slice52_35_join_path_follows_parent_style() {
 fn slice52_36_sorts_are_case_insensitive_with_dirs_first() {
     let mut names = vec!["b".to_string(), "A".to_string(), "c".to_string()];
     sort_dir_names(&mut names);
-    assert_eq!(names, vec!["A".to_string(), "b".to_string(), "c".to_string()]);
+    assert_eq!(
+        names,
+        vec!["A".to_string(), "b".to_string(), "c".to_string()]
+    );
 
     let mut entries = vec![
         LsEntry {
@@ -403,7 +403,10 @@ fn slice52_36_sorts_are_case_insensitive_with_dirs_first() {
     ];
     sort_ls_entries(&mut entries);
     assert_eq!(
-        entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
+        entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
         vec!["Alpha", "zeta", "b.txt"]
     );
 }
@@ -493,12 +496,7 @@ fn slice52_47_decide_present_when_own_listing_answers() {
 #[test]
 fn slice52_48_decide_unknown_when_listing_fails_softly() {
     assert_eq!(
-        decide_folder_presence(
-            &FolderListing::OtherFailure,
-            None,
-            "proj",
-            PathStyle::Posix
-        ),
+        decide_folder_presence(&FolderListing::OtherFailure, None, "proj", PathStyle::Posix),
         FolderPresence::Unknown
     );
 }

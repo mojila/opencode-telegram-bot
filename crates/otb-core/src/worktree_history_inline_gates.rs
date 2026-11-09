@@ -69,15 +69,11 @@ pub const WORKTREE_PAGE_CALLBACK_PREFIX: &str = "worktree:page:";
 /// `formatWorktreeButtonLabel`; no `trimEnd` before the ellipsis).
 pub fn format_worktree_button_label(label: &str, is_active: bool) -> String {
     let prefix = if is_active { "✅ " } else { "" };
-    let available =
-        MAX_INLINE_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
+    let available = MAX_INLINE_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
     if label.chars().count() <= available {
         return format!("{prefix}{label}");
     }
-    let head: String = label
-        .chars()
-        .take(available.saturating_sub(3))
-        .collect();
+    let head: String = label.chars().take(available.saturating_sub(3)).collect();
     format!("{prefix}{head}...")
 }
 
@@ -162,10 +158,7 @@ pub fn truncate_message_history_text(text: &str, max_length: usize) -> String {
     if text.chars().count() <= max_length {
         return text.to_string();
     }
-    let head: String = text
-        .chars()
-        .take(max_length.saturating_sub(3))
-        .collect();
+    let head: String = text.chars().take(max_length.saturating_sub(3)).collect();
     format!("{}...", head.trim_end())
 }
 
@@ -179,8 +172,7 @@ pub fn normalize_button_text(text: &str) -> String {
 /// (TS: `formatMessageButtonLabel`).
 pub fn format_message_button_label(time_label: &str, text: &str) -> String {
     let prefix = format!("[{time_label}] ");
-    let budget =
-        MAX_INLINE_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
+    let budget = MAX_INLINE_BUTTON_LABEL_LENGTH.saturating_sub(prefix.chars().count());
     let body = truncate_message_history_text(&normalize_button_text(text), budget);
     format!("{prefix}{body}")
 }
@@ -265,8 +257,7 @@ pub fn calculate_messages_pagination_range(
     page_size: i64,
 ) -> MessagesPaginationRange {
     let safe_page_size = page_size.max(1);
-    let total_pages =
-        ((total_messages + safe_page_size - 1) / safe_page_size).max(1);
+    let total_pages = ((total_messages + safe_page_size - 1) / safe_page_size).max(1);
     let page = page.clamp(0, total_pages - 1);
     let start_index = page * safe_page_size;
     let end_index = (start_index + safe_page_size).min(total_messages);

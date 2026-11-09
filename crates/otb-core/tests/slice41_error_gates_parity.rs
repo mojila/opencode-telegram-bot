@@ -156,8 +156,7 @@ fn slice41_14_expected_connectex_is_true() {
 #[test]
 fn slice41_15_expected_unrelated_timeout_is_false() {
     assert!(!is_expected_opencode_unavailable_error(&instance(
-        "Error",
-        "timeout"
+        "Error", "timeout"
     )));
 }
 
@@ -224,7 +223,10 @@ fn slice41_23_not_found_record_without_name_is_false() {
 
 #[test]
 fn slice41_24_unavailable_error_message_marker_is_true() {
-    assert!(is_server_unavailable_error(&instance("Error", "fetch failed")));
+    assert!(is_server_unavailable_error(&instance(
+        "Error",
+        "fetch failed"
+    )));
 }
 
 #[test]
@@ -375,20 +377,14 @@ fn slice41_42_extract_number_is_none() {
 
 #[test]
 fn slice41_43_extract_empty_record_is_none() {
-    assert_eq!(
-        extract_error_message(&record(ErrorRecord::default())),
-        None
-    );
+    assert_eq!(extract_error_message(&record(ErrorRecord::default())), None);
 }
 
 // --- format_error_details (7) ---
 
 #[test]
 fn slice41_44_format_error_uses_stack() {
-    let details = format_error_details(
-        &stacked("Error", "boom", "Error: boom\n    at here"),
-        None,
-    );
+    let details = format_error_details(&stacked("Error", "boom", "Error: boom\n    at here"), None);
     assert!(details.contains("boom"), "{details}");
 }
 
@@ -409,10 +405,7 @@ fn slice41_46_format_empty_record_is_unknown_error() {
 
 #[test]
 fn slice41_47_format_clips_long_details() {
-    let details = format_error_details(
-        &ErrorValue::Text("x".repeat(100)),
-        Some(16),
-    );
+    let details = format_error_details(&ErrorValue::Text("x".repeat(100)), Some(16));
     assert_eq!(details.len(), 16);
     assert!(details.ends_with("..."), "{details}");
 }

@@ -42,7 +42,10 @@ fn slice76_append_duration_parity() {
 
 #[test]
 fn slice76_append_first_line_single_parity() {
-    assert_eq!(append_duration_to_first_line("hello", "5s"), "hello · 🕒 5s");
+    assert_eq!(
+        append_duration_to_first_line("hello", "5s"),
+        "hello · 🕒 5s"
+    );
 }
 
 #[test]
@@ -97,7 +100,12 @@ fn slice76_format_duration_over_hours_parity() {
 
 // --- assistant_run_tokens_per_second ---
 
-fn slice76_step(created: i64, streamed: Option<i64>, output: i64, reasoning: i64) -> AssistantRunStep {
+fn slice76_step(
+    created: i64,
+    streamed: Option<i64>,
+    output: i64,
+    reasoning: i64,
+) -> AssistantRunStep {
     AssistantRunStep {
         message_id: "m1".to_string(),
         created,
@@ -160,7 +168,15 @@ fn slice76_tokens_negative_span_counts_zero_parity() {
 #[test]
 fn slice76_footer_basic_parity() {
     assert_eq!(
-        format_assistant_run_footer("🛠️ Build", "anthropic", "claude", 61_000, None, false, "interrupted"),
+        format_assistant_run_footer(
+            "🛠️ Build",
+            "anthropic",
+            "claude",
+            61_000,
+            None,
+            false,
+            "interrupted"
+        ),
         "🛠️ Build · 🧠 anthropic/claude · 🕒 1m 1s"
     );
 }
@@ -168,7 +184,15 @@ fn slice76_footer_basic_parity() {
 #[test]
 fn slice76_footer_with_speed_parity() {
     assert_eq!(
-        format_assistant_run_footer("🛠️ Build", "anthropic", "claude", 61_000, Some(10.0), false, "interrupted"),
+        format_assistant_run_footer(
+            "🛠️ Build",
+            "anthropic",
+            "claude",
+            61_000,
+            Some(10.0),
+            false,
+            "interrupted"
+        ),
         "🛠️ Build · 🧠 anthropic/claude · 🕒 1m 1s · ⚡ 10.0 tok/s"
     );
 }
@@ -261,10 +285,7 @@ fn slice76_weekday_unknown_none_parity() {
 
 #[test]
 fn slice76_weekday_set_list_parity() {
-    assert_eq!(
-        parse_weekday_set("1,2,3"),
-        Some(BTreeSet::from([1, 2, 3]))
-    );
+    assert_eq!(parse_weekday_set("1,2,3"), Some(BTreeSet::from([1, 2, 3])));
 }
 
 #[test]
@@ -289,7 +310,10 @@ fn slice76_weekday_set_reversed_none_parity() {
 
 #[test]
 fn slice76_has_exact_true_parity() {
-    assert!(has_exact_values(&BTreeSet::from([1, 2, 3, 4, 5]), &[1, 2, 3, 4, 5]));
+    assert!(has_exact_values(
+        &BTreeSet::from([1, 2, 3, 4, 5]),
+        &[1, 2, 3, 4, 5]
+    ));
 }
 
 #[test]

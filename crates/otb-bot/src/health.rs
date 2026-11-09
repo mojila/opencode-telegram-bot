@@ -17,8 +17,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::{Json, Router, extract::State, routing::get};
-use serde_json::{Value, json};
+use axum::{extract::State, routing::get, Json, Router};
+use serde_json::{json, Value};
 
 /// Env var carrying the health port (TS: `BOT_HEALTH_PORT_ENV`).
 pub const BOT_HEALTH_PORT_ENV: &str = "BOT_HEALTH_PORT";
@@ -119,7 +119,9 @@ mod tests {
             .expect("bind ephemeral health port");
         let port = listener.local_addr().expect("read bound port").port();
         let server =
-            tokio::spawn(async move { axum::serve(listener, router("test-version".to_string())).await });
+            tokio::spawn(
+                async move { axum::serve(listener, router("test-version".to_string())).await },
+            );
 
         for path in ["/health", "/health/live"] {
             let body: Value = reqwest::get(format!("http://127.0.0.1:{port}{path}"))

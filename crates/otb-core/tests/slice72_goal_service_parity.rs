@@ -45,9 +45,9 @@ fn with_field(base: JsonVal, key: &str, value: JsonVal) -> JsonVal {
 
 fn without_field(base: JsonVal, key: &str) -> JsonVal {
     match base {
-        JsonVal::Obj(fields) => JsonVal::Obj(
-            fields.into_iter().filter(|(k, _)| k != key).collect(),
-        ),
+        JsonVal::Obj(fields) => {
+            JsonVal::Obj(fields.into_iter().filter(|(k, _)| k != key).collect())
+        }
         other => other,
     }
 }
@@ -94,7 +94,10 @@ fn slice72_parse_bad_status_none_parity() {
 
 #[test]
 fn slice72_parse_missing_status_none_parity() {
-    assert_eq!(parse_goal_state(&without_field(valid_goal(), "status")), None);
+    assert_eq!(
+        parse_goal_state(&without_field(valid_goal(), "status")),
+        None
+    );
 }
 
 #[test]
@@ -111,11 +114,7 @@ fn slice72_parse_non_string_objective_none_parity() {
 
 #[test]
 fn slice72_parse_non_number_rounds_none_parity() {
-    let v = with_field(
-        valid_goal(),
-        "rounds",
-        JsonVal::Str("1".to_string()),
-    );
+    let v = with_field(valid_goal(), "rounds", JsonVal::Str("1".to_string()));
     assert_eq!(parse_goal_state(&v), None);
 }
 
@@ -127,11 +126,7 @@ fn slice72_parse_non_number_max_rounds_none_parity() {
 
 #[test]
 fn slice72_parse_non_number_updated_at_none_parity() {
-    let v = with_field(
-        valid_goal(),
-        "updatedAt",
-        JsonVal::Str("now".to_string()),
-    );
+    let v = with_field(valid_goal(), "updatedAt", JsonVal::Str("now".to_string()));
     assert_eq!(parse_goal_state(&v), None);
 }
 

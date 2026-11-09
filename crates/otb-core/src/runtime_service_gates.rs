@@ -253,10 +253,7 @@ pub fn is_valid_service_state(state: &ServiceStateShape) -> bool {
     if !pid_ok {
         return false;
     }
-    let started_ok = state
-        .started_at
-        .as_deref()
-        .is_some_and(|s| !s.is_empty());
+    let started_ok = state.started_at.as_deref().is_some_and(|s| !s.is_empty());
     if !started_ok {
         return false;
     }

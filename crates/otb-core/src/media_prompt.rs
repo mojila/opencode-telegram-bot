@@ -81,7 +81,10 @@ fn replace_single_asterisk_italic(text: &str) -> String {
         let mut close = None;
         let mut j = i + 1;
         while j < bytes.len() {
-            if bytes[j] == b'*' && bytes[j - 1] != b'*' && (j + 1 >= bytes.len() || bytes[j + 1] != b'*') {
+            if bytes[j] == b'*'
+                && bytes[j - 1] != b'*'
+                && (j + 1 >= bytes.len() || bytes[j + 1] != b'*')
+            {
                 close = Some(j);
                 break;
             }
@@ -158,9 +161,7 @@ fn strip_line_prefixes(line: &str) -> Option<String> {
     }
     // Blockquote: ^>\s?
     if let Some(stripped) = line.strip_prefix('>') {
-        let rest = stripped
-            .strip_prefix([' ', '\t', '\r'])
-            .unwrap_or(stripped);
+        let rest = stripped.strip_prefix([' ', '\t', '\r']).unwrap_or(stripped);
         return Some(rest.to_string());
     }
     // Unordered list: ^[-*]\s+
@@ -178,11 +179,7 @@ fn strip_line_prefixes(line: &str) -> Option<String> {
         let rest = &line[digits..];
         if let Some(after_dot) = rest.strip_prefix('.') {
             if after_dot.chars().next().is_some_and(|c| c.is_whitespace()) {
-                return Some(
-                    after_dot
-                        .trim_start_matches([' ', '\t', '\r'])
-                        .to_string(),
-                );
+                return Some(after_dot.trim_start_matches([' ', '\t', '\r']).to_string());
             }
         }
     }
@@ -295,7 +292,9 @@ pub fn extract_language_code(voice_name: &str) -> String {
         if voice_name.len() > len + 3
             && voice_name[..len].chars().all(|c| c.is_ascii_lowercase())
             && voice_name.as_bytes()[len] == b'-'
-            && voice_name[len + 1..len + 3].chars().all(|c| c.is_ascii_uppercase())
+            && voice_name[len + 1..len + 3]
+                .chars()
+                .all(|c| c.is_ascii_uppercase())
         {
             return voice_name[..len + 3].to_string();
         }
@@ -440,11 +439,56 @@ pub fn format_file_size(bytes: u64) -> String {
 }
 
 const TEXT_FILE_EXTENSIONS: &[&str] = &[
-    "svelte", "vue", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "txt", "xml", "csv",
-    "tsv", "sql", "env", "lock", "conf", "properties", "tf", "go", "rs", "rb", "py",
-    "java", "c", "cpp", "h", "hpp", "cs", "swift", "kt", "kts", "sh", "bash", "yaml",
-    "yml", "toml", "ini", "cfg", "md", "mdx", "css", "scss", "less", "html", "htm",
-    "graphql", "gql", "proto", "gradle",
+    "svelte",
+    "vue",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mjs",
+    "cjs",
+    "json",
+    "txt",
+    "xml",
+    "csv",
+    "tsv",
+    "sql",
+    "env",
+    "lock",
+    "conf",
+    "properties",
+    "tf",
+    "go",
+    "rs",
+    "rb",
+    "py",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "hpp",
+    "cs",
+    "swift",
+    "kt",
+    "kts",
+    "sh",
+    "bash",
+    "yaml",
+    "yml",
+    "toml",
+    "ini",
+    "cfg",
+    "md",
+    "mdx",
+    "css",
+    "scss",
+    "less",
+    "html",
+    "htm",
+    "graphql",
+    "gql",
+    "proto",
+    "gradle",
 ];
 
 const APPLICATION_TEXT_MIME_TYPES: &[&str] = &[
@@ -522,11 +566,7 @@ pub fn is_text_mime_type(mime_type: Option<&str>, filename: Option<&str>) -> boo
 
 /// Telegram file download URL; defaults to `api.telegram.org` and trims a
 /// trailing slash from a custom API root.
-pub fn telegram_file_url(
-    api_root: Option<&str>,
-    bot_token: &str,
-    file_path: &str,
-) -> String {
+pub fn telegram_file_url(api_root: Option<&str>, bot_token: &str, file_path: &str) -> String {
     let base = match api_root {
         Some(root) if !root.is_empty() => root.trim_end_matches('/').to_string(),
         _ => "https://api.telegram.org".to_string(),
@@ -546,7 +586,11 @@ pub fn redact_bot_token(message: &str, bot_token: &str) -> String {
 /// seconds, 502 (and friends) wait 1s, anything else is not retried.
 pub fn transient_retry_delay_ms(status: u16, retry_after_secs: Option<u64>) -> Option<u64> {
     match status {
-        429 => Some(retry_after_secs.filter(|&s| s > 0).map_or(1_000, |s| s * 1_000)),
+        429 => Some(
+            retry_after_secs
+                .filter(|&s| s > 0)
+                .map_or(1_000, |s| s * 1_000),
+        ),
         500 | 502 | 503 | 504 => Some(1_000),
         _ => None,
     }
@@ -719,7 +763,10 @@ pub fn normalize_path_for_display(file_path: &str, worktree: Option<&str>) -> St
     let Some(worktree) = worktree else {
         return normalized;
     };
-    let trimmed = worktree.replace('\\', "/").trim_end_matches('/').to_string();
+    let trimmed = worktree
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
     if trimmed.is_empty() {
         return normalized;
     }

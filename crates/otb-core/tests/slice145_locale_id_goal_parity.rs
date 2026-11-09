@@ -76,10 +76,7 @@ fn id_goal_templates_value_parity() {
         ID_GOAL_REASON_WAIT_LIMIT,
         "Nothing ran for {minutes} minutes while the goal waited on background work"
     );
-    assert_eq!(
-        ID_GOAL_REASON_NOT_PROGRESS,
-        "Not making progress: {reason}"
-    );
+    assert_eq!(ID_GOAL_REASON_NOT_PROGRESS, "Not making progress: {reason}");
 }
 
 // ---- lookup (2) ----

@@ -147,8 +147,13 @@ pub struct TaskCallInput {
 /// Minimal event model (TS: `Event`; slice 1 + slice-2 RED variants).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AggregatorEvent {
-    MessageUpdated { session_id: String, message_id: String },
-    ToolPartUpdated { part: ToolPart },
+    MessageUpdated {
+        session_id: String,
+        message_id: String,
+    },
+    ToolPartUpdated {
+        part: ToolPart,
+    },
     /// Root `subtask` part announcing a subagent (TS: `part.type === "subtask"`
     /// branch of `handleMessagePartUpdated`; slice 2).
     SubtaskPartUpdated {
@@ -160,7 +165,9 @@ pub enum AggregatorEvent {
     },
     /// Root `task` tool call carrying its input (TS: `updateSubagentFromTaskTool`;
     /// slice 2). `child_session_id` is TS `state.metadata.sessionId`.
-    TaskToolPartUpdated { input: TaskCallInput },
+    TaskToolPartUpdated {
+        input: TaskCallInput,
+    },
     /// Child session discovered (TS: `handleSessionCreatedOrUpdated`; slice 2).
     ChildSessionCreated {
         child_session_id: String,
@@ -602,18 +609,18 @@ impl SummaryAggregator {
         let call_id = input.call_id.clone();
         let parent_session_id = input.parent_session_id.clone();
         {
-            let entry =
-                self.open_task_calls
-                    .entry(call_id.clone())
-                    .or_insert_with(|| TaskCallInput {
-                        call_id: call_id.clone(),
-                        parent_session_id: parent_session_id.clone(),
-                        description: String::new(),
-                        agent: None,
-                        prompt: None,
-                        child_session_id: None,
-                        paired_card_id: None,
-                    });
+            let entry = self
+                .open_task_calls
+                .entry(call_id.clone())
+                .or_insert_with(|| TaskCallInput {
+                    call_id: call_id.clone(),
+                    parent_session_id: parent_session_id.clone(),
+                    description: String::new(),
+                    agent: None,
+                    prompt: None,
+                    child_session_id: None,
+                    paired_card_id: None,
+                });
             entry.parent_session_id = parent_session_id.clone();
             entry.description = input.description.clone();
             entry.agent = input.agent.clone();
@@ -634,7 +641,8 @@ impl SummaryAggregator {
                 .get(&call_id)
                 .and_then(|call| call.child_session_id.clone());
             if let Some(child) = named_child {
-                card_id = Some(self.get_or_create_card_for_session(&child, Some(&parent_session_id)));
+                card_id =
+                    Some(self.get_or_create_card_for_session(&child, Some(&parent_session_id)));
             } else {
                 let waiting_calls = self
                     .open_task_calls
@@ -868,10 +876,7 @@ impl SummaryAggregator {
         self.subagent_order.push(card_id.clone());
         self.card_id_by_session
             .insert(session_id.to_string(), card_id.clone());
-        let queue = self
-            .fallback_cards_by_parent
-            .entry(parent)
-            .or_default();
+        let queue = self.fallback_cards_by_parent.entry(parent).or_default();
         if !queue.contains(&card_id) {
             queue.push(card_id.clone());
         }
@@ -919,10 +924,8 @@ impl SummaryAggregator {
         if self.current_session_id.is_none() {
             return;
         }
-        self.session_parents.insert(
-            child_session_id.to_string(),
-            parent_session_id.to_string(),
-        );
+        self.session_parents
+            .insert(child_session_id.to_string(), parent_session_id.to_string());
         if let Some(card_id) = self.card_id_by_session.get(child_session_id).cloned() {
             self.enrich_card_from_title(&card_id, title);
             self.emit_subagents();
@@ -1022,14 +1025,12 @@ impl SummaryAggregator {
             if let Some(inner) = tail.strip_suffix(')') {
                 let mut words: Vec<&str> = inner.split_whitespace().collect();
                 if words.len() >= 2
-                    && words.last().map_or(false, |word| word.eq_ignore_ascii_case("subagent"))
+                    && words
+                        .last()
+                        .map_or(false, |word| word.eq_ignore_ascii_case("subagent"))
                 {
                     words.pop();
-                    let agent = words
-                        .join(" ")
-                        .trim()
-                        .trim_start_matches('@')
-                        .to_string();
+                    let agent = words.join(" ").trim().trim_start_matches('@').to_string();
                     let description = trimmed[..open].trim().to_string();
                     return (
                         if description.is_empty() {
@@ -1077,7 +1078,10 @@ impl SummaryAggregator {
         };
         let interrupted = match self.subagent_cards.get_mut(&card_id) {
             Some(card)
-                if matches!(card.status, SubagentStatus::Pending | SubagentStatus::Running) =>
+                if matches!(
+                    card.status,
+                    SubagentStatus::Pending | SubagentStatus::Running
+                ) =>
             {
                 card.status = SubagentStatus::Interrupted;
                 card.current_tool = None;
@@ -1125,11 +1129,7 @@ impl SummaryAggregator {
     /// "has no card to end: it only stops being tracked"). The launch takes
     /// no card of its own, so the parent keeps its Running Task line and no
     /// snapshot follows.
-    pub fn track_nested_launch(
-        &mut self,
-        parent_child_session_id: &str,
-        nested_session_id: &str,
-    ) {
+    pub fn track_nested_launch(&mut self, parent_child_session_id: &str, nested_session_id: &str) {
         self.session_parents.insert(
             nested_session_id.to_string(),
             parent_child_session_id.to_string(),
@@ -1998,8 +1998,7 @@ impl SummaryAggregator {
     /// Track a todo-tool list for a session (slice 11; no direct TS
     /// counterpart — models the todo list the card summarizes).
     pub fn track_todo_list(&mut self, session_id: &str, items: Vec<TodoItem>) {
-        self.todos_by_session
-            .insert(session_id.to_string(), items);
+        self.todos_by_session.insert(session_id.to_string(), items);
     }
 
     /// Summarize a session's todo list (slice 11).
@@ -2081,10 +2080,7 @@ impl SummaryAggregator {
     /// Whether assistant text after reasoning signals thinking-finished
     /// (TS: `emitThinkingFinishedOnce`: needs reasoning fired, skips when
     /// already signalled; slice 12).
-    pub fn should_signal_thinking_finished(
-        had_reasoning: bool,
-        already_signalled: bool,
-    ) -> bool {
+    pub fn should_signal_thinking_finished(had_reasoning: bool, already_signalled: bool) -> bool {
         had_reasoning && !already_signalled
     }
 }
@@ -2281,14 +2277,12 @@ impl SummaryAggregator {
                 }
             }
         }
-        let next_title = title
-            .map(|value| value.to_string())
-            .or_else(|| {
-                state
-                    .sections
-                    .get(part_id)
-                    .and_then(|section| section.title.clone())
-            });
+        let next_title = title.map(|value| value.to_string()).or_else(|| {
+            state
+                .sections
+                .get(part_id)
+                .and_then(|section| section.title.clone())
+        });
         let unchanged = state.sections.get(part_id).map_or(false, |section| {
             section.text == text && section.title == next_title
         });
@@ -2393,7 +2387,8 @@ impl SummaryAggregator {
         if self.thinking_finished_messages.contains(message_id) {
             return false;
         }
-        self.thinking_finished_messages.insert(message_id.to_string());
+        self.thinking_finished_messages
+            .insert(message_id.to_string());
         true
     }
 }
@@ -2580,10 +2575,7 @@ impl SummaryAggregator {
     /// bookkeeping; slice-15 subset without launch/held-end state).
     fn retire_completed_card(&mut self, card_id: &str) {
         let (parent, session_id) = match self.subagent_cards.get(card_id) {
-            Some(card) => (
-                card.parent_session_id.clone(),
-                card.session_id.clone(),
-            ),
+            Some(card) => (card.parent_session_id.clone(), card.session_id.clone()),
             None => return,
         };
         self.subagent_cards.remove(card_id);
@@ -2659,10 +2651,7 @@ impl SummaryAggregator {
     /// `handleMessageUpdated`: only the first optimistic update of a
     /// still-running message emits; completed messages never emit partial;
     /// slice 16).
-    pub fn should_emit_updated_partial(
-        is_completed: bool,
-        optimistic_update_count: usize,
-    ) -> bool {
+    pub fn should_emit_updated_partial(is_completed: bool, optimistic_update_count: usize) -> bool {
         !is_completed && optimistic_update_count == 1
     }
 
@@ -2912,10 +2901,7 @@ impl SummaryAggregator {
     /// `updateSubagentFromAssistantMessage` variant block, src ~1686-1688;
     /// slice 19B). A non-empty incoming variant replaces the card value
     /// (the caller re-emits); an omitted or blank one keeps the last value.
-    pub fn apply_variant_to_card(
-        current: Option<&str>,
-        incoming: Option<&str>,
-    ) -> Option<String> {
+    pub fn apply_variant_to_card(current: Option<&str>, incoming: Option<&str>) -> Option<String> {
         match incoming.map(str::trim).filter(|value| !value.is_empty()) {
             Some(variant) => Some(variant.to_string()),
             None => current.map(|value| value.to_string()),
@@ -2925,10 +2911,7 @@ impl SummaryAggregator {
     /// Whether a message may emit a thinking update (TS:
     /// `registerThinkingPart` + `emitThinkingUpdate`, src ~2478-2584;
     /// slice 19B). Text without any reasoning part never fires thinking.
-    pub fn should_emit_thinking_for_message(
-        has_reasoning_parts: bool,
-        has_callback: bool,
-    ) -> bool {
+    pub fn should_emit_thinking_for_message(has_reasoning_parts: bool, has_callback: bool) -> bool {
         has_reasoning_parts && has_callback
     }
 
@@ -3041,10 +3024,7 @@ impl SummaryAggregator {
     /// Thinking title for a reasoning part (TS: `registerThinkingPart` /
     /// `setThinkingPartSnapshot` title keys, src ~2478-2521: no title keys
     /// -> the thinking callback carries no title; slice 19B).
-    pub fn reasoning_section_title(
-        has_title_keys: bool,
-        title: Option<&str>,
-    ) -> Option<String> {
+    pub fn reasoning_section_title(has_title_keys: bool, title: Option<&str>) -> Option<String> {
         if !has_title_keys {
             return None;
         }
@@ -3089,10 +3069,7 @@ impl SummaryAggregator {
     /// Outbound step for a text message update (TS: first text update ->
     /// `onPartial`, completed message -> `onComplete`, src ~2135+/~1930+;
     /// slice 19B).
-    pub fn text_message_flow_event(
-        is_completed_message: bool,
-        has_text: bool,
-    ) -> TextMessageFlow {
+    pub fn text_message_flow_event(is_completed_message: bool, has_text: bool) -> TextMessageFlow {
         if !has_text {
             TextMessageFlow::None
         } else if is_completed_message {
@@ -3157,5 +3134,69 @@ impl SummaryAggregator {
         text_non_blank: bool,
     ) -> bool {
         is_current_session && role_is_user && text_non_blank
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SLICE 20 (GREEN): subagent terminal/cost, background stale-drop, nested
+// guards + reselect/outbound-heal gates.
+//
+// TS source: `src/app/managers/summary-aggregation-manager.ts`
+// (`setSubagentTerminalStatus`, `handleSessionStatus` cost/tokens arms,
+// `retireBackgroundSubagents`, `isNestedSubagentSession`, `holdOutbound` /
+// `drainOutbound` generation guard, `setSession` reselect path) and
+// `src/bot/callbacks/session-callback-handler.ts` (`releaseSessionPickHold`).
+// ---------------------------------------------------------------------------
+
+impl SummaryAggregator {
+    /// Whether a terminal card emits (TS: `setSubagentTerminalStatus` emits
+    /// only when the status actually changes; slice 20).
+    pub fn should_emit_terminal_card(status_changed: bool, has_card: bool) -> bool {
+        status_changed && has_card
+    }
+
+    /// Whether a cost update fires (TS: `onCostCallback` fires for a
+    /// defined cost value; `None` stays silent; slice 20).
+    pub fn cost_fires_for_update(cost: Option<f64>) -> bool {
+        cost.is_some()
+    }
+
+    /// Whether a background card update is stale-dropped (TS: background
+    /// cards retired by `retireBackgroundSubagents` no longer emit tool
+    /// updates; slice 20).
+    pub fn should_drop_stale_background_update(is_retired_background: bool) -> bool {
+        is_retired_background
+    }
+
+    /// Whether a nested subagent launch takes no card (TS:
+    /// `isNestedSubagentSession`: a child of a tracked child is nested and
+    /// stays cardless; slice 20).
+    pub fn should_guard_nested_launch(is_child_of_tracked_child: bool) -> bool {
+        is_child_of_tracked_child
+    }
+
+    /// Whether a reselect with the same session id keeps live state
+    /// (TS: `setSession` early-returns without `clear()` when the id is
+    /// unchanged, then re-applies bot/chat; slice 20).
+    pub fn should_keep_live_state_on_reselect(
+        current_session_id: Option<&str>,
+        next: &str,
+    ) -> bool {
+        current_session_id == Some(next)
+    }
+
+    /// Which outbound generation a pick release drains with (TS:
+    /// `releaseSessionPickHold` drains with the current generation so a newer
+    /// hold started during the pick cannot swallow deferred progress;
+    /// slice 20).
+    pub fn pick_release_generation(captured: u64, current: u64) -> u64 {
+        let _ = captured;
+        current
+    }
+
+    /// Whether a finished subagent identity stays remembered (TS:
+    /// `finishedSubagentSessionIds` has no eviction; slice 20).
+    pub fn remembers_finished_subagent(&self, child_session_id: &str) -> bool {
+        self.finished_subagent_sessions.contains(child_session_id)
     }
 }

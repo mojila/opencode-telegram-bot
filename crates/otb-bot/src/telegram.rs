@@ -123,7 +123,10 @@ pub fn truncate_text(text: &str, limit: usize) -> &str {
 /// Build the `(chat_id, text)` payload for an outbound message (pure).
 /// Text is truncated to [`TELEGRAM_TEXT_LIMIT`].
 pub fn build_send_payload(chat_id: i64, text: &str) -> (ChatId, String) {
-    (ChatId(chat_id), truncate_text(text, TELEGRAM_TEXT_LIMIT).to_string())
+    (
+        ChatId(chat_id),
+        truncate_text(text, TELEGRAM_TEXT_LIMIT).to_string(),
+    )
 }
 
 /// Construct the thin API client. Performs zero requests; safe with the
@@ -519,7 +522,10 @@ pub fn truncate_search_query(query: &str) -> String {
     if query.chars().count() <= SESSION_SEARCH_QUERY_MAX_LENGTH {
         return query.to_string();
     }
-    query.chars().take(SESSION_SEARCH_QUERY_MAX_LENGTH).collect()
+    query
+        .chars()
+        .take(SESSION_SEARCH_QUERY_MAX_LENGTH)
+        .collect()
 }
 
 /// Whether a session row matches a typed query (pure; testable). Node
@@ -1140,8 +1146,8 @@ async fn projects_search_view(locale: &str, query: &str) -> (String, Option<Inli
         .cloned()
         .collect();
     if matched.is_empty() {
-        let text =
-            crate::locale::translate(locale, "projects.search.no_results").replace("{query}", &query);
+        let text = crate::locale::translate(locale, "projects.search.no_results")
+            .replace("{query}", &query);
         return (text, Some(InlineKeyboardMarkup::new(vec![again_cancel()])));
     }
     let limit = crate::config::PROJECTS_LIST_LIMIT.max(1);
@@ -1272,7 +1278,12 @@ async fn worktree_view(locale: &str, page: usize) -> (String, Option<InlineKeybo
     let keyboard = if page_items.is_empty() {
         None
     } else {
-        Some(build_worktree_keyboard(page_items, locale, page, total_pages))
+        Some(build_worktree_keyboard(
+            page_items,
+            locale,
+            page,
+            total_pages,
+        ))
     };
     (text, keyboard)
 }
@@ -1287,18 +1298,14 @@ async fn load_recent_context() -> Vec<crate::commands::RecentListItem> {
     let current = crate::settings_current::read_settings_current(&app_home);
     let mut directories: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for worktree in current
-        .project_worktree
-        .iter()
-        .chain(
-            crate::store::SessionCacheStore::open(&crate::store::resolve_db_path(&app_home))
-                .ok()
-                .and_then(|store| store.get_directories().ok())
-                .unwrap_or_default()
-                .iter()
-                .map(|dir| &dir.worktree),
-        )
-    {
+    for worktree in current.project_worktree.iter().chain(
+        crate::store::SessionCacheStore::open(&crate::store::resolve_db_path(&app_home))
+            .ok()
+            .and_then(|store| store.get_directories().ok())
+            .unwrap_or_default()
+            .iter()
+            .map(|dir| &dir.worktree),
+    ) {
         let worktree = worktree.trim();
         if worktree.is_empty() || !seen.insert(worktree_key(worktree)) {
             continue;
@@ -1377,7 +1384,10 @@ async fn load_messages_context() -> Result<MessagesContext, &'static str> {
     };
     let (Some(session_id), Some(session_dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) else {
         return Err("messages.session_not_selected");
     };
@@ -1439,7 +1449,12 @@ async fn messages_view(locale: &str, page: usize) -> (String, Option<InlineKeybo
     let keyboard = if page_items.is_empty() {
         None
     } else {
-        Some(build_messages_keyboard(page_items, locale, page, total_pages))
+        Some(build_messages_keyboard(
+            page_items,
+            locale,
+            page,
+            total_pages,
+        ))
     };
     (text, keyboard)
 }
@@ -1556,8 +1571,8 @@ async fn sessions_search_view(locale: &str, query: &str) -> (String, Option<Inli
         .cloned()
         .collect();
     if matched.is_empty() {
-        let text =
-            crate::locale::translate(locale, "sessions.search.no_results").replace("{query}", &query);
+        let text = crate::locale::translate(locale, "sessions.search.no_results")
+            .replace("{query}", &query);
         return (text, Some(InlineKeyboardMarkup::new(vec![again_cancel()])));
     }
     let limit = crate::config::SESSIONS_LIST_LIMIT.max(1);
@@ -1579,9 +1594,7 @@ async fn send_message_with_keyboard(
     keyboard: InlineKeyboardMarkup,
 ) -> Result<(), teloxide_core::RequestError> {
     let (chat, body) = build_send_payload(chat_id, text);
-    bot.send_message(chat, body)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_message(chat, body).reply_markup(keyboard).await?;
     Ok(())
 }
 
@@ -1693,9 +1706,12 @@ async fn handle_session_callback(
         return;
     };
     let app_home = crate::config::resolve_app_home();
-    if let Err(err) =
-        crate::settings_current::write_current_session(&app_home, &item.id, &item.title, &context.worktree)
-    {
+    if let Err(err) = crate::settings_current::write_current_session(
+        &app_home,
+        &item.id,
+        &item.title,
+        &context.worktree,
+    ) {
         tracing::warn!("[otb-bot] telegram: cannot remember selected session: {err}");
         answer_callback(
             bot,
@@ -1981,7 +1997,10 @@ async fn handle_worktree_callback(
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "worktree.selection_missing_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "worktree.selection_missing_callback",
+            )),
             true,
         )
         .await;
@@ -2185,7 +2204,10 @@ async fn handle_messages_callback(
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "messages.page_empty_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "messages.page_empty_callback",
+            )),
             true,
         )
         .await;
@@ -2210,11 +2232,7 @@ async fn handle_messages_callback(
 /// (missing route or server error) renders the local
 /// `messages.revert_error` notice plus the list view. Only the message id
 /// length is ever logged — never values.
-async fn handle_messages_revert(
-    bot: &teloxide_core::Bot,
-    locale: &str,
-    query: &CallbackQuery,
-) {
+async fn handle_messages_revert(bot: &teloxide_core::Bot, locale: &str, query: &CallbackQuery) {
     let Some(chat_id) = callback_chat_id(query) else {
         return;
     };
@@ -2278,11 +2296,7 @@ async fn handle_messages_revert(
 /// missing target answers `messages.inactive_callback` plus the list view;
 /// failures render `messages.fork_error`. Only id prefixes and lengths are
 /// ever logged — never values.
-async fn handle_messages_fork(
-    bot: &teloxide_core::Bot,
-    locale: &str,
-    query: &CallbackQuery,
-) {
+async fn handle_messages_fork(bot: &teloxide_core::Bot, locale: &str, query: &CallbackQuery) {
     let Some(chat_id) = callback_chat_id(query) else {
         return;
     };
@@ -2390,7 +2404,8 @@ async fn new_reply(locale: &str) -> String {
         tracing::warn!("[otb-bot] telegram: session create returned no id");
         return crate::locale::translate(locale, "new.create_error");
     }
-    if let Err(err) = crate::settings_current::write_current_session(&app_home, &id, &title, &worktree)
+    if let Err(err) =
+        crate::settings_current::write_current_session(&app_home, &id, &title, &worktree)
     {
         tracing::warn!("[otb-bot] telegram: cannot remember new session: {err}");
         return crate::locale::translate(locale, "new.create_error");
@@ -2435,7 +2450,9 @@ fn tasklist_reply(locale: &str) -> String {
 /// file (or a non-array value) yields an empty list. Sorts with the JS
 /// `sortTasks` parity helper. Only paths/error kinds are ever logged —
 /// never task values.
-fn load_scheduled_task_items(app_home: &std::path::Path) -> Vec<crate::commands::ScheduledTaskItem> {
+fn load_scheduled_task_items(
+    app_home: &std::path::Path,
+) -> Vec<crate::commands::ScheduledTaskItem> {
     let path = crate::settings_current::settings_file_path(app_home);
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
@@ -2545,7 +2562,9 @@ async fn skills_view(locale: &str, page: usize) -> (String, Option<InlineKeyboar
 /// [`otb_core::session_pick_catalog_gates::CatalogJson`] shape for
 /// `parseMcpCatalogServers` (pure; testable). Numbers and bools collapse to
 /// `Null` (only `Str` payloads are ever inspected).
-fn catalog_json_from_value(value: &serde_json::Value) -> otb_core::session_pick_catalog_gates::CatalogJson {
+fn catalog_json_from_value(
+    value: &serde_json::Value,
+) -> otb_core::session_pick_catalog_gates::CatalogJson {
     use otb_core::session_pick_catalog_gates::CatalogJson as Json;
     match value {
         serde_json::Value::Null => Json::Null,
@@ -2622,22 +2641,19 @@ pub const MODEL_PROVIDER_CALLBACK_PREFIX: &str =
     otb_core::agent_model_variant_gates::MODEL_PROVIDER_CALLBACK_PREFIX;
 pub const MODEL_PROVIDER_MODEL_CALLBACK_PREFIX: &str =
     otb_core::agent_model_variant_gates::MODEL_PROVIDER_MODEL_CALLBACK_PREFIX;
-pub const MODEL_SEARCH_CALLBACK: &str =
-    otb_core::agent_model_variant_gates::MODEL_SEARCH_CALLBACK;
+pub const MODEL_SEARCH_CALLBACK: &str = otb_core::agent_model_variant_gates::MODEL_SEARCH_CALLBACK;
 pub const MODEL_SEARCH_AGAIN_CALLBACK: &str =
     otb_core::agent_model_variant_gates::MODEL_SEARCH_AGAIN_CALLBACK;
 pub const MODEL_SEARCH_CANCEL_CALLBACK: &str =
     otb_core::agent_model_variant_gates::MODEL_SEARCH_CANCEL_CALLBACK;
-pub const MODEL_ROOT_CALLBACK: &str =
-    otb_core::agent_model_variant_gates::MODEL_ROOT_CALLBACK;
+pub const MODEL_ROOT_CALLBACK: &str = otb_core::agent_model_variant_gates::MODEL_ROOT_CALLBACK;
 /// Node `MODEL_SEARCH_RESULT_CALLBACK_PREFIX` parity
 /// (`model-selection-callback-handler.ts`): search-result picks carry
 /// `callback_data = "model:result:<index>"` — note the prefix is *not*
 /// `model:search:result:` (unlike the session/project search shapes).
 pub const MODEL_SEARCH_RESULT_CALLBACK_PREFIX: &str =
     otb_core::agent_model_variant_gates::MODEL_SEARCH_RESULT_CALLBACK_PREFIX;
-pub const AGENT_CALLBACK_PREFIX: &str =
-    otb_core::agent_model_variant_gates::AGENT_CALLBACK_PREFIX;
+pub const AGENT_CALLBACK_PREFIX: &str = otb_core::agent_model_variant_gates::AGENT_CALLBACK_PREFIX;
 pub const VARIANT_CALLBACK_PREFIX: &str =
     otb_core::agent_model_variant_gates::VARIANT_CALLBACK_PREFIX;
 
@@ -2677,10 +2693,8 @@ pub const TASK_CANCEL_CALLBACK: &str = otb_core::recent_scheduled_gates::TASK_CA
 pub const TASKLIST_CALLBACK_PREFIX: &str =
     otb_core::recent_scheduled_gates::TASKLIST_CALLBACK_PREFIX;
 pub const TASKLIST_OPEN_PREFIX: &str = otb_core::recent_scheduled_gates::TASKLIST_OPEN_PREFIX;
-pub const TASKLIST_DELETE_PREFIX: &str =
-    otb_core::recent_scheduled_gates::TASKLIST_DELETE_PREFIX;
-pub const TASKLIST_TOGGLE_PREFIX: &str =
-    otb_core::recent_scheduled_gates::TASKLIST_TOGGLE_PREFIX;
+pub const TASKLIST_DELETE_PREFIX: &str = otb_core::recent_scheduled_gates::TASKLIST_DELETE_PREFIX;
+pub const TASKLIST_TOGGLE_PREFIX: &str = otb_core::recent_scheduled_gates::TASKLIST_TOGGLE_PREFIX;
 pub const TASKLIST_CANCEL_CALLBACK: &str =
     otb_core::recent_scheduled_gates::TASKLIST_CANCEL_CALLBACK;
 
@@ -2688,17 +2702,14 @@ pub const TASKLIST_CANCEL_CALLBACK: &str =
 /// `src/bot/menus/context-control-menu.ts` +
 /// `context-control-callback-handler.ts`). Values reuse
 /// `otb_core::context_inline_gates` so the shapes cannot drift.
-pub const COMPACT_DETAILS_CALLBACK: &str =
-    otb_core::context_inline_gates::COMPACT_DETAILS_CALLBACK;
-pub const COMPACT_CONFIRM_CALLBACK: &str =
-    otb_core::context_inline_gates::COMPACT_CONFIRM_CALLBACK;
+pub const COMPACT_DETAILS_CALLBACK: &str = otb_core::context_inline_gates::COMPACT_DETAILS_CALLBACK;
+pub const COMPACT_CONFIRM_CALLBACK: &str = otb_core::context_inline_gates::COMPACT_CONFIRM_CALLBACK;
 
 /// Node `inline:cancel:*` + legacy `compact:cancel` shapes (parity with
 /// `src/bot/menus/inline-menu.ts` +
 /// `inline-menu-cancel-callback-handler.ts`). Values reuse
 /// `otb_core::inline_menu_gates` so the shapes cannot drift.
-pub const INLINE_MENU_CANCEL_PREFIX: &str =
-    otb_core::inline_menu_gates::INLINE_MENU_CANCEL_PREFIX;
+pub const INLINE_MENU_CANCEL_PREFIX: &str = otb_core::inline_menu_gates::INLINE_MENU_CANCEL_PREFIX;
 pub const LEGACY_CONTEXT_CANCEL_CALLBACK: &str =
     otb_core::inline_menu_gates::LEGACY_CONTEXT_CANCEL_CALLBACK;
 
@@ -2804,8 +2815,7 @@ pub const PERMISSION_CALLBACK_REJECT: &str =
 /// File-browser callback prefixes (Node `file-browser-menu.ts` parity).
 /// Values reuse `otb_core::file_browser_menu_gates` so the shapes cannot
 /// drift.
-pub const OPEN_CALLBACK_PREFIX: &str =
-    otb_core::file_browser_menu_gates::OPEN_CALLBACK_PREFIX;
+pub const OPEN_CALLBACK_PREFIX: &str = otb_core::file_browser_menu_gates::OPEN_CALLBACK_PREFIX;
 pub const OPEN_CALLBACK_NAV_PREFIX: &str =
     otb_core::file_browser_menu_gates::OPEN_CALLBACK_NAV_PREFIX;
 pub const OPEN_CALLBACK_SELECT_PREFIX: &str =
@@ -2814,8 +2824,7 @@ pub const OPEN_CALLBACK_PAGE_PREFIX: &str =
     otb_core::file_browser_menu_gates::OPEN_CALLBACK_PAGE_PREFIX;
 pub const OPEN_CALLBACK_ROOTS: &str = otb_core::file_browser_menu_gates::OPEN_CALLBACK_ROOTS;
 pub const LS_CALLBACK_PREFIX: &str = otb_core::file_browser_menu_gates::LS_CALLBACK_PREFIX;
-pub const LS_CALLBACK_NAV_PREFIX: &str =
-    otb_core::file_browser_menu_gates::LS_CALLBACK_NAV_PREFIX;
+pub const LS_CALLBACK_NAV_PREFIX: &str = otb_core::file_browser_menu_gates::LS_CALLBACK_NAV_PREFIX;
 pub const LS_CALLBACK_FILE_PREFIX: &str =
     otb_core::file_browser_menu_gates::LS_CALLBACK_FILE_PREFIX;
 pub const LS_CALLBACK_DOWNLOAD_PREFIX: &str =
@@ -2982,8 +2991,9 @@ pub fn build_open_browse_keyboard(
         .iter()
         .map(|name| {
             let full = join_path(current_path, name);
-            let label =
-                truncate_browser_label(&otb_core::file_browser_service_gates::build_entry_label(name));
+            let label = truncate_browser_label(
+                &otb_core::file_browser_service_gates::build_entry_label(name),
+            );
             vec![InlineKeyboardButton::callback(
                 label,
                 format!("{OPEN_CALLBACK_NAV_PREFIX}{full}"),
@@ -2997,10 +3007,7 @@ pub fn build_open_browse_keyboard(
         if show_up {
             nav.push(InlineKeyboardButton::callback(
                 crate::locale::translate(locale, "open.back"),
-                format!(
-                    "{OPEN_CALLBACK_NAV_PREFIX}{}",
-                    parent_path(current_path)
-                ),
+                format!("{OPEN_CALLBACK_NAV_PREFIX}{}", parent_path(current_path)),
             ));
         }
         if show_roots {
@@ -3073,10 +3080,7 @@ pub fn build_ls_browse_keyboard(
     if has_parent && !is_project_root {
         rows.push(vec![InlineKeyboardButton::callback(
             crate::locale::translate(locale, "open.back"),
-            format!(
-                "{LS_CALLBACK_NAV_PREFIX}{}",
-                parent_path(current_path)
-            ),
+            format!("{LS_CALLBACK_NAV_PREFIX}{}", parent_path(current_path)),
         )]);
     }
     if total_pages > 1 {
@@ -3479,7 +3483,11 @@ pub fn build_mcps_list_keyboard(
         .iter()
         .enumerate()
         .map(|(index, server)| {
-            let raw_label = format!("{} {}", crate::commands::mcp_status_glyph(server.status.name), server.name);
+            let raw_label = format!(
+                "{} {}",
+                crate::commands::mcp_status_glyph(server.status.name),
+                server.name
+            );
             let label = if raw_label.chars().count() <= 64 {
                 raw_label
             } else {
@@ -3583,7 +3591,10 @@ pub fn build_models_keyboard(
             };
             vec![InlineKeyboardButton::callback(
                 label,
-                format!("{MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}{}", global_offset + index),
+                format!(
+                    "{MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}{}",
+                    global_offset + index
+                ),
             )]
         })
         .collect();
@@ -3661,15 +3672,11 @@ pub fn build_providers_keyboard(
 /// One button row per variant with `callback_data = "variant:<id>"` (pure;
 /// Node `buildVariantSelectionMenu` parity: the active variant keeps a `✅`
 /// mark and the display name is capitalized).
-pub fn build_variants_keyboard(
-    variants: &[String],
-    current: &str,
-) -> InlineKeyboardMarkup {
+pub fn build_variants_keyboard(variants: &[String], current: &str) -> InlineKeyboardMarkup {
     let rows: Vec<Vec<InlineKeyboardButton>> = variants
         .iter()
         .map(|variant| {
-            let display =
-                otb_core::agent_model_variant_gates::format_variant_for_display(variant);
+            let display = otb_core::agent_model_variant_gates::format_variant_for_display(variant);
             let label = if variant == current {
                 format!("✅ {display}")
             } else {
@@ -3875,7 +3882,10 @@ async fn ensure_execute_session(worktree: &str) -> Result<(String, String), &'st
     let current = crate::settings_current::read_settings_current(&app_home);
     if let (Some(id), Some(dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) {
         if dir == worktree {
             return Ok((id, dir));
@@ -3895,7 +3905,8 @@ async fn ensure_execute_session(worktree: &str) -> Result<(String, String), &'st
     if id.is_empty() {
         return Err("bot.create_session_error");
     }
-    if let Err(err) = crate::settings_current::write_current_session(&app_home, &id, &title, worktree)
+    if let Err(err) =
+        crate::settings_current::write_current_session(&app_home, &id, &title, worktree)
     {
         tracing::warn!("[otb-bot] telegram: cannot remember execute session: {err}");
         return Err("bot.create_session_error");
@@ -3911,7 +3922,10 @@ async fn agents_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
     let app_home = crate::config::resolve_app_home();
     let current = crate::settings_current::read_settings_current(&app_home);
     let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
-        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+        return (
+            crate::locale::translate(locale, "bot.project_not_selected"),
+            None,
+        );
     };
     let stored = current.agent.clone().unwrap_or_default();
     let client = crate::config::AppConfig::load()
@@ -3970,7 +3984,10 @@ async fn model_search_view(locale: &str, query: &str) -> (String, Option<InlineK
         Ok(raw) => raw,
         Err(err) => {
             tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
-            return (crate::locale::translate(locale, "model.providers.error"), None);
+            return (
+                crate::locale::translate(locale, "model.providers.error"),
+                None,
+            );
         }
     };
     let providers = crate::commands::provider_list_from_value(&raw);
@@ -4029,7 +4046,10 @@ async fn model_root_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>)
         Ok(raw) => raw,
         Err(err) => {
             tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
-            return (crate::locale::translate(locale, "model.providers.error"), None);
+            return (
+                crate::locale::translate(locale, "model.providers.error"),
+                None,
+            );
         }
     };
     let providers = crate::commands::provider_list_from_value(&raw);
@@ -4045,11 +4065,13 @@ async fn model_root_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>)
             .cmp(&format!("{}/{}", right.provider_id, right.model_id))
     });
     let limit = crate::config::MODELS_LIST_LIMIT.max(1);
-    let page_items: Vec<crate::commands::ModelListItem> =
-        flat.into_iter().take(limit).collect();
+    let page_items: Vec<crate::commands::ModelListItem> = flat.into_iter().take(limit).collect();
     let app_home = crate::config::resolve_app_home();
     let current = crate::settings_current::read_settings_current(&app_home);
-    let current_ref = match (current.model_provider.as_deref(), current.model_id.as_deref()) {
+    let current_ref = match (
+        current.model_provider.as_deref(),
+        current.model_id.as_deref(),
+    ) {
         (Some(provider), Some(model)) => Some((provider, model)),
         _ => None,
     };
@@ -4068,12 +4090,18 @@ async fn model_providers_view(locale: &str, page: usize) -> (String, Option<Inli
         Ok(raw) => raw,
         Err(err) => {
             tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
-            return (crate::locale::translate(locale, "model.providers.error"), None);
+            return (
+                crate::locale::translate(locale, "model.providers.error"),
+                None,
+            );
         }
     };
     let providers = crate::commands::provider_list_from_value(&raw);
     if providers.is_empty() {
-        return (crate::locale::translate(locale, "model.providers.empty"), None);
+        return (
+            crate::locale::translate(locale, "model.providers.empty"),
+            None,
+        );
     }
     let total = providers.len();
     let limit = crate::config::MODELS_LIST_LIMIT.max(1);
@@ -4086,7 +4114,10 @@ async fn model_providers_view(locale: &str, page: usize) -> (String, Option<Inli
     if total_pages > 1 {
         let indicator = crate::locale::translate(locale, "model.providers.page_indicator");
         let indicator = indicator.replace("{current}", &(page + 1).to_string());
-        text.push_str(&format!("\n\n{}", indicator.replace("{total}", &total_pages.to_string())));
+        text.push_str(&format!(
+            "\n\n{}",
+            indicator.replace("{total}", &total_pages.to_string())
+        ));
     }
     let keyboard = build_providers_keyboard(page_items, start, locale, page, total_pages);
     (text, Some(keyboard))
@@ -4108,7 +4139,10 @@ async fn model_provider_models_view(
         Ok(raw) => raw,
         Err(err) => {
             tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
-            return (crate::locale::translate(locale, "model.providers.error"), None);
+            return (
+                crate::locale::translate(locale, "model.providers.error"),
+                None,
+            );
         }
     };
     let providers = crate::commands::provider_list_from_value(&raw);
@@ -4136,11 +4170,17 @@ async fn model_provider_models_view(
     if total_pages > 1 {
         let indicator = crate::locale::translate(locale, "model.provider_models.page_indicator");
         let indicator = indicator.replace("{current}", "1");
-        text.push_str(&format!("\n\n{}", indicator.replace("{total}", &total_pages.to_string())));
+        text.push_str(&format!(
+            "\n\n{}",
+            indicator.replace("{total}", &total_pages.to_string())
+        ));
     }
     let app_home = crate::config::resolve_app_home();
     let current = crate::settings_current::read_settings_current(&app_home);
-    let current_ref = match (current.model_provider.as_deref(), current.model_id.as_deref()) {
+    let current_ref = match (
+        current.model_provider.as_deref(),
+        current.model_id.as_deref(),
+    ) {
         (Some(provider), Some(model)) => Some((provider, model)),
         _ => None,
     };
@@ -4164,7 +4204,10 @@ async fn variants_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
     let current = crate::settings_current::read_settings_current(&app_home);
     let (Some(provider), Some(model)) = (current.model_provider.clone(), current.model_id.clone())
     else {
-        return (crate::locale::translate(locale, "variant.select_model_first"), None);
+        return (
+            crate::locale::translate(locale, "variant.select_model_first"),
+            None,
+        );
     };
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
@@ -4185,10 +4228,8 @@ async fn variants_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
         .clone()
         .filter(|variant| !variant.is_empty())
         .unwrap_or_else(|| "default".to_string());
-    let display =
-        otb_core::agent_model_variant_gates::format_variant_for_display(&current_variant);
-    let text =
-        crate::locale::translate(locale, "variant.menu.current").replace("{name}", &display);
+    let display = otb_core::agent_model_variant_gates::format_variant_for_display(&current_variant);
+    let text = crate::locale::translate(locale, "variant.menu.current").replace("{name}", &display);
     let keyboard = build_variants_keyboard(&variants, &current_variant);
     (text, Some(keyboard))
 }
@@ -4241,7 +4282,7 @@ fn browser_roots() -> Vec<String> {
 fn scan_open_subdirs(
     dir: &str,
 ) -> Result<Vec<String>, otb_core::file_browser_service_gates::ScanErrorCode> {
-    use otb_core::file_browser_service_gates::{ScanErrorCode, is_visible_dir, sorted_dir_names};
+    use otb_core::file_browser_service_gates::{is_visible_dir, sorted_dir_names, ScanErrorCode};
     let entries = std::fs::read_dir(dir).map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => ScanErrorCode::NotFound,
         std::io::ErrorKind::PermissionDenied => ScanErrorCode::AccessDenied,
@@ -4264,8 +4305,13 @@ fn scan_open_subdirs(
 /// the caller performs). Blocking; callers run it inside `spawn_blocking`.
 fn scan_ls_entries(
     dir: &str,
-) -> Result<Vec<otb_core::file_browser_service_gates::LsEntry>, otb_core::file_browser_service_gates::ScanErrorCode> {
-    use otb_core::file_browser_service_gates::{LsEntry, ScanErrorCode, join_path, sort_ls_entries};
+) -> Result<
+    Vec<otb_core::file_browser_service_gates::LsEntry>,
+    otb_core::file_browser_service_gates::ScanErrorCode,
+> {
+    use otb_core::file_browser_service_gates::{
+        join_path, sort_ls_entries, LsEntry, ScanErrorCode,
+    };
     let entries = std::fs::read_dir(dir).map_err(|err| match err.kind() {
         std::io::ErrorKind::NotFound => ScanErrorCode::NotFound,
         std::io::ErrorKind::PermissionDenied => ScanErrorCode::AccessDenied,
@@ -4316,8 +4362,8 @@ async fn open_browse_page(
     locale: &str,
 ) -> (String, Option<InlineKeyboardMarkup>) {
     use otb_core::file_browser_service_gates::{
-        ScanErrorCode, clamp_page, is_allowed_root, is_within_allowed_root, page_slice_range,
-        parent_path, path_to_display_path, total_pages,
+        clamp_page, is_allowed_root, is_within_allowed_root, page_slice_range, parent_path,
+        path_to_display_path, total_pages, ScanErrorCode,
     };
     let home = home_directory();
     let roots = browser_roots();
@@ -4331,8 +4377,8 @@ async fn open_browse_page(
                 ScanErrorCode::NotDirectory => format!("Not a directory: {dir}"),
                 ScanErrorCode::Unknown => "Unknown error".to_string(),
             };
-            let text = crate::locale::translate(locale, "open.scan_error")
-                .replace("{error}", &detail);
+            let text =
+                crate::locale::translate(locale, "open.scan_error").replace("{error}", &detail);
             return (text, None);
         }
         Err(err) => {
@@ -4387,14 +4433,15 @@ fn open_roots_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
 /// otherwise the numbered text list plus the browse keyboard, first page
 /// only). Taps are handled by [`handle_ls_callback`].
 async fn ls_view(locale: &str, args: &str) -> (String, Option<InlineKeyboardMarkup>) {
-    use otb_core::browse_command_gates::{
-        resolve_ls_target, should_report_ls_access_denied,
-    };
+    use otb_core::browse_command_gates::{resolve_ls_target, should_report_ls_access_denied};
     use otb_core::file_browser_service_gates::{is_path_within_directory, join_path};
     let app_home = crate::config::resolve_app_home();
     let current = crate::settings_current::read_settings_current(&app_home);
     let Some(project_root) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
-        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+        return (
+            crate::locale::translate(locale, "bot.project_not_selected"),
+            None,
+        );
     };
     let explicit = if args.trim().is_empty() {
         None
@@ -4404,7 +4451,10 @@ async fn ls_view(locale: &str, args: &str) -> (String, Option<InlineKeyboardMark
     // Scaffold memory: no per-user remembered directory yet, so an empty
     // argument lists the project root itself.
     let Some(target) = resolve_ls_target(explicit, Some(&project_root)) else {
-        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+        return (
+            crate::locale::translate(locale, "bot.project_not_selected"),
+            None,
+        );
     };
     // Relative arguments resolve against the project root (Node takes the
     // argument as-is; the scaffold keeps browsing inside the project).
@@ -4415,7 +4465,10 @@ async fn ls_view(locale: &str, args: &str) -> (String, Option<InlineKeyboardMark
     };
     if should_report_ls_access_denied(is_path_within_directory(&target, &project_root)) {
         return (
-            format!("❌ {}", crate::locale::translate(locale, "ls.access_denied")),
+            format!(
+                "❌ {}",
+                crate::locale::translate(locale, "ls.access_denied")
+            ),
             None,
         );
     }
@@ -4527,7 +4580,10 @@ async fn rename_prompt_view(locale: &str) -> String {
     let current = crate::settings_current::read_settings_current(&app_home);
     let (Some(session_id), Some(session_dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) else {
         return crate::locale::translate(locale, "rename.no_session");
     };
@@ -4561,14 +4617,20 @@ async fn rename_apply_view(locale: &str, raw_title: &str) -> String {
     let current = crate::settings_current::read_settings_current(&app_home);
     let (Some(session_id), Some(session_dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) else {
         return crate::locale::translate(locale, "rename.no_session");
     };
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    if let Err(err) = client.update_session_title(&session_id, &session_dir, &title).await {
+    if let Err(err) = client
+        .update_session_title(&session_id, &session_dir, &title)
+        .await
+    {
         tracing::warn!("[otb-bot] telegram: rename failed: {err}");
         return crate::locale::translate(locale, "rename.error");
     }
@@ -4591,7 +4653,10 @@ async fn abort_view(locale: &str) -> String {
     let current = crate::settings_current::read_settings_current(&app_home);
     let (Some(session_id), Some(session_dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) else {
         return crate::commands::render_abort_no_session(Some(locale));
     };
@@ -4627,7 +4692,10 @@ async fn detach_view(locale: &str) -> String {
     }
     let (Some(session_id), Some(session_dir)) = (
         current.session_id.clone().filter(|id| !id.is_empty()),
-        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+        current
+            .session_directory
+            .clone()
+            .filter(|dir| !dir.is_empty()),
     ) else {
         return crate::locale::translate(locale, "detach.no_active_session");
     };
@@ -4766,10 +4834,7 @@ fn goal_view(locale: &str, args: &str) -> String {
             .session_directory
             .as_deref()
             .is_some_and(|dir| !dir.is_empty());
-    let session_matches_project = match (
-        &current.session_directory,
-        &current.project_worktree,
-    ) {
+    let session_matches_project = match (&current.session_directory, &current.project_worktree) {
         (Some(dir), Some(worktree)) => dir == worktree,
         _ => false,
     };
@@ -4858,7 +4923,11 @@ async fn handle_catalog_callback(
     }
     let data = query.data.as_deref().unwrap_or("");
     let (is_cancel, is_execute, prefix) = match kind {
-        CatalogKind::Commands => (is_commands_cancel(data), is_commands_execute(data), "commands"),
+        CatalogKind::Commands => (
+            is_commands_cancel(data),
+            is_commands_execute(data),
+            "commands",
+        ),
         CatalogKind::Skills => (is_skills_cancel(data), is_skills_execute(data), "skills"),
     };
     if is_cancel {
@@ -5000,16 +5069,16 @@ async fn handle_catalog_execute(
             return;
         }
     };
-    let executing = crate::commands::render_executing_notice(
-        &format!("{prefix}.executing_prefix"),
-        &name,
-        "",
-    );
+    let executing =
+        crate::commands::render_executing_notice(&format!("{prefix}.executing_prefix"), &name, "");
     reply_list_view(bot, chat_id, &executing, None).await;
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
-    if let Err(err) = client.prompt_session(&session_id, &format!("/{name}")).await {
+    if let Err(err) = client
+        .prompt_session(&session_id, &format!("/{name}"))
+        .await
+    {
         tracing::warn!("[otb-bot] telegram: catalog execute prompt failed: {err}");
         reply_list_view(
             bot,
@@ -5116,9 +5185,8 @@ async fn handle_mcp_toggle(bot: &teloxide_core::Bot, locale: &str, query: &Callb
             return;
         }
     };
-    let name = callback_message_text(query).and_then(|text| {
-        resolve_mcp_detail_name(text, &servers, locale)
-    });
+    let name = callback_message_text(query)
+        .and_then(|text| resolve_mcp_detail_name(text, &servers, locale));
     let Some(name) = name else {
         answer_callback(
             bot,
@@ -5145,7 +5213,14 @@ async fn handle_mcp_toggle(bot: &teloxide_core::Bot, locale: &str, query: &Callb
         server.status.name,
         otb_core::session_pick_catalog_gates::McpStatusName::Connected
     );
-    let toast = crate::locale::translate(locale, if enable { "mcps.enabling" } else { "mcps.disabling" });
+    let toast = crate::locale::translate(
+        locale,
+        if enable {
+            "mcps.enabling"
+        } else {
+            "mcps.disabling"
+        },
+    );
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
@@ -5246,7 +5321,10 @@ async fn handle_agent_callback(
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "agent.change_error_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "agent.change_error_callback",
+            )),
             true,
         )
         .await;
@@ -5257,7 +5335,10 @@ async fn handle_agent_callback(
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "agent.change_error_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "agent.change_error_callback",
+            )),
             true,
         )
         .await;
@@ -5332,19 +5413,26 @@ async fn handle_variant_callback(
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "variant.change_error_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "variant.change_error_callback",
+            )),
             true,
         )
         .await;
         return;
     }
-    if let Err(err) = crate::settings_current::write_current_model(&app_home, &provider, &model, Some(id))
+    if let Err(err) =
+        crate::settings_current::write_current_model(&app_home, &provider, &model, Some(id))
     {
         tracing::warn!("[otb-bot] telegram: cannot remember selected variant: {err}");
         answer_callback(
             bot,
             query,
-            Some(crate::locale::translate(locale, "variant.change_error_callback")),
+            Some(crate::locale::translate(
+                locale,
+                "variant.change_error_callback",
+            )),
             true,
         )
         .await;
@@ -5509,8 +5597,7 @@ async fn handle_model_callback(
     if let Some((provider_index, _)) = parse_model_provider_callback(data) {
         answer_callback(bot, query, None, false).await;
         if let Some(chat_id) = callback_chat_id(query) {
-            let (text, keyboard) =
-                model_provider_models_view(locale, provider_index, 0).await;
+            let (text, keyboard) = model_provider_models_view(locale, provider_index, 0).await;
             reply_list_view(bot, chat_id, &text, keyboard).await;
         }
         return;
@@ -5554,8 +5641,7 @@ async fn handle_model_callback(
     // remembered search state. Every known shape returned above, so anything
     // reaching here is either legacy or garbage (a catalog miss answers
     // `model.change_error_callback`, like Node's invalid path).
-    if let Some(resolved) = otb_core::agent_model_variant_gates::parse_legacy_model_callback(data)
-    {
+    if let Some(resolved) = otb_core::agent_model_variant_gates::parse_legacy_model_callback(data) {
         answer_callback(bot, query, None, false).await;
         if let Some(chat_id) = callback_chat_id(query) {
             apply_model_legacy_pick(
@@ -5572,12 +5658,7 @@ async fn handle_model_callback(
 
 /// Apply a `model:list:<kind>:<n>` tap against the root menu's flat first-page
 /// list. Unknown indexes answer `model.change_error_callback`.
-async fn apply_model_root_pick(
-    bot: &teloxide_core::Bot,
-    locale: &str,
-    chat_id: i64,
-    index: usize,
-) {
+async fn apply_model_root_pick(bot: &teloxide_core::Bot, locale: &str, chat_id: i64, index: usize) {
     let client = crate::config::AppConfig::load()
         .map(|config| config.opencode_client())
         .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
@@ -5706,15 +5787,19 @@ async fn apply_model_pick(
     model_id: &str,
 ) {
     let app_home = crate::config::resolve_app_home();
-    if let Err(err) =
-        crate::settings_current::write_current_model(&app_home, provider_id, model_id, Some("default"))
-    {
+    if let Err(err) = crate::settings_current::write_current_model(
+        &app_home,
+        provider_id,
+        model_id,
+        Some("default"),
+    ) {
         tracing::warn!("[otb-bot] telegram: cannot remember selected model: {err}");
         answer_no_query_model_error(bot, chat_id, locale).await;
         return;
     }
     tracing::info!("[otb-bot] telegram: model selected");
-    let confirmation = crate::commands::render_model_changed(provider_id, model_id, None, Some(locale));
+    let confirmation =
+        crate::commands::render_model_changed(provider_id, model_id, None, Some(locale));
     reply_list_view(bot, chat_id, &confirmation, None).await;
     // Variant follow-up (Node parity): only when the model offers a real
     // choice; failures stay silent so the model confirmation stands.
@@ -5836,13 +5921,12 @@ async fn handle_open_callback(
             return;
         };
         let home = home_directory();
-        let display =
-            otb_core::file_browser_service_gates::path_to_display_path(path, &home);
+        let display = otb_core::file_browser_service_gates::path_to_display_path(path, &home);
         let folder = crate::commands::get_project_folder_name(path);
         let app_home = crate::config::resolve_app_home();
-        if let Err(err) = crate::settings_current::write_current_project(
-            &app_home, path, path, &folder,
-        ) {
+        if let Err(err) =
+            crate::settings_current::write_current_project(&app_home, path, path, &folder)
+        {
             tracing::warn!("[otb-bot] telegram: cannot remember selected open directory: {err}");
             answer_callback(
                 bot,
@@ -5855,8 +5939,8 @@ async fn handle_open_callback(
         }
         tracing::info!("[otb-bot] telegram: open directory selected");
         answer_callback(bot, query, None, false).await;
-        let confirmation = crate::locale::translate(locale, "open.selected")
-            .replace("{project}", &display);
+        let confirmation =
+            crate::locale::translate(locale, "open.selected").replace("{project}", &display);
         reply_list_view(bot, chat_id, &confirmation, None).await;
     }
 }
@@ -5938,13 +6022,10 @@ async fn handle_ls_callback(
         answer_callback(bot, query, None, false).await;
         if let Some(chat_id) = callback_chat_id(query) {
             let relative = path
-                .strip_prefix(&format!(
-                    "{}/",
-                    project_root.trim_end_matches(['/', '\\'])
-                ))
+                .strip_prefix(&format!("{}/", project_root.trim_end_matches(['/', '\\'])))
                 .unwrap_or(path);
-            let confirmation = crate::locale::translate(locale, "attachment.added")
-                .replace("{path}", relative);
+            let confirmation =
+                crate::locale::translate(locale, "attachment.added").replace("{path}", relative);
             reply_list_view(bot, chat_id, &confirmation, None).await;
         }
         return;
@@ -5969,17 +6050,15 @@ async fn handle_ls_callback(
         .await;
         if let Some(chat_id) = callback_chat_id(query) {
             let probed = path.to_string();
-            let meta =
-                match tokio::task::spawn_blocking(move || std::fs::metadata(&probed)).await {
-                    Ok(Ok(meta)) => Some(meta),
-                    _ => None,
-                };
+            let meta = match tokio::task::spawn_blocking(move || std::fs::metadata(&probed)).await {
+                Ok(Ok(meta)) => Some(meta),
+                _ => None,
+            };
             match meta {
                 Some(meta) if meta.is_file() => {
                     let name = otb_core::file_browser_service_gates::base_name(path);
                     let size_text = otb_core::media_prompt::format_file_size(meta.len());
-                    let size_label =
-                        crate::locale::translate(locale, "commands.download.size");
+                    let size_label = crate::locale::translate(locale, "commands.download.size");
                     let header = crate::locale::translate(locale, "ls.file.header");
                     let text = format!(
                         "📄 {header}\n<code>{}</code>\n{size_label}: {size_text}",
@@ -6587,7 +6666,9 @@ mod tests {
         assert!(!polling_enabled_from(Some("")));
         assert!(!polling_enabled_from(Some("true")));
         // Default process env must keep polling off.
-        assert!(!polling_enabled_from(std::env::var(POLLING_ENV).ok().as_deref()));
+        assert!(!polling_enabled_from(
+            std::env::var(POLLING_ENV).ok().as_deref()
+        ));
     }
 
     #[test]
@@ -6609,7 +6690,10 @@ mod tests {
             "test-token"
         );
         assert_eq!(resolve_token_ordered(None, None), DUMMY_TOKEN);
-        assert_eq!(resolve_token_ordered(Some("  "), Some("test-token")), "test-token");
+        assert_eq!(
+            resolve_token_ordered(Some("  "), Some("test-token")),
+            "test-token"
+        );
         // Env-backed check with dummy values only (no network, no live paths).
         let prev_live = std::env::var(LIVE_TOKEN_ENV).ok();
         let prev_test = std::env::var(TEST_TOKEN_ENV).ok();
@@ -6685,14 +6769,13 @@ mod tests {
     #[test]
     fn catalog_json_conversion_feeds_mcp_parser() {
         use otb_core::session_pick_catalog_gates::{
-            McpStatusName as Name, parse_mcp_catalog_servers,
+            parse_mcp_catalog_servers, McpStatusName as Name,
         };
         let value = serde_json::json!({
             "gh": { "status": "connected" },
             "db": { "status": "failed", "error": "boom" },
         });
-        let servers =
-            parse_mcp_catalog_servers(&catalog_json_from_value(&value)).expect("parses");
+        let servers = parse_mcp_catalog_servers(&catalog_json_from_value(&value)).expect("parses");
         assert_eq!(servers.len(), 2);
         // `serde_json::Map` sorts keys (JS `Object.entries` preserves
         // insertion order), so look servers up by name.
@@ -6736,7 +6819,13 @@ mod tests {
         std::env::remove_var("OPEN_BROWSER_ROOTS");
         assert_eq!(browser_roots(), vec!["/tmp/fake-home".to_string()]);
         std::env::set_var("OPEN_BROWSER_ROOTS", " ~/a ,, ~/b ");
-        assert_eq!(browser_roots(), vec!["/tmp/fake-home/a".to_string(), "/tmp/fake-home/b".to_string()]);
+        assert_eq!(
+            browser_roots(),
+            vec![
+                "/tmp/fake-home/a".to_string(),
+                "/tmp/fake-home/b".to_string()
+            ]
+        );
         match prev {
             Some(value) => std::env::set_var("OPEN_BROWSER_ROOTS", value),
             None => std::env::remove_var("OPEN_BROWSER_ROOTS"),
@@ -6825,7 +6914,10 @@ mod tests {
 
     #[test]
     fn project_and_worktree_callbacks_parse_node_shapes() {
-        assert_eq!(parse_project_id_callback("project:dir_abc"), Some("dir_abc"));
+        assert_eq!(
+            parse_project_id_callback("project:dir_abc"),
+            Some("dir_abc")
+        );
         assert_eq!(parse_project_id_callback("projects:page:2"), None);
         assert_eq!(parse_project_id_callback("project:"), None);
         assert_eq!(parse_project_page_callback("projects:page:2"), Some(2));
@@ -6844,10 +6936,7 @@ mod tests {
         assert_eq!(parse_recent_page_callback("recent:page:"), None);
         assert_eq!(parse_recent_page_callback("recent:page:-1"), None);
         assert_eq!(parse_recent_index_callback("recent:page:1"), None);
-        assert_eq!(
-            parse_message_select_callback("messages:select:4"),
-            Some(4)
-        );
+        assert_eq!(parse_message_select_callback("messages:select:4"), Some(4));
         assert_eq!(parse_message_select_callback("messages:page:1"), None);
         assert_eq!(parse_message_page_callback("messages:page:1"), Some(1));
     }
@@ -6986,10 +7075,7 @@ mod tests {
         let mid = build_sessions_keyboard(&sessions, None, "en", 1, 3);
         assert_eq!(
             pager_data(&mid),
-            vec![
-                "session:page:0".to_string(),
-                "session:page:2".to_string()
-            ]
+            vec!["session:page:0".to_string(), "session:page:2".to_string()]
         );
 
         let projects = vec![crate::commands::ProjectListItem {
@@ -7132,7 +7218,10 @@ mod tests {
         assert_eq!(resolve_message_detail_index(&second, &items), Some(1));
         // Edited or foreign text matches nothing, so the caller falls back
         // to the inactive notice plus the list view.
-        assert_eq!(resolve_message_detail_index("Select a message", &items), None);
+        assert_eq!(
+            resolve_message_detail_index("Select a message", &items),
+            None
+        );
         assert_eq!(
             resolve_message_detail_index(&format!("{second} (edited)"), &items),
             None
@@ -7210,10 +7299,7 @@ mod tests {
         assert!(!is_question_callback("permission:once"));
         assert!(!is_question_callback("bogus"));
         let select = parse_question_callback("question:select:0:1").expect("select parses");
-        assert_eq!(
-            (select.question_index, select.option_index),
-            (0, Some(1))
-        );
+        assert_eq!((select.question_index, select.option_index), (0, Some(1)));
         assert!(parse_question_callback("question:select:0").is_none());
         assert!(parse_question_callback("question:bogus:0").is_none());
         assert!(parse_question_callback("permission:once").is_none());
@@ -7252,12 +7338,24 @@ mod tests {
         );
         assert_eq!(parse_model_list_callback("model:list:bogus:0"), None);
         assert_eq!(parse_model_list_callback("model:list:favorites:"), None);
-        assert_eq!(parse_model_list_callback("model:list:favorites:2:extra"), None);
+        assert_eq!(
+            parse_model_list_callback("model:list:favorites:2:extra"),
+            None
+        );
         assert_eq!(parse_model_list_callback("model:pick:2"), None);
         // Providers browser (`model-selection-menu.ts` parity).
-        assert_eq!(parse_model_providers_page_callback("model:providers:1"), Some(1));
-        assert_eq!(parse_model_providers_page_callback("model:provider:0:1"), None);
-        assert_eq!(parse_model_provider_callback("model:provider:2:1"), Some((2, 1)));
+        assert_eq!(
+            parse_model_providers_page_callback("model:providers:1"),
+            Some(1)
+        );
+        assert_eq!(
+            parse_model_providers_page_callback("model:provider:0:1"),
+            None
+        );
+        assert_eq!(
+            parse_model_provider_callback("model:provider:2:1"),
+            Some((2, 1))
+        );
         assert_eq!(parse_model_provider_callback("model:provider:2"), None);
         assert_eq!(parse_model_provider_callback("model:provider:2:1:3"), None);
         assert_eq!(parse_model_pick_callback("model:pick:4"), Some(4));
@@ -7275,17 +7373,44 @@ mod tests {
         assert_eq!(SESSION_SEARCH_CANCEL_CALLBACK, "session:search:cancel");
         assert_eq!(SESSION_SEARCH_PAGE_PREFIX, "session:search:page:");
         assert_eq!(SESSION_SEARCH_RESULT_PREFIX, "session:search:result:");
-        assert_eq!(parse_session_search_page_callback("session:search:page:2"), Some(2));
-        assert_eq!(parse_session_search_page_callback("session:search:page:"), None);
-        assert_eq!(parse_session_search_page_callback("session:search:page:-1"), None);
-        assert_eq!(parse_session_search_page_callback("session:search:page:2x"), None);
+        assert_eq!(
+            parse_session_search_page_callback("session:search:page:2"),
+            Some(2)
+        );
+        assert_eq!(
+            parse_session_search_page_callback("session:search:page:"),
+            None
+        );
+        assert_eq!(
+            parse_session_search_page_callback("session:search:page:-1"),
+            None
+        );
+        assert_eq!(
+            parse_session_search_page_callback("session:search:page:2x"),
+            None
+        );
         assert_eq!(parse_session_search_page_callback("session:page:2"), None);
         assert_eq!(parse_session_search_page_callback("session:search"), None);
-        assert_eq!(parse_session_search_result_callback("session:search:result:0"), Some(0));
-        assert_eq!(parse_session_search_result_callback("session:search:result:12"), Some(12));
-        assert_eq!(parse_session_search_result_callback("session:search:result:"), None);
-        assert_eq!(parse_session_search_result_callback("session:search:result:x"), None);
-        assert_eq!(parse_session_search_result_callback("session:search:page:1"), None);
+        assert_eq!(
+            parse_session_search_result_callback("session:search:result:0"),
+            Some(0)
+        );
+        assert_eq!(
+            parse_session_search_result_callback("session:search:result:12"),
+            Some(12)
+        );
+        assert_eq!(
+            parse_session_search_result_callback("session:search:result:"),
+            None
+        );
+        assert_eq!(
+            parse_session_search_result_callback("session:search:result:x"),
+            None
+        );
+        assert_eq!(
+            parse_session_search_result_callback("session:search:page:1"),
+            None
+        );
         // Page/result taps never leak into the select/page parsers.
         assert_eq!(parse_session_id_callback("session:page:1"), None);
         assert_eq!(parse_session_page_callback("session:search:page:1"), None);
@@ -7297,16 +7422,40 @@ mod tests {
         assert_eq!(PROJECT_SEARCH_CANCEL_CALLBACK, "projects:search:cancel");
         assert_eq!(PROJECT_SEARCH_PAGE_PREFIX, "projects:search:page:");
         assert_eq!(PROJECT_SEARCH_RESULT_PREFIX, "projects:search:result:");
-        assert_eq!(parse_project_search_page_callback("projects:search:page:1"), Some(1));
-        assert_eq!(parse_project_search_page_callback("projects:search:page:"), None);
-        assert_eq!(parse_project_search_page_callback("projects:search:page:1x"), None);
+        assert_eq!(
+            parse_project_search_page_callback("projects:search:page:1"),
+            Some(1)
+        );
+        assert_eq!(
+            parse_project_search_page_callback("projects:search:page:"),
+            None
+        );
+        assert_eq!(
+            parse_project_search_page_callback("projects:search:page:1x"),
+            None
+        );
         assert_eq!(parse_project_search_page_callback("projects:page:1"), None);
-        assert_eq!(parse_project_search_result_callback("projects:search:result:3"), Some(3));
-        assert_eq!(parse_project_search_result_callback("projects:search:result:"), None);
-        assert_eq!(parse_project_search_result_callback("projects:search:result:-1"), None);
-        assert_eq!(parse_project_search_result_callback("projects:search:page:1"), None);
+        assert_eq!(
+            parse_project_search_result_callback("projects:search:result:3"),
+            Some(3)
+        );
+        assert_eq!(
+            parse_project_search_result_callback("projects:search:result:"),
+            None
+        );
+        assert_eq!(
+            parse_project_search_result_callback("projects:search:result:-1"),
+            None
+        );
+        assert_eq!(
+            parse_project_search_result_callback("projects:search:page:1"),
+            None
+        );
         assert_eq!(parse_project_page_callback("projects:search:page:1"), None);
-        assert_eq!(parse_project_page_callback("projects:search:result:1"), None);
+        assert_eq!(
+            parse_project_page_callback("projects:search:result:1"),
+            None
+        );
 
         // Model search (`model-selection-menu.ts` +
         // `model-selection-callback-handler.ts` parity): the result prefix is
@@ -7315,12 +7464,21 @@ mod tests {
         assert_eq!(MODEL_SEARCH_AGAIN_CALLBACK, "model:search:again");
         assert_eq!(MODEL_SEARCH_CANCEL_CALLBACK, "model:search:cancel");
         assert_eq!(MODEL_SEARCH_RESULT_CALLBACK_PREFIX, "model:result:");
-        assert_eq!(parse_model_search_result_callback("model:result:4"), Some(4));
-        assert_eq!(parse_model_search_result_callback("model:result:0"), Some(0));
+        assert_eq!(
+            parse_model_search_result_callback("model:result:4"),
+            Some(4)
+        );
+        assert_eq!(
+            parse_model_search_result_callback("model:result:0"),
+            Some(0)
+        );
         assert_eq!(parse_model_search_result_callback("model:result:"), None);
         assert_eq!(parse_model_search_result_callback("model:result:x"), None);
         assert_eq!(parse_model_search_result_callback("model:search"), None);
-        assert_eq!(parse_model_search_result_callback("model:search:result:1"), None);
+        assert_eq!(
+            parse_model_search_result_callback("model:search:result:1"),
+            None
+        );
         assert_eq!(parse_model_search_result_callback("model:pick:4"), None);
         assert_eq!(parse_model_pick_callback("model:result:4"), None);
     }
@@ -7466,7 +7624,10 @@ mod tests {
         assert_eq!(markup.inline_keyboard.len(), 1);
         assert_eq!(
             callback_data(&markup),
-            vec!["commands:execute".to_string(), "commands:cancel".to_string()]
+            vec![
+                "commands:execute".to_string(),
+                "commands:cancel".to_string()
+            ]
         );
         let markup = build_catalog_confirm_keyboard(CatalogKind::Skills, "en");
         assert_eq!(
@@ -7484,7 +7645,9 @@ mod tests {
 
     #[test]
     fn mcp_agent_variant_model_keyboards_carry_node_callback_data() {
-        use otb_core::session_pick_catalog_gates::{McpCatalogServerItem, McpServerStatus, McpStatusName};
+        use otb_core::session_pick_catalog_gates::{
+            McpCatalogServerItem, McpServerStatus, McpStatusName,
+        };
         use teloxide_core::types::InlineKeyboardButtonKind;
 
         fn callback_data(markup: &InlineKeyboardMarkup) -> Vec<String> {
@@ -7565,18 +7728,22 @@ mod tests {
             },
         ];
         let markup = build_agents_keyboard(&agents, Some("build"));
-        assert_eq!(callback_data(&markup), vec!["agent:build".to_string(), "agent:plan".to_string()]);
+        assert_eq!(
+            callback_data(&markup),
+            vec!["agent:build".to_string(), "agent:plan".to_string()]
+        );
         assert!(markup.inline_keyboard[0][0].text.starts_with("✅ "));
         assert!(!markup.inline_keyboard[1][0].text.starts_with("✅ "));
         // Variants: one `variant:<id>` row per variant (Node
         // `buildVariantSelectionMenu` parity).
-        let markup = build_variants_keyboard(
-            &["default".to_string(), "thinking".to_string()],
-            "thinking",
-        );
+        let markup =
+            build_variants_keyboard(&["default".to_string(), "thinking".to_string()], "thinking");
         assert_eq!(
             callback_data(&markup),
-            vec!["variant:default".to_string(), "variant:thinking".to_string()]
+            vec![
+                "variant:default".to_string(),
+                "variant:thinking".to_string()
+            ]
         );
         assert!(markup.inline_keyboard[1][0].text.starts_with("✅ "));
         // Model root: `[Search, Providers]` first row plus one
@@ -7901,7 +8068,10 @@ mod tests {
         assert!(is_open_roots("open:roots"));
         assert!(!is_open_roots("open:nav:/a"));
         assert!(!is_open_roots("open:roots:extra"));
-        assert_eq!(parse_open_nav_callback("open:nav:/work/proj"), Some("/work/proj"));
+        assert_eq!(
+            parse_open_nav_callback("open:nav:/work/proj"),
+            Some("/work/proj")
+        );
         assert_eq!(parse_open_nav_callback("open:nav:"), None);
         assert_eq!(parse_open_nav_callback("open:sel:/a"), None);
         assert_eq!(
@@ -7919,7 +8089,10 @@ mod tests {
         assert_eq!(parse_open_page_callback("open:pg:/a|x"), None);
         assert_eq!(parse_open_page_callback("open:nav:/a"), None);
         // `ls:*` parity.
-        assert_eq!(parse_ls_nav_callback("ls:nav:/work/proj/src"), Some("/work/proj/src"));
+        assert_eq!(
+            parse_ls_nav_callback("ls:nav:/work/proj/src"),
+            Some("/work/proj/src")
+        );
         assert_eq!(parse_ls_nav_callback("ls:nav:"), None);
         assert_eq!(parse_ls_nav_callback("ls:pg:/a|0"), None);
         assert_eq!(
@@ -7952,12 +8125,7 @@ mod tests {
         assert_eq!(parse_ls_nav_callback("ls:pg:/work/proj|1"), None);
         assert_eq!(parse_open_nav_callback("open:pg:/work/proj|1"), None);
         // The shared prefixes route every browser callback to its handler.
-        for data in [
-            "open:nav:/a",
-            "open:sel:/a",
-            "open:pg:/a|0",
-            "open:roots",
-        ] {
+        for data in ["open:nav:/a", "open:sel:/a", "open:pg:/a|0", "open:roots"] {
             assert!(data.starts_with(OPEN_CALLBACK_PREFIX), "{data}");
         }
         for data in [

@@ -57,7 +57,10 @@ fn exact_64_label_passes_through() {
 
 #[test]
 fn overlong_label_cuts_with_ellipsis() {
-    assert_eq!(truncate_label(&"a".repeat(65)), format!("{}...", "a".repeat(61)));
+    assert_eq!(
+        truncate_label(&"a".repeat(65)),
+        format!("{}...", "a".repeat(61))
+    );
 }
 
 #[test]
@@ -152,20 +155,32 @@ fn decode_indexed_path_resolves() {
     let mut index = PathIndex::new();
     let path = "p".repeat(60);
     let encoded = encode_path_for_callback(&mut index, OPEN_CALLBACK_NAV_PREFIX, &path, 0);
-    assert_eq!(decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, &encoded), Some(path));
+    assert_eq!(
+        decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, &encoded),
+        Some(path)
+    );
 }
 
 #[test]
 fn decode_unknown_key_returns_none() {
     let index = PathIndex::new();
-    assert_eq!(decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "open:nav:#7"), None);
+    assert_eq!(
+        decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "open:nav:#7"),
+        None
+    );
 }
 
 #[test]
 fn decode_wrong_prefix_returns_none() {
     let index = PathIndex::new();
-    assert_eq!(decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "open:sel:/x"), None);
-    assert_eq!(decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "ls:nav:/x"), None);
+    assert_eq!(
+        decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "open:sel:/x"),
+        None
+    );
+    assert_eq!(
+        decode_path_from_callback(&index, OPEN_CALLBACK_NAV_PREFIX, "ls:nav:/x"),
+        None
+    );
 }
 
 // --- pagination encode/decode ---
@@ -194,7 +209,10 @@ fn open_page_decode_simple() {
     let index = PathIndex::new();
     assert_eq!(
         decode_open_pagination_callback(&index, "open:pg:/a|2"),
-        Some(PathWithPage { path: "/a".to_string(), page: 2 })
+        Some(PathWithPage {
+            path: "/a".to_string(),
+            page: 2
+        })
     );
 }
 
@@ -204,7 +222,10 @@ fn page_decode_keeps_pipe_in_path() {
     let index = PathIndex::new();
     assert_eq!(
         decode_ls_pagination_callback(&index, "ls:pg:/a|b|2"),
-        Some(PathWithPage { path: "/a|b".to_string(), page: 2 })
+        Some(PathWithPage {
+            path: "/a|b".to_string(),
+            page: 2
+        })
     );
 }
 
@@ -224,7 +245,10 @@ fn ls_file_decode_reads_page_suffix() {
     let index = PathIndex::new();
     assert_eq!(
         decode_ls_file_callback(&index, "ls:file:/notes.txt|1"),
-        Some(PathWithPage { path: "/notes.txt".to_string(), page: 1 })
+        Some(PathWithPage {
+            path: "/notes.txt".to_string(),
+            page: 1
+        })
     );
 }
 
@@ -233,7 +257,10 @@ fn ls_back_decode_reads_page_suffix() {
     let index = PathIndex::new();
     assert_eq!(
         decode_ls_back_callback(&index, "ls:back:/proj|0"),
-        Some(PathWithPage { path: "/proj".to_string(), page: 0 })
+        Some(PathWithPage {
+            path: "/proj".to_string(),
+            page: 0
+        })
     );
 }
 
@@ -249,14 +276,20 @@ fn ls_attach_decode_reads_plain_path() {
 #[test]
 fn page_decode_wrong_prefix_none() {
     let index = PathIndex::new();
-    assert_eq!(decode_open_pagination_callback(&index, "open:nav:/a|2"), None);
+    assert_eq!(
+        decode_open_pagination_callback(&index, "open:nav:/a|2"),
+        None
+    );
     assert_eq!(decode_ls_pagination_callback(&index, "open:pg:/a|2"), None);
 }
 
 #[test]
 fn page_decode_missing_separator_none() {
     let index = PathIndex::new();
-    assert_eq!(decode_ls_pagination_callback(&index, "ls:pg:/noseparator"), None);
+    assert_eq!(
+        decode_ls_pagination_callback(&index, "ls:pg:/noseparator"),
+        None
+    );
 }
 
 #[test]
@@ -277,7 +310,10 @@ fn page_decode_trailing_garbage_tolerated() {
     let index = PathIndex::new();
     assert_eq!(
         decode_ls_pagination_callback(&index, "ls:pg:/a|3x"),
-        Some(PathWithPage { path: "/a".to_string(), page: 3 })
+        Some(PathWithPage {
+            path: "/a".to_string(),
+            page: 3
+        })
     );
 }
 
@@ -286,7 +322,10 @@ fn page_decode_negative_page() {
     let index = PathIndex::new();
     assert_eq!(
         decode_ls_pagination_callback(&index, "ls:pg:/a|-1"),
-        Some(PathWithPage { path: "/a".to_string(), page: -1 })
+        Some(PathWithPage {
+            path: "/a".to_string(),
+            page: -1
+        })
     );
 }
 
@@ -294,19 +333,34 @@ fn page_decode_negative_page() {
 
 #[test]
 fn classify_open_roots() {
-    assert_eq!(classify_open_callback("open:roots"), Some(OpenCallbackKind::Roots));
+    assert_eq!(
+        classify_open_callback("open:roots"),
+        Some(OpenCallbackKind::Roots)
+    );
 }
 
 #[test]
 fn classify_open_nav_page_select() {
-    assert_eq!(classify_open_callback("open:nav:/x"), Some(OpenCallbackKind::Nav));
-    assert_eq!(classify_open_callback("open:pg:/x|0"), Some(OpenCallbackKind::Page));
-    assert_eq!(classify_open_callback("open:sel:/x"), Some(OpenCallbackKind::Select));
+    assert_eq!(
+        classify_open_callback("open:nav:/x"),
+        Some(OpenCallbackKind::Nav)
+    );
+    assert_eq!(
+        classify_open_callback("open:pg:/x|0"),
+        Some(OpenCallbackKind::Page)
+    );
+    assert_eq!(
+        classify_open_callback("open:sel:/x"),
+        Some(OpenCallbackKind::Select)
+    );
 }
 
 #[test]
 fn classify_open_unknown() {
-    assert_eq!(classify_open_callback("open:bogus"), Some(OpenCallbackKind::Unknown));
+    assert_eq!(
+        classify_open_callback("open:bogus"),
+        Some(OpenCallbackKind::Unknown)
+    );
 }
 
 #[test]
@@ -318,20 +372,38 @@ fn classify_open_foreign_none() {
 #[test]
 fn classify_ls_nav_page_file() {
     assert_eq!(classify_ls_callback("ls:nav:/x"), Some(LsCallbackKind::Nav));
-    assert_eq!(classify_ls_callback("ls:pg:/x|0"), Some(LsCallbackKind::Page));
-    assert_eq!(classify_ls_callback("ls:file:/f|0"), Some(LsCallbackKind::File));
+    assert_eq!(
+        classify_ls_callback("ls:pg:/x|0"),
+        Some(LsCallbackKind::Page)
+    );
+    assert_eq!(
+        classify_ls_callback("ls:file:/f|0"),
+        Some(LsCallbackKind::File)
+    );
 }
 
 #[test]
 fn classify_ls_attach_download_back() {
-    assert_eq!(classify_ls_callback("ls:attach:/f"), Some(LsCallbackKind::Attach));
-    assert_eq!(classify_ls_callback("ls:download:/f"), Some(LsCallbackKind::Download));
-    assert_eq!(classify_ls_callback("ls:back:/d|0"), Some(LsCallbackKind::Back));
+    assert_eq!(
+        classify_ls_callback("ls:attach:/f"),
+        Some(LsCallbackKind::Attach)
+    );
+    assert_eq!(
+        classify_ls_callback("ls:download:/f"),
+        Some(LsCallbackKind::Download)
+    );
+    assert_eq!(
+        classify_ls_callback("ls:back:/d|0"),
+        Some(LsCallbackKind::Back)
+    );
 }
 
 #[test]
 fn classify_ls_unknown_and_foreign() {
-    assert_eq!(classify_ls_callback("ls:bogus"), Some(LsCallbackKind::Unknown));
+    assert_eq!(
+        classify_ls_callback("ls:bogus"),
+        Some(LsCallbackKind::Unknown)
+    );
     assert_eq!(classify_ls_callback("open:roots"), None);
 }
 
@@ -402,7 +474,10 @@ fn can_attach_true_only_when_both() {
 
 #[test]
 fn resolve_initial_no_project_none() {
-    assert_eq!(resolve_initial_ls_directory(None, Some("/cached"), true), None);
+    assert_eq!(
+        resolve_initial_ls_directory(None, Some("/cached"), true),
+        None
+    );
     assert_eq!(resolve_initial_ls_directory(None, None, false), None);
 }
 

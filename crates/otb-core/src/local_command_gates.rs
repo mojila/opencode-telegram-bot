@@ -103,9 +103,14 @@ pub struct RawCommandFile {
 /// Execution outcome (TS: `LocalCommandResult`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalCommandResult {
-    Success { text: String },
+    Success {
+        text: String,
+    },
     Empty,
-    Failed { exit_code: Option<i32>, stderr: String },
+    Failed {
+        exit_code: Option<i32>,
+        stderr: String,
+    },
     Timeout,
 }
 
@@ -161,9 +166,7 @@ pub fn is_command_json_file(is_file: bool, file_name: &str) -> bool {
 
 /// Strip the trailing `.json` suffix, or `None` (TS: `fileName.slice`).
 pub fn command_name_from_file_name(file_name: &str) -> Option<String> {
-    file_name
-        .strip_suffix(".json")
-        .map(|s| s.to_string())
+    file_name.strip_suffix(".json").map(|s| s.to_string())
 }
 
 /// Byte-ordered file-name sort (TS: `localeCompare` sort over `.json`

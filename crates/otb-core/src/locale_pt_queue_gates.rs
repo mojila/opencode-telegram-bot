@@ -90,12 +90,14 @@ pub const PT_QUEUE_KEYS: [&str; 8] = [
 ];
 
 /// Verbatim `pt` template (TS: `src/i18n/pt.ts` line 468-469).
-pub const PT_QUEUE_ADDED: &str = "📥 Adicionado à fila ({count}/{max}). Será enviado quando a tarefa atual terminar.";
+pub const PT_QUEUE_ADDED: &str =
+    "📥 Adicionado à fila ({count}/{max}). Será enviado quando a tarefa atual terminar.";
 /// Verbatim `pt` queue-full template (TS: `src/i18n/pt.ts` line 471-472).
 pub const PT_QUEUE_FULL: &str =
     "⚠️ A fila está cheia ({max}). Remova uma mensagem ou aguarde o término da tarefa atual.";
 /// Verbatim `pt` media-limit template (TS: `src/i18n/pt.ts` line 470).
-pub const PT_QUEUE_MEDIA_LIMIT: &str = "⚠️ A mídia na fila está limitada a {maxSizeMb} MiB. Aguarde o envio de um item.";
+pub const PT_QUEUE_MEDIA_LIMIT: &str =
+    "⚠️ A mídia na fila está limitada a {maxSizeMb} MiB. Aguarde o envio de um item.";
 /// Verbatim `pt` queue-removed template (TS: `src/i18n/pt.ts` line 473).
 pub const PT_QUEUE_REMOVED: &str = "🗑 Mensagem removida da fila.";
 /// Verbatim `pt` queue-not-found template (TS: `src/i18n/pt.ts` line 474).
@@ -157,8 +159,7 @@ fn interpolate_pt(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

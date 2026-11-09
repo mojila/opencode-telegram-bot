@@ -227,12 +227,7 @@ pub fn format_error_details_text(details: &str, max_length: usize) -> String {
 
 /// `"n. [marker ]title (date)"`, 1-based (TS: the row label built in
 /// `buildSessionsKeyboard`; `marker` already carries its trailing space).
-pub fn format_session_row_label(
-    position: usize,
-    marker: &str,
-    title: &str,
-    date: &str,
-) -> String {
+pub fn format_session_row_label(position: usize, marker: &str, title: &str, date: &str) -> String {
     format!("{}. {marker}{title} ({date})", position + 1)
 }
 
@@ -273,10 +268,7 @@ pub fn sessions_select_page_display(page: u64) -> u64 {
 
 /// `" (+a -d)"`, parts omitted when zero/missing, `""` when both are
 /// (TS: `formatDiffLineInfo`).
-pub fn format_diff_line_info(
-    additions: Option<u32>,
-    deletions: Option<u32>,
-) -> String {
+pub fn format_diff_line_info(additions: Option<u32>, deletions: Option<u32>) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(a) = additions {
         if a > 0 {
@@ -592,11 +584,7 @@ pub const MAX_TODOS: usize = 20;
 /// `"label: description"` collapsed to one line and cut at `max_len` with
 /// `…`, or the bare label when the description is blank (TS:
 /// `formatRunningTaskLine`).
-pub fn format_running_task_line(
-    description: Option<&str>,
-    max_len: usize,
-    label: &str,
-) -> String {
+pub fn format_running_task_line(description: Option<&str>, max_len: usize, label: &str) -> String {
     let description = description
         .map(collapse_tool_whitespace)
         .filter(|d| !d.is_empty())

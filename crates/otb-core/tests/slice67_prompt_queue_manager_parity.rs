@@ -197,7 +197,10 @@ fn slice67_reserve_counts_toward_full_parity() {
 #[test]
 fn slice67_confirm_unknown_reservation_none_parity() {
     let mut queue = PromptQueueManager::new();
-    assert_eq!(queue.confirm_reservation("reserved-9", inbox_input("hi", "s", "i")), None);
+    assert_eq!(
+        queue.confirm_reservation("reserved-9", inbox_input("hi", "s", "i")),
+        None
+    );
 }
 
 #[test]
@@ -235,11 +238,9 @@ fn slice67_confirm_consumes_reservation_parity() {
     let mut queue = PromptQueueManager::new();
     let reservation = queue.reserve().expect("reserved");
     let input = inbox_input("hi", "s", "i");
-    assert!(
-        queue
-            .confirm_reservation(&reservation, input.clone())
-            .is_some()
-    );
+    assert!(queue
+        .confirm_reservation(&reservation, input.clone())
+        .is_some());
     assert_eq!(queue.confirm_reservation(&reservation, input), None);
 }
 
@@ -291,7 +292,10 @@ fn slice67_find_returns_copy_parity() {
     let mut found = queue.find_by_inbox_id("inbox-7").expect("found");
     found.display_text = "mutated".to_string();
     assert_eq!(
-        queue.find_by_inbox_id("inbox-7").expect("again").display_text,
+        queue
+            .find_by_inbox_id("inbox-7")
+            .expect("again")
+            .display_text,
         "hi"
     );
 }
@@ -318,9 +322,7 @@ fn slice67_delivered_ids_evict_oldest_parity() {
         queue.remember_delivered_inbox_id(&format!("inbox-{i}"));
     }
     assert!(!queue.was_inbox_id_delivered("inbox-0"));
-    assert!(queue.was_inbox_id_delivered(&format!(
-        "inbox-{MAX_REMEMBERED_DELIVERED_INBOX_IDS}"
-    )));
+    assert!(queue.was_inbox_id_delivered(&format!("inbox-{MAX_REMEMBERED_DELIVERED_INBOX_IDS}")));
 }
 
 // --- list ---

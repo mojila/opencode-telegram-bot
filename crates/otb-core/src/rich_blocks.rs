@@ -87,14 +87,33 @@ pub struct TelegramListItem {
 /// A parsed content block (TS: `TelegramBlock`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TelegramBlock {
-    Paragraph { inlines: Vec<InlineNode> },
-    Heading { level: i64, inlines: Vec<InlineNode> },
-    Blockquote { blocks: Vec<TelegramBlock> },
-    List { ordered: bool, items: Vec<TelegramListItem>, start: Option<u64> },
-    Code { language: Option<String>, text: String },
-    Table { rows: Vec<Vec<String>>, align: Option<Vec<TableAlign>> },
+    Paragraph {
+        inlines: Vec<InlineNode>,
+    },
+    Heading {
+        level: i64,
+        inlines: Vec<InlineNode>,
+    },
+    Blockquote {
+        blocks: Vec<TelegramBlock>,
+    },
+    List {
+        ordered: bool,
+        items: Vec<TelegramListItem>,
+        start: Option<u64>,
+    },
+    Code {
+        language: Option<String>,
+        text: String,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+        align: Option<Vec<TableAlign>>,
+    },
     Rule,
-    Plain { text: String },
+    Plain {
+        text: String,
+    },
 }
 
 /// Rich inline content (TS: `RichText` from `grammy/types`).
@@ -129,12 +148,27 @@ pub struct RichListItem {
 /// A native rich block ready for Telegram (TS: `TelegramRichBlock`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RichBlock {
-    Paragraph { text: RichText },
-    Heading { size: u8, text: RichText },
-    Blockquote { blocks: Vec<RichBlock> },
-    List { items: Vec<RichListItem> },
-    Pre { language: Option<String>, text: RichText },
-    Table { cells: Vec<Vec<RichTableCell>>, is_bordered: bool },
+    Paragraph {
+        text: RichText,
+    },
+    Heading {
+        size: u8,
+        text: RichText,
+    },
+    Blockquote {
+        blocks: Vec<RichBlock>,
+    },
+    List {
+        items: Vec<RichListItem>,
+    },
+    Pre {
+        language: Option<String>,
+        text: RichText,
+    },
+    Table {
+        cells: Vec<Vec<RichTableCell>>,
+        is_bordered: bool,
+    },
     Divider,
 }
 
@@ -171,7 +205,10 @@ pub fn to_rich_text(nodes: &[InlineNode]) -> RichText {
     if parts.is_empty() {
         RichText::Str(String::new())
     } else if parts.len() == 1 {
-        parts.into_iter().next().unwrap_or(RichText::Str(String::new()))
+        parts
+            .into_iter()
+            .next()
+            .unwrap_or(RichText::Str(String::new()))
     } else {
         RichText::Arr(parts)
     }
@@ -219,7 +256,10 @@ fn to_rich_text_nodes(nodes: &[InlineNode]) -> Vec<RichText> {
 /// Wrap converted children in a `{ type, text }` styled node
 /// (TS: one arm of `toRichTextNodes`).
 fn styled_rich_text(kind: &str, children: &[InlineNode]) -> RichText {
-    RichText::Styled { kind: kind.to_string(), text: Box::new(to_rich_text(children)) }
+    RichText::Styled {
+        kind: kind.to_string(),
+        text: Box::new(to_rich_text(children)),
+    }
 }
 
 /// Lists Telegram cannot render the way the product needs, so they are
@@ -259,7 +299,11 @@ pub fn lift_text_list_content(blocks: &[TelegramBlock]) -> Vec<TelegramBlock> {
     let mut out: Vec<TelegramBlock> = Vec::new();
     for block in blocks {
         let (ordered, items, start) = match block {
-            TelegramBlock::List { ordered, items, start } => (*ordered, items, *start),
+            TelegramBlock::List {
+                ordered,
+                items,
+                start,
+            } => (*ordered, items, *start),
             _ => {
                 out.push(block.clone());
                 continue;
@@ -273,8 +317,8 @@ pub fn lift_text_list_content(blocks: &[TelegramBlock]) -> Vec<TelegramBlock> {
         let mut piece_items: Vec<TelegramListItem> = Vec::new();
         let mut start_number = start.unwrap_or(1);
         let flush_piece = |piece_items: &mut Vec<TelegramListItem>,
-                               start_number: &mut u64,
-                               out: &mut Vec<TelegramBlock>| {
+                           start_number: &mut u64,
+                           out: &mut Vec<TelegramBlock>| {
             if piece_items.is_empty() {
                 return;
             }
@@ -304,7 +348,10 @@ pub fn lift_text_list_content(blocks: &[TelegramBlock]) -> Vec<TelegramBlock> {
             };
             let mut kept = leading;
             kept.extend(keep.iter().cloned());
-            piece_items.push(TelegramListItem { blocks: kept, checked: item.checked });
+            piece_items.push(TelegramListItem {
+                blocks: kept,
+                checked: item.checked,
+            });
             if !lifted.is_empty() {
                 flush_piece(&mut piece_items, &mut start_number, &mut out);
                 out.extend(lift_text_list_content(lifted));
@@ -336,9 +383,9 @@ fn stays_inside_item(block: &TelegramBlock) -> bool {
 
 pub fn to_rich_block(block: &TelegramBlock) -> RichBlock {
     match block {
-        TelegramBlock::Paragraph { inlines } => {
-            RichBlock::Paragraph { text: to_rich_text(inlines) }
-        }
+        TelegramBlock::Paragraph { inlines } => RichBlock::Paragraph {
+            text: to_rich_text(inlines),
+        },
         TelegramBlock::Heading { level, inlines } => RichBlock::Heading {
             size: (*level).clamp(1, 6) as u8,
             text: to_rich_text(inlines),
@@ -346,7 +393,11 @@ pub fn to_rich_block(block: &TelegramBlock) -> RichBlock {
         TelegramBlock::Blockquote { blocks } => RichBlock::Blockquote {
             blocks: blocks.iter().map(to_rich_block).collect(),
         },
-        TelegramBlock::List { ordered, items, start } => {
+        TelegramBlock::List {
+            ordered,
+            items,
+            start,
+        } => {
             if is_text_rendered_list(*ordered, items) {
                 to_text_list_block(items, *ordered, start.unwrap_or(1))
             } else {
@@ -366,15 +417,17 @@ pub fn to_rich_block(block: &TelegramBlock) -> RichBlock {
         },
         TelegramBlock::Table { rows, align } => {
             if rows.is_empty() {
-                RichBlock::Paragraph { text: RichText::Str(String::new()) }
+                RichBlock::Paragraph {
+                    text: RichText::Str(String::new()),
+                }
             } else {
                 to_table_block(rows, align.as_deref())
             }
         }
         TelegramBlock::Rule => RichBlock::Divider,
-        TelegramBlock::Plain { text } => {
-            RichBlock::Paragraph { text: RichText::Str(text.clone()) }
-        }
+        TelegramBlock::Plain { text } => RichBlock::Paragraph {
+            text: RichText::Str(text.clone()),
+        },
     }
 }
 
@@ -408,7 +461,13 @@ fn build_aligned_table_text(rows: &[Vec<String>]) -> String {
         })
         .collect();
     let widths: Vec<usize> = (0..column_count)
-        .map(|index| normalized.iter().map(|row| utf16_len(row[index])).max().unwrap_or(0))
+        .map(|index| {
+            normalized
+                .iter()
+                .map(|row| utf16_len(row[index]))
+                .max()
+                .unwrap_or(0)
+        })
         .collect();
     let format_row = |row: &[&str]| -> String {
         row.iter()
@@ -421,7 +480,11 @@ fn build_aligned_table_text(rows: &[Vec<String>]) -> String {
     if formatted.len() <= 1 {
         return formatted.join("\n");
     }
-    let divider = widths.iter().map(|width| "-".repeat(*width)).collect::<Vec<_>>().join("-|-");
+    let divider = widths
+        .iter()
+        .map(|width| "-".repeat(*width))
+        .collect::<Vec<_>>()
+        .join("-|-");
     let mut lines = vec![formatted[0].clone(), divider];
     lines.extend(formatted.into_iter().skip(1));
     lines.join("\n")
@@ -458,11 +521,18 @@ fn block_plain_text(block: &TelegramBlock) -> String {
             .map(block_plain_text)
             .filter(|text| !text.is_empty())
             .map(|text| {
-                text.split('\n').map(|line| format!("> {line}")).collect::<Vec<_>>().join("\n")
+                text.split('\n')
+                    .map(|line| format!("> {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        TelegramBlock::List { ordered, items, start } => {
+        TelegramBlock::List {
+            ordered,
+            items,
+            start,
+        } => {
             let from = start.unwrap_or(1);
             items
                 .iter()
@@ -493,7 +563,11 @@ fn block_plain_text(block: &TelegramBlock) -> String {
                         .map(|(line_index, line)| {
                             format!(
                                 "{}{line}",
-                                if line_index == 0 { marker.as_str() } else { continuation.as_str() }
+                                if line_index == 0 {
+                                    marker.as_str()
+                                } else {
+                                    continuation.as_str()
+                                }
                             )
                         })
                         .collect::<Vec<_>>()
@@ -524,8 +598,11 @@ fn to_text_item_nodes(item: &TelegramListItem, indent: &str) -> Vec<RichText> {
         if text.is_empty() {
             continue;
         }
-        let indented =
-            text.split('\n').map(|line| format!("{indent}{line}")).collect::<Vec<_>>().join("\n");
+        let indented = text
+            .split('\n')
+            .map(|line| format!("{indent}{line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         nodes.push(RichText::Str(format!("\n{indented}")));
     }
     nodes
@@ -533,11 +610,7 @@ fn to_text_item_nodes(item: &TelegramListItem, indent: &str) -> Vec<RichText> {
 
 /// A list written out as text becomes a single paragraph of marker-headed
 /// lines (TS: `toTextListBlock`).
-fn to_text_list_block(
-    items: &[TelegramListItem],
-    ordered: bool,
-    start: u64,
-) -> RichBlock {
+fn to_text_list_block(items: &[TelegramListItem], ordered: bool, start: u64) -> RichBlock {
     let mut text: Vec<RichText> = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let marker = text_list_marker(item, index, ordered, Some(start));
@@ -548,7 +621,9 @@ fn to_text_list_block(
         }
         text.extend(to_text_item_nodes(item, &" ".repeat(utf16_len(&marker))));
     }
-    RichBlock::Paragraph { text: RichText::Arr(text) }
+    RichBlock::Paragraph {
+        text: RichText::Arr(text),
+    }
 }
 
 /// Native rich-table cells: first row is the header, every cell defaults to
@@ -562,7 +637,9 @@ fn to_table_cells(rows: &[Vec<String>], align: Option<&[TableAlign]>) -> Vec<Vec
                 .map(|column_index| RichTableCell {
                     text: row.get(column_index).cloned().unwrap_or_default(),
                     is_header: row_index == 0,
-                    align: align.and_then(|values| values.get(column_index).copied()).unwrap_or(TableAlign::Left),
+                    align: align
+                        .and_then(|values| values.get(column_index).copied())
+                        .unwrap_or(TableAlign::Left),
                 })
                 .collect()
         })
@@ -579,13 +656,18 @@ fn to_table_block(rows: &[Vec<String>], align: Option<&[TableAlign]>) -> RichBlo
             text: RichText::Str(build_aligned_table_text(rows)),
         };
     }
-    RichBlock::Table { cells: to_table_cells(rows, align), is_bordered: true }
+    RichBlock::Table {
+        cells: to_table_cells(rows, align),
+        is_bordered: true,
+    }
 }
 
 /// Build a native paragraph block from raw text
 /// (TS: `createParagraphBlock`).
 pub fn create_paragraph_block(text: &str) -> RichBlock {
-    RichBlock::Paragraph { text: RichText::Str(text.to_string()) }
+    RichBlock::Paragraph {
+        text: RichText::Str(text.to_string()),
+    }
 }
 
 /// Stable identity of what was actually delivered to Telegram
@@ -615,7 +697,11 @@ pub fn get_telegram_rendered_part_signature(part: &RenderedPart) -> String {
 
     format!(
         "blocks\n[{}]",
-        part.blocks.iter().map(rich_block_json).collect::<Vec<_>>().join(",")
+        part.blocks
+            .iter()
+            .map(rich_block_json)
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 
@@ -650,10 +736,18 @@ fn rich_text_json(text: &RichText) -> String {
         RichText::Str(value) => json_string(value),
         RichText::Arr(parts) => format!(
             "[{}]",
-            parts.iter().map(rich_text_json).collect::<Vec<_>>().join(",")
+            parts
+                .iter()
+                .map(rich_text_json)
+                .collect::<Vec<_>>()
+                .join(",")
         ),
         RichText::Styled { kind, text } => {
-            format!("{{\"type\":{},\"text\":{}}}", json_string(kind), rich_text_json(text))
+            format!(
+                "{{\"type\":{},\"text\":{}}}",
+                json_string(kind),
+                rich_text_json(text)
+            )
         }
         RichText::Url { text, url } => format!(
             "{{\"type\":\"url\",\"text\":{},\"url\":{}}}",
@@ -677,7 +771,10 @@ fn table_align_json(align: TableAlign) -> &'static str {
 fn rich_block_json(block: &RichBlock) -> String {
     match block {
         RichBlock::Paragraph { text } => {
-            format!("{{\"type\":\"paragraph\",\"text\":{}}}", rich_text_json(text))
+            format!(
+                "{{\"type\":\"paragraph\",\"text\":{}}}",
+                rich_text_json(text)
+            )
         }
         RichBlock::Heading { size, text } => format!(
             "{{\"type\":\"heading\",\"text\":{},\"size\":{size}}}",
@@ -685,7 +782,11 @@ fn rich_block_json(block: &RichBlock) -> String {
         ),
         RichBlock::Blockquote { blocks } => format!(
             "{{\"type\":\"blockquote\",\"blocks\":[{}]}}",
-            blocks.iter().map(rich_block_json).collect::<Vec<_>>().join(",")
+            blocks
+                .iter()
+                .map(rich_block_json)
+                .collect::<Vec<_>>()
+                .join(",")
         ),
         RichBlock::List { items } => format!(
             "{{\"type\":\"list\",\"items\":[{}]}}",
@@ -693,14 +794,17 @@ fn rich_block_json(block: &RichBlock) -> String {
                 .iter()
                 .map(|item| format!(
                     "{{\"blocks\":[{}]}}",
-                    item.blocks.iter().map(rich_block_json).collect::<Vec<_>>().join(",")
+                    item.blocks
+                        .iter()
+                        .map(rich_block_json)
+                        .collect::<Vec<_>>()
+                        .join(",")
                 ))
                 .collect::<Vec<_>>()
                 .join(",")
         ),
         RichBlock::Pre { language, text } => {
-            let mut out =
-                format!("{{\"type\":\"pre\",\"text\":{}}}", rich_text_json(text));
+            let mut out = format!("{{\"type\":\"pre\",\"text\":{}}}", rich_text_json(text));
             if let Some(language) = language {
                 out.pop();
                 out.push_str(&format!(",\"language\":{}}}", json_string(language)));
@@ -715,8 +819,7 @@ fn rich_block_json(block: &RichBlock) -> String {
                     "[{}]",
                     row.iter()
                         .map(|cell| {
-                            let mut out =
-                                format!("{{\"text\":{}", json_string(&cell.text));
+                            let mut out = format!("{{\"text\":{}", json_string(&cell.text));
                             if cell.is_header {
                                 out.push_str(",\"is_header\":true");
                             }

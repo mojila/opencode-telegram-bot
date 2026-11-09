@@ -76,7 +76,10 @@ fn tr_status_placeholders_match_en_parity() {
         "Status: {health}",
         "Durum: {health}"
     ));
-    assert!(is_tr_status_placeholder_ok("Model: {model}", "Model: {model}"));
+    assert!(is_tr_status_placeholder_ok(
+        "Model: {model}",
+        "Model: {model}"
+    ));
 }
 
 #[test]

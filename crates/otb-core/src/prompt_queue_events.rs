@@ -74,11 +74,7 @@ pub fn select_inbox_delivery(queue_mode: &str) -> InboxDelivery {
 
 /// Whether an arriving message takes an arrival ticket
 /// (TS: `takeArrivalTicket`: session + queue enabled + busy).
-pub fn should_take_arrival_ticket(
-    has_session: bool,
-    queue_enabled: bool,
-    is_busy: bool,
-) -> bool {
+pub fn should_take_arrival_ticket(has_session: bool, queue_enabled: bool, is_busy: bool) -> bool {
     has_session && queue_enabled && is_busy
 }
 

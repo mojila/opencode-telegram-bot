@@ -111,8 +111,5 @@ fn de_goal2_objective_limit_line_parity() {
 
 #[test]
 fn de_goal2_confirm_round_limit_line_parity() {
-    assert_eq!(
-        format_de_goal2_confirm_round_limit(10),
-        "Round limit: 10."
-    );
+    assert_eq!(format_de_goal2_confirm_round_limit(10), "Round limit: 10.");
 }

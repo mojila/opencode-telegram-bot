@@ -297,7 +297,12 @@ fn same_search_false_when_stage_or_token_missing_parity() {
         Some(7),
         Some("input")
     ));
-    assert!(!is_same_project_search(None, Some("results"), Some(7), Some("results")));
+    assert!(!is_same_project_search(
+        None,
+        Some("results"),
+        Some(7),
+        Some("results")
+    ));
     assert!(!is_same_project_search(
         Some(7),
         Some("results"),

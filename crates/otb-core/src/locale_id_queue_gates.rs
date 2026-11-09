@@ -96,7 +96,8 @@ pub const ID_QUEUE_KEYS: [&str; 8] = [
 ];
 
 /// Verbatim `id` template (TS: `src/i18n/id.ts` line 452-453).
-pub const ID_QUEUE_ADDED: &str = "📥 Ditambahkan ke antrean ({count}/{max}). Akan dikirim setelah tugas saat ini selesai.";
+pub const ID_QUEUE_ADDED: &str =
+    "📥 Ditambahkan ke antrean ({count}/{max}). Akan dikirim setelah tugas saat ini selesai.";
 /// Verbatim `id` queue-full template (TS: `src/i18n/id.ts` line 454).
 pub const ID_QUEUE_FULL: &str =
     "⚠️ Antrean penuh ({max}). Hapus pesan atau tunggu tugas saat ini selesai.";
@@ -163,8 +164,7 @@ fn interpolate_id(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),

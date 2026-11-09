@@ -97,12 +97,7 @@ pub fn is_goal_rpc_unavailable(error_type: &str) -> bool {
 /// `true` for the rpc-only 404 goal fallback
 /// (TS: `source === "rpc" && name === "ClientError" &&
 /// reason === "UnexpectedStatus" && cause.status === 404`).
-pub fn is_goal_404_for_rpc(
-    source_is_rpc: bool,
-    name: &str,
-    reason: &str,
-    status: u16,
-) -> bool {
+pub fn is_goal_404_for_rpc(source_is_rpc: bool, name: &str, reason: &str, status: u16) -> bool {
     source_is_rpc && name == "ClientError" && reason == "UnexpectedStatus" && status == 404
 }
 
@@ -138,11 +133,7 @@ pub fn should_break_message_pages(has_next: bool, page_empty: bool) -> bool {
 
 /// `true` when session paging stops (TS: `!next || seen.has(next) ||
 /// data.length === 0` in the unlimited `session.list` loop).
-pub fn should_break_session_list(
-    has_next: bool,
-    already_seen: bool,
-    page_empty: bool,
-) -> bool {
+pub fn should_break_session_list(has_next: bool, already_seen: bool, page_empty: bool) -> bool {
     !has_next || already_seen || page_empty
 }
 

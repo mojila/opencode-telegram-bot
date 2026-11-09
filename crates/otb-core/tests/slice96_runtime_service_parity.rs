@@ -74,8 +74,7 @@ fn node_supported_at_22_14_parity() {
 
 #[test]
 fn node_rejected_below_22_14_parity() {
-    let message =
-        get_unsupported_node_version_message("22.13.9").expect("unsupported message");
+    let message = get_unsupported_node_version_message("22.13.9").expect("unsupported message");
     assert!(message.contains("22.14+, 23.6+, or 24+"));
     assert!(message.contains("v22.13.9"));
     assert!(message.contains("https://nodejs.org"));
@@ -203,10 +202,7 @@ fn service_state_path_blank_gate_parity() {
 fn service_child_env_merges_base_parity() {
     let entries = build_service_child_entries(&[("A", "1"), ("B", "2")], "/tmp/s.json");
     assert!(entries.contains(&("A".to_string(), "1".to_string())));
-    assert!(entries.contains(&(
-        SERVICE_CHILD_ENV_KEY.to_string(),
-        "1".to_string()
-    )));
+    assert!(entries.contains(&(SERVICE_CHILD_ENV_KEY.to_string(), "1".to_string())));
     assert!(entries.contains(&(
         SERVICE_STATE_PATH_ENV_KEY.to_string(),
         "/tmp/s.json".to_string()

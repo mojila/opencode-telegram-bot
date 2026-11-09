@@ -57,10 +57,7 @@ fn long_active_label_cuts_to_64_with_prefix() {
 
 #[test]
 fn build_numbered_label_uses_folder_name() {
-    assert_eq!(
-        build_worktree_button_label(0, "/repo"),
-        "1. repo [/repo]"
-    );
+    assert_eq!(build_worktree_button_label(0, "/repo"), "1. repo [/repo]");
 }
 
 #[test]
@@ -197,7 +194,10 @@ fn detail_text_truncates_to_telegram_limit() {
 
 #[test]
 fn select_kind_first_page() {
-    assert_eq!(message_select_text_kind(0), MessageSelectTextKind::FirstPage);
+    assert_eq!(
+        message_select_text_kind(0),
+        MessageSelectTextKind::FirstPage
+    );
 }
 
 #[test]
@@ -312,7 +312,10 @@ fn pagination_page_size_floors_at_one() {
 #[test]
 fn kind_recognizes_project() {
     assert!(is_inline_menu_kind("project"));
-    assert_eq!(inline_menu_kind_of("project"), Some(InlineMenuKind::Project));
+    assert_eq!(
+        inline_menu_kind_of("project"),
+        Some(InlineMenuKind::Project)
+    );
 }
 
 #[test]

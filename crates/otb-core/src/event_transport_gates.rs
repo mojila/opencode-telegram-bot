@@ -101,11 +101,7 @@ pub fn is_idle_timeout_message(message: &str) -> bool {
 
 /// `true` for an event-shaped value (TS: `isEventLike`: a record whose
 /// `type` is a string and whose `properties` is a record).
-pub fn is_event_like(
-    is_record: bool,
-    type_is_string: bool,
-    properties_is_record: bool,
-) -> bool {
+pub fn is_event_like(is_record: bool, type_is_string: bool, properties_is_record: bool) -> bool {
     is_record && type_is_string && properties_is_record
 }
 
@@ -143,4 +139,17 @@ pub fn resolve_reconnect_restarted(
         return None;
     }
     restarted
+}
+
+/// True for the fatal no-stream failure (TS: `FATAL_NO_STREAM_ERROR`;
+/// the listener throws instead of reconnecting).
+pub fn is_fatal_no_stream_message(message: &str) -> bool {
+    message == FATAL_NO_STREAM_ERROR
+}
+
+/// Normalize the directory a reconnected subscription filters on
+/// (TS: the reconnect keeps `directory` of the original `subscribeToEvents`
+/// call; cross-directory frames are dropped by `normalizeGlobalEvent`).
+pub fn should_keep_subscription_on_reconnect(is_listening: bool, same_directory: bool) -> bool {
+    is_listening && same_directory
 }

@@ -56,10 +56,7 @@ fn de_goal_templates_value_parity() {
         DE_GOAL_REASON_WAIT_LIMIT,
         "Nothing ran for {minutes} minutes while the goal waited on background work"
     );
-    assert_eq!(
-        DE_GOAL_REASON_NOT_PROGRESS,
-        "Not making progress: {reason}"
-    );
+    assert_eq!(DE_GOAL_REASON_NOT_PROGRESS, "Not making progress: {reason}");
 }
 
 // ---- lookup (2) ----

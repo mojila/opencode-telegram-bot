@@ -68,7 +68,10 @@ fn slice28b_06_queued_duplicates_and_stale() {
         find_queued_prompt_index_by_label(&texts, "❌ 2. same text"),
         Some(1)
     );
-    assert_eq!(find_queued_prompt_index_by_label(&texts, "❌ 2. gone"), None);
+    assert_eq!(
+        find_queued_prompt_index_by_label(&texts, "❌ 2. gone"),
+        None
+    );
 }
 
 // --- main-reply-keyboard.ts (7 its) ---
@@ -85,8 +88,19 @@ fn slice28b_07_main_keyboard_defaults() {
 
 #[test]
 fn slice28b_08_main_keyboard_context_and_variant() {
-    let info = ContextInfo { tokens_used: 150_000, tokens_limit: 1_500_000 };
-    let kb = create_main_keyboard("plan", "provider", "model", Some(&info), Some("⚡ Fast"), &[], &[]);
+    let info = ContextInfo {
+        tokens_used: 150_000,
+        tokens_limit: 1_500_000,
+    };
+    let kb = create_main_keyboard(
+        "plan",
+        "provider",
+        "model",
+        Some(&info),
+        Some("⚡ Fast"),
+        &[],
+        &[],
+    );
     assert_eq!(kb.rows[0][0], "📋 Plan Agent");
     assert_eq!(kb.rows[0][1], "📊 150K / 1.5M (10%)");
     assert_eq!(kb.rows[1][1], "⚡ Fast");
@@ -101,8 +115,13 @@ fn slice28b_09_main_keyboard_fixed_grid_without_queued() {
 #[test]
 fn slice28b_10_main_keyboard_queued_rows_on_top() {
     let kb = create_main_keyboard(
-        "build", "openrouter", "openai/gpt-4o", None, None,
-        &["❌ 1. first".to_string(), "❌ 2. second".to_string()], &[],
+        "build",
+        "openrouter",
+        "openai/gpt-4o",
+        None,
+        None,
+        &["❌ 1. first".to_string(), "❌ 2. second".to_string()],
+        &[],
     );
     assert_eq!(kb.rows[0][0], "❌ 1. first");
     assert_eq!(kb.rows[1][0], "❌ 2. second");
@@ -113,11 +132,18 @@ fn slice28b_10_main_keyboard_queued_rows_on_top() {
 #[test]
 fn slice28b_11_main_keyboard_goal_row_above_grid() {
     let kb = create_main_keyboard(
-        "build", "p", "m", None, None,
+        "build",
+        "p",
+        "m",
+        None,
+        None,
         &["queued 1".to_string(), "queued 2".to_string()],
         &["goal objective".to_string(), "pause".to_string()],
     );
-    assert_eq!(kb.rows[2], vec!["goal objective".to_string(), "pause".to_string()]);
+    assert_eq!(
+        kb.rows[2],
+        vec!["goal objective".to_string(), "pause".to_string()]
+    );
     assert_eq!(kb.rows[0][0], "queued 1");
     assert_eq!(kb.rows[3][0], "🛠️ Build Agent");
 }
@@ -236,7 +262,9 @@ fn slice28b_23_pattern_plain_prompt_matches_nothing() {
 fn slice28b_24_pattern_reply_keyboard_recognises_all() {
     assert!(is_reply_keyboard_button_text("🛠️ Build Agent"));
     assert!(is_reply_keyboard_button_text("📊 0"));
-    assert!(is_reply_keyboard_button_text("🧠 openrouter\nopenai/gpt-4o"));
+    assert!(is_reply_keyboard_button_text(
+        "🧠 openrouter\nopenai/gpt-4o"
+    ));
     assert!(is_reply_keyboard_button_text("💡 Default"));
     assert!(is_reply_keyboard_button_text(
         &format_queued_prompt_button_label(1, "queued")
@@ -269,7 +297,10 @@ fn slice28b_26_parse_providers_page() {
 fn slice28b_27_parse_provider_callback() {
     assert_eq!(
         parse_provider_callback("model:provider:2:1"),
-        Some(ProviderCallback { provider_index: 2, page: 1 })
+        Some(ProviderCallback {
+            provider_index: 2,
+            page: 1
+        })
     );
     assert_eq!(parse_provider_callback("model:provider:2"), None);
     assert_eq!(parse_provider_callback("model:provider:a:b"), None);
@@ -287,7 +318,12 @@ fn slice28b_29_pagination_range_clamps() {
     let r = calculate_models_pagination_range(100, 0, 10);
     assert_eq!(
         r,
-        PaginationRange { page: 0, total_pages: 10, start_index: 0, end_index: 10 }
+        PaginationRange {
+            page: 0,
+            total_pages: 10,
+            start_index: 0,
+            end_index: 10
+        }
     );
     let clamped = calculate_models_pagination_range(100, 99, 10);
     assert_eq!(clamped.page, 9);
@@ -345,25 +381,49 @@ fn slice28b_35_variant_option_label() {
 #[test]
 fn slice28b_36_variant_visible_ids_skip_disabled() {
     let variants = vec![
-        VariantEntry { id: "default".to_string(), disabled: false },
-        VariantEntry { id: "high".to_string(), disabled: false },
-        VariantEntry { id: "low".to_string(), disabled: true },
+        VariantEntry {
+            id: "default".to_string(),
+            disabled: false,
+        },
+        VariantEntry {
+            id: "high".to_string(),
+            disabled: false,
+        },
+        VariantEntry {
+            id: "low".to_string(),
+            disabled: true,
+        },
     ];
     assert_eq!(visible_variant_ids(&variants), vec!["default", "high"]);
 }
 
 #[test]
 fn slice28b_37_variant_after_change_gate() {
-    let only_default = vec![VariantEntry { id: "default".to_string(), disabled: false }];
+    let only_default = vec![VariantEntry {
+        id: "default".to_string(),
+        disabled: false,
+    }];
     assert!(!should_show_variant_menu_after_change(&only_default));
     let all_disabled = vec![
-        VariantEntry { id: "default".to_string(), disabled: false },
-        VariantEntry { id: "high".to_string(), disabled: true },
+        VariantEntry {
+            id: "default".to_string(),
+            disabled: false,
+        },
+        VariantEntry {
+            id: "high".to_string(),
+            disabled: true,
+        },
     ];
     assert!(!should_show_variant_menu_after_change(&all_disabled));
     let choice = vec![
-        VariantEntry { id: "default".to_string(), disabled: false },
-        VariantEntry { id: "high".to_string(), disabled: false },
+        VariantEntry {
+            id: "default".to_string(),
+            disabled: false,
+        },
+        VariantEntry {
+            id: "high".to_string(),
+            disabled: false,
+        },
     ];
     assert!(should_show_variant_menu_after_change(&choice));
 }
@@ -464,12 +524,23 @@ fn slice28b_44_question_submit_custom_gating() {
         custom_answer_text: String::new(),
     };
     let rows = build_question_keyboard_rows(&multi);
-    assert!(rows.iter().any(|r| r.iter().any(|b| b.callback_data == "question:submit:0")));
-    let single = QuestionKeyboardSpec { multiple: false, ..multi.clone() };
+    assert!(rows
+        .iter()
+        .any(|r| r.iter().any(|b| b.callback_data == "question:submit:0")));
+    let single = QuestionKeyboardSpec {
+        multiple: false,
+        ..multi.clone()
+    };
     let single_rows = build_question_keyboard_rows(&single);
-    assert!(!single_rows.iter().any(|r| r.iter().any(|b| b.callback_data == "question:submit:0")));
-    assert!(single_rows.iter().any(|r| r.iter().any(|b| b.callback_data == "question:custom:0")));
-    assert!(single_rows.iter().any(|r| r.iter().any(|b| b.callback_data == "question:cancel:0")));
+    assert!(!single_rows
+        .iter()
+        .any(|r| r.iter().any(|b| b.callback_data == "question:submit:0")));
+    assert!(single_rows
+        .iter()
+        .any(|r| r.iter().any(|b| b.callback_data == "question:custom:0")));
+    assert!(single_rows
+        .iter()
+        .any(|r| r.iter().any(|b| b.callback_data == "question:cancel:0")));
 }
 
 #[test]
@@ -477,7 +548,10 @@ fn slice28b_45_question_summary_and_parse() {
     let summary = format_answers_summary(&[("Q1".to_string(), "Yes".to_string())]);
     assert!(summary.contains("Q1"));
     assert!(summary.contains("Yes"));
-    assert_eq!(parse_question_select_callback("question:select:1:2"), Some((1, 2)));
+    assert_eq!(
+        parse_question_select_callback("question:select:1:2"),
+        Some((1, 2))
+    );
     assert_eq!(parse_question_select_callback("question:cancel:0"), None);
     assert!(is_question_request_gone_tag("FormAlreadySettledError"));
     assert!(!is_question_request_gone_tag("OtherError"));
@@ -520,11 +594,17 @@ fn slice28b_48_render_split_chunks() {
 fn slice28b_49_render_split_limits_normalize() {
     assert_eq!(
         normalize_block_split_limits(None, None),
-        BlockSplitLimits { max_chars: DEFAULT_MAX_PART_CHARS, max_blocks: DEFAULT_MAX_PART_BLOCKS }
+        BlockSplitLimits {
+            max_chars: DEFAULT_MAX_PART_CHARS,
+            max_blocks: DEFAULT_MAX_PART_BLOCKS
+        }
     );
     assert_eq!(
         normalize_block_split_limits(Some(0), Some(-5)),
-        BlockSplitLimits { max_chars: 1, max_blocks: 1 }
+        BlockSplitLimits {
+            max_chars: 1,
+            max_blocks: 1
+        }
     );
 }
 

@@ -20,8 +20,8 @@
 //! hand-picked list).
 
 use otb_core::i18n::{
-    CALLBACK_ANSWER_MAX_LENGTH, SUPPORTED_LOCALES, extract_placeholders, get_date_locale,
-    normalize_locale, resolve_supported_locale, t,
+    extract_placeholders, get_date_locale, normalize_locale, resolve_supported_locale, t,
+    CALLBACK_ANSWER_MAX_LENGTH, SUPPORTED_LOCALES,
 };
 use std::collections::BTreeSet;
 
@@ -29,10 +29,10 @@ use std::collections::BTreeSet;
 // must keep the same `{placeholder}` set in every locale; the last key
 // pins the placeholder-free case.
 const REPRESENTATIVE_KEYS: &[&str] = &[
-    "bot.session_created", // {title}
-    "status.line.health",  // {health}
+    "bot.session_created",          // {title}
+    "status.line.health",           // {health}
     "progress.compact.count.tools", // {count}
-    "common.cancelled",    // no placeholders
+    "common.cancelled",             // no placeholders
 ];
 
 // Representative callback-answer keys only (see SCOPE above): literals passed
@@ -68,7 +68,10 @@ fn placeholder_sets_match_en_for_every_key_in_every_locale() {
         }
     }
 
-    assert!(mismatches.is_empty(), "placeholder mismatches: {mismatches:?}");
+    assert!(
+        mismatches.is_empty(),
+        "placeholder mismatches: {mismatches:?}"
+    );
 }
 
 // --- (b) callback-answer length <= 200 in every locale ---

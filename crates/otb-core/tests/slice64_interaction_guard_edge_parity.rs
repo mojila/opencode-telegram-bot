@@ -211,7 +211,10 @@ fn goal_shortcut_wrong_flow_parity() {
 
 #[test]
 fn goal_shortcut_wrong_callback_parity() {
-    assert!(!is_goal_flow_shortcut(Some("goal"), Some("goal:delete:abc")));
+    assert!(!is_goal_flow_shortcut(
+        Some("goal"),
+        Some("goal:delete:abc")
+    ));
 }
 
 // --- is_allowed_rename_cancel ---

@@ -20,15 +20,24 @@ fn err() -> TelegramCallError {
 }
 
 fn msg(s: &str) -> TelegramCallError {
-    TelegramCallError { message: Some(s.to_string()), ..Default::default() }
+    TelegramCallError {
+        message: Some(s.to_string()),
+        ..Default::default()
+    }
 }
 
 fn coded(code: &str) -> TelegramCallError {
-    TelegramCallError { code: Some(code.to_string()), ..Default::default() }
+    TelegramCallError {
+        code: Some(code.to_string()),
+        ..Default::default()
+    }
 }
 
 fn nested_coded(code: &str) -> TelegramCallError {
-    TelegramCallError { nested_code: Some(code.to_string()), ..Default::default() }
+    TelegramCallError {
+        nested_code: Some(code.to_string()),
+        ..Default::default()
+    }
 }
 
 // --- constants (3) ---
@@ -88,7 +97,9 @@ fn slice40_06_429_word_in_message_is_rate_limited() {
 
 #[test]
 fn slice40_07_too_many_requests_phrase_is_rate_limited() {
-    assert!(is_telegram_rate_limit_error(&msg("Too Many Requests: retry after 2")));
+    assert!(is_telegram_rate_limit_error(&msg(
+        "Too Many Requests: retry after 2"
+    )));
     assert!(is_telegram_rate_limit_error(&msg("TOO MANY REQUESTS")));
 }
 
@@ -125,7 +136,9 @@ fn slice40_10_status_wins_over_contradicting_message() {
 #[test]
 fn slice40_11_empty_error_is_not_rate_limited() {
     assert!(!is_telegram_rate_limit_error(&err()));
-    assert!(!is_telegram_rate_limit_error(&msg("Network request for 'sendMessage' failed!")));
+    assert!(!is_telegram_rate_limit_error(&msg(
+        "Network request for 'sendMessage' failed!"
+    )));
 }
 
 // --- is_transient_telegram_server_error (8) ---
@@ -173,7 +186,9 @@ fn slice40_16_400_is_not_transient_server_error() {
         error_code: Some(400),
         ..err()
     }));
-    assert!(!is_transient_telegram_server_error(&msg("400: Bad Request")));
+    assert!(!is_transient_telegram_server_error(&msg(
+        "400: Bad Request"
+    )));
 }
 
 #[test]
@@ -205,15 +220,21 @@ fn slice40_19_empty_error_is_not_transient_server_error() {
 
 #[test]
 fn slice40_20_wrapped_refused_is_unsent() {
-    assert!(is_unsent_telegram_network_error(&nested_coded("ECONNREFUSED")));
+    assert!(is_unsent_telegram_network_error(&nested_coded(
+        "ECONNREFUSED"
+    )));
     assert!(is_unsent_telegram_network_error(&nested_coded("ENOTFOUND")));
     assert!(is_unsent_telegram_network_error(&nested_coded("EAI_AGAIN")));
 }
 
 #[test]
 fn slice40_21_wrapped_unreachable_is_unsent() {
-    assert!(is_unsent_telegram_network_error(&nested_coded("ENETUNREACH")));
-    assert!(is_unsent_telegram_network_error(&nested_coded("EHOSTUNREACH")));
+    assert!(is_unsent_telegram_network_error(&nested_coded(
+        "ENETUNREACH"
+    )));
+    assert!(is_unsent_telegram_network_error(&nested_coded(
+        "EHOSTUNREACH"
+    )));
 }
 
 #[test]
@@ -236,7 +257,9 @@ fn slice40_23_request_timeout_type_is_unsent() {
 
 #[test]
 fn slice40_24_bare_reset_after_write_is_not_unsent() {
-    assert!(!is_unsent_telegram_network_error(&nested_coded("ECONNRESET")));
+    assert!(!is_unsent_telegram_network_error(&nested_coded(
+        "ECONNRESET"
+    )));
 }
 
 #[test]
@@ -271,7 +294,9 @@ fn slice40_27_plain_failure_is_not_unsent() {
 #[test]
 fn slice40_28_unknown_code_is_not_unsent() {
     assert!(!is_unsent_telegram_network_error(&nested_coded("EUNKNOWN")));
-    assert!(!is_unsent_telegram_network_error(&nested_coded("ETIMEDOUT")));
+    assert!(!is_unsent_telegram_network_error(&nested_coded(
+        "ETIMEDOUT"
+    )));
 }
 
 #[test]
@@ -286,21 +311,30 @@ fn slice40_29_other_timeout_type_is_not_unsent() {
 
 #[test]
 fn slice40_30_reset_is_transient_network_error() {
-    assert!(is_transient_telegram_network_error(&nested_coded("ECONNRESET")));
+    assert!(is_transient_telegram_network_error(&nested_coded(
+        "ECONNRESET"
+    )));
     assert!(is_transient_telegram_network_error(&coded("ECONNRESET")));
 }
 
 #[test]
 fn slice40_31_broad_transient_codes_detected() {
     for code in ["ECONNABORTED", "EPIPE", "EPROTO", "ETIMEDOUT"] {
-        assert!(is_transient_telegram_network_error(&nested_coded(code)), "{code}");
+        assert!(
+            is_transient_telegram_network_error(&nested_coded(code)),
+            "{code}"
+        );
     }
 }
 
 #[test]
 fn slice40_32_connect_codes_are_transient_network_errors() {
-    assert!(is_transient_telegram_network_error(&nested_coded("ECONNREFUSED")));
-    assert!(is_transient_telegram_network_error(&nested_coded("EAI_AGAIN")));
+    assert!(is_transient_telegram_network_error(&nested_coded(
+        "ECONNREFUSED"
+    )));
+    assert!(is_transient_telegram_network_error(&nested_coded(
+        "EAI_AGAIN"
+    )));
 }
 
 #[test]
@@ -315,7 +349,9 @@ fn slice40_33_request_timeout_type_is_transient() {
 fn slice40_34_plain_and_unknown_are_not_transient_network() {
     assert!(!is_transient_telegram_network_error(&err()));
     assert!(!is_transient_telegram_network_error(&msg("socket hang up")));
-    assert!(!is_transient_telegram_network_error(&nested_coded("EUNKNOWN")));
+    assert!(!is_transient_telegram_network_error(&nested_coded(
+        "EUNKNOWN"
+    )));
 }
 
 #[test]
@@ -381,7 +417,11 @@ fn slice40_41_backoff_never_exceeds_cap() {
 fn slice40_42_retry_after_params_win_for_429() {
     assert_eq!(
         get_telegram_retry_after_ms(
-            &TelegramCallError { error_code: Some(429), retry_after_secs: Some(3.0), ..err() },
+            &TelegramCallError {
+                error_code: Some(429),
+                retry_after_secs: Some(3.0),
+                ..err()
+            },
             1000,
             0
         ),
@@ -401,7 +441,10 @@ fn slice40_43_retry_after_message_parsed_for_429() {
 fn slice40_44_429_without_info_falls_back() {
     assert_eq!(
         get_telegram_retry_after_ms(
-            &TelegramCallError { error_code: Some(429), ..err() },
+            &TelegramCallError {
+                error_code: Some(429),
+                ..err()
+            },
             500,
             0
         ),
@@ -440,28 +483,50 @@ fn slice40_46_networkish_url_uses_backoff_not_rate_limit() {
 
 #[test]
 fn slice40_47_unsent_network_error_uses_backoff() {
-    assert_eq!(get_telegram_retry_after_ms(&nested_coded("ECONNREFUSED"), 500, 0), Some(500));
-    assert_eq!(get_telegram_retry_after_ms(&nested_coded("ECONNREFUSED"), 500, 1), Some(1000));
+    assert_eq!(
+        get_telegram_retry_after_ms(&nested_coded("ECONNREFUSED"), 500, 0),
+        Some(500)
+    );
+    assert_eq!(
+        get_telegram_retry_after_ms(&nested_coded("ECONNREFUSED"), 500, 1),
+        Some(1000)
+    );
 }
 
 #[test]
 fn slice40_48_transient_server_error_uses_backoff() {
-    let gateway = TelegramCallError { error_code: Some(502), ..err() };
+    let gateway = TelegramCallError {
+        error_code: Some(502),
+        ..err()
+    };
     assert_eq!(get_telegram_retry_after_ms(&gateway, 500, 0), Some(500));
     assert_eq!(get_telegram_retry_after_ms(&gateway, 500, 1), Some(1000));
     assert_eq!(get_telegram_retry_after_ms(&gateway, 500, 2), Some(2000));
     assert_eq!(
-        get_telegram_retry_after_ms(&TelegramCallError { error_code: Some(503), ..err() }, 1000, 20),
+        get_telegram_retry_after_ms(
+            &TelegramCallError {
+                error_code: Some(503),
+                ..err()
+            },
+            1000,
+            20
+        ),
         Some(8000)
     );
 }
 
 #[test]
 fn slice40_49_non_retryable_errors_yield_none() {
-    assert_eq!(get_telegram_retry_after_ms(&msg("400: Bad Request"), 500, 0), None);
+    assert_eq!(
+        get_telegram_retry_after_ms(&msg("400: Bad Request"), 500, 0),
+        None
+    );
     assert_eq!(
         get_telegram_retry_after_ms(
-            &TelegramCallError { error_code: Some(400), ..err() },
+            &TelegramCallError {
+                error_code: Some(400),
+                ..err()
+            },
             500,
             0
         ),
@@ -474,7 +539,10 @@ fn slice40_49_non_retryable_errors_yield_none() {
 fn slice40_50_fallback_floor_is_one_ms() {
     assert_eq!(
         get_telegram_retry_after_ms(
-            &TelegramCallError { error_code: Some(429), ..err() },
+            &TelegramCallError {
+                error_code: Some(429),
+                ..err()
+            },
             0,
             0
         ),

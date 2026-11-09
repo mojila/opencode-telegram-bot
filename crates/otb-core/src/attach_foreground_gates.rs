@@ -109,11 +109,7 @@ impl AttachManager {
 
     /// Whether `session_id` is the attached session, optionally also
     /// requiring `directory` (TS: `isAttachedSession`).
-    pub fn is_attached_session(
-        &self,
-        session_id: Option<&str>,
-        directory: Option<&str>,
-    ) -> bool {
+    pub fn is_attached_session(&self, session_id: Option<&str>, directory: Option<&str>) -> bool {
         let state = match &self.state {
             Some(state) => state,
             None => return false,

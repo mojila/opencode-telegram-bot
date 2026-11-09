@@ -8,14 +8,13 @@
 //! or filesystem access — only pure gating/state/filter functions.
 
 use otb_core::event_subscription::{
+    build_interrupted_idle_events, classify_reconnect, count_background_operations,
+    event_session_matches, footer_duration_ms, has_chat_destination, is_heartbeat_event,
+    is_tool_running, marks_session_busy, pick_compact_tool, pickup_closes_run, reports_no_work,
+    short_session_id, should_end_lost_run, should_notify_external_input, should_send_footer,
+    should_show_tool_line, should_subscribe, should_suppress_session_error, truncate_session_error,
     CompactCandidate, FooterGate, LostRunEvent, PromptPickup, ReconnectAction,
-    SESSION_ERROR_MAX_CHARS, build_interrupted_idle_events, classify_reconnect,
-    count_background_operations, event_session_matches, footer_duration_ms,
-    has_chat_destination, is_heartbeat_event, is_tool_running, marks_session_busy,
-    pickup_closes_run, pick_compact_tool, reports_no_work, short_session_id,
-    should_end_lost_run, should_notify_external_input, should_send_footer,
-    should_show_tool_line, should_subscribe, should_suppress_session_error,
-    truncate_session_error,
+    SESSION_ERROR_MAX_CHARS,
 };
 
 fn open_gate() -> FooterGate {
@@ -69,10 +68,7 @@ fn slice24b_cleanup_detaches_telegram_context() {
 
 #[test]
 fn slice24b_reconnect_restart_ends_lost_run() {
-    assert_eq!(
-        classify_reconnect(Some(true)),
-        ReconnectAction::EndRunLost
-    );
+    assert_eq!(classify_reconnect(Some(true)), ReconnectAction::EndRunLost);
 }
 
 #[test]
@@ -280,7 +276,10 @@ fn slice24b_oversized_session_error_truncated() {
 
 #[test]
 fn slice24b_short_session_error_kept_whole() {
-    assert_eq!(truncate_session_error("provider exploded"), "provider exploded");
+    assert_eq!(
+        truncate_session_error("provider exploded"),
+        "provider exploded"
+    );
 }
 
 // --- tool line visibility ---

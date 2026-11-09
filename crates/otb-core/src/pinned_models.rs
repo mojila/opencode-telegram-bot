@@ -219,7 +219,9 @@ pub fn format_context_line(tokens_used: u64, tokens_limit: Option<u64>) -> Strin
         None => 0,
     };
     let used = format_token_count(tokens_used);
-    let limit = safe_limit.map(format_token_count).unwrap_or_else(|| "Unknown".to_string());
+    let limit = safe_limit
+        .map(format_token_count)
+        .unwrap_or_else(|| "Unknown".to_string());
     format!("Context: {used} / {limit} ({percent}%)")
 }
 
@@ -242,10 +244,7 @@ pub fn context_percent(tokens_used: u64, tokens_limit: Option<u64>) -> u64 {
 }
 
 /// Context info pair; `None` until a limit is known (TS: `getContextInfo`).
-pub fn context_info(
-    tokens_used: u64,
-    tokens_limit: Option<u64>,
-) -> Option<(u64, u64)> {
+pub fn context_info(tokens_used: u64, tokens_limit: Option<u64>) -> Option<(u64, u64)> {
     match tokens_limit {
         Some(limit) if limit > 0 => Some((tokens_used, limit)),
         _ => None,
@@ -274,7 +273,9 @@ pub fn summarize_history_context(messages: &[HistoryMessage]) -> (u64, f64) {
         }
         total_cost += message.cost;
         if !found {
-            let size = message.input_tokens.saturating_add(message.cache_read_tokens);
+            let size = message
+                .input_tokens
+                .saturating_add(message.cache_read_tokens);
             if size > 0 {
                 tokens_used = size;
                 found = true;
@@ -290,10 +291,7 @@ pub fn prefer_session_cost(session_cost: Option<f64>, window_cost: f64) -> f64 {
 }
 
 /// Keep the previous cost when a same-session refresh read fails.
-pub fn keep_cost_on_failed_refresh(
-    previous_cost: f64,
-    refresh_cost: Option<f64>,
-) -> f64 {
+pub fn keep_cost_on_failed_refresh(previous_cost: f64, refresh_cost: Option<f64>) -> f64 {
     refresh_cost.unwrap_or(previous_cost)
 }
 
@@ -377,7 +375,10 @@ pub fn format_files_section(changes: &[FileChange], project_path: &str) -> Strin
         lines.push(format_file_item(change, project_path));
     }
     if changes.len() > MAX_LISTED_FILES {
-        lines.push(format!("  ... and {} more", changes.len() - MAX_LISTED_FILES));
+        lines.push(format!(
+            "  ... and {} more",
+            changes.len() - MAX_LISTED_FILES
+        ));
     }
     lines.join("\n")
 }
@@ -430,7 +431,9 @@ pub fn is_message_deleted_error(message: &str) -> bool {
 
 /// `Bad Request: message to unpin not found` → forget the leftover id.
 pub fn is_unpin_not_found_error(message: &str) -> bool {
-    message.to_lowercase().contains("message to unpin not found")
+    message
+        .to_lowercase()
+        .contains("message to unpin not found")
 }
 
 /// Transient failures (e.g. `too many requests`) keep ownership for retry.
@@ -514,10 +517,7 @@ pub fn normalize_model_entries(entries: &[RawModelEntry]) -> Vec<ModelRef> {
 }
 
 /// Drop recent models already present in favorites.
-pub fn exclude_favorites_from_recent(
-    recent: &[ModelRef],
-    favorites: &[ModelRef],
-) -> Vec<ModelRef> {
+pub fn exclude_favorites_from_recent(recent: &[ModelRef], favorites: &[ModelRef]) -> Vec<ModelRef> {
     let favorite_keys: HashSet<String> = favorites
         .iter()
         .map(|m| model_key(&m.provider_id, &m.model_id))

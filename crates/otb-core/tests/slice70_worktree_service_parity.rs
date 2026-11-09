@@ -60,7 +60,10 @@ fn slice70_parse_empty_stdout_parity() {
 
 #[test]
 fn slice70_parse_single_worktree_no_branch_parity() {
-    assert_eq!(parse_git_worktree_list("worktree /a"), vec![parsed("/a", None)]);
+    assert_eq!(
+        parse_git_worktree_list("worktree /a"),
+        vec![parsed("/a", None)]
+    );
 }
 
 #[test]
@@ -179,10 +182,7 @@ fn slice70_gitdir_pointer_parsed_parity() {
 
 #[test]
 fn slice70_gitdir_pointer_case_insensitive_parity() {
-    assert_eq!(
-        parse_gitdir_pointer("GITDIR: /x"),
-        Some("/x".to_string())
-    );
+    assert_eq!(parse_gitdir_pointer("GITDIR: /x"), Some("/x".to_string()));
 }
 
 #[test]
@@ -211,18 +211,12 @@ fn slice70_git_dir_marker_without_trailing_slash_false_parity() {
 
 #[test]
 fn slice70_derive_main_dot_git_is_active_parity() {
-    assert_eq!(
-        derive_main_project_path("/r", "/r/.git"),
-        "/r".to_string()
-    );
+    assert_eq!(derive_main_project_path("/r", "/r/.git"), "/r".to_string());
 }
 
 #[test]
 fn slice70_derive_main_dot_git_case_insensitive_parity() {
-    assert_eq!(
-        derive_main_project_path("/r", "/r/.GIT"),
-        "/r".to_string()
-    );
+    assert_eq!(derive_main_project_path("/r", "/r/.GIT"), "/r".to_string());
 }
 
 #[test]
@@ -263,7 +257,11 @@ fn slice70_path_key_windows_lowercases_parity() {
 #[test]
 fn slice70_flag_current_and_main_parity() {
     assert_eq!(
-        flag_worktree_entries(&[parsed("/r", Some("main")), parsed("/w", None)], "/w", "/r"),
+        flag_worktree_entries(
+            &[parsed("/r", Some("main")), parsed("/w", None)],
+            "/w",
+            "/r"
+        ),
         vec![
             flagged("/r", Some("main"), false, true),
             flagged("/w", None, true, false),

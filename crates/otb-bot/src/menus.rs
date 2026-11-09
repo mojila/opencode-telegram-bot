@@ -5,6 +5,14 @@
 //! `settings`), kept in alphabetical order mirroring the directory listing.
 //!
 //! Pure lookups only. No Telegram API calls, no polling, no DB writes.
+//!
+//! Paged-menu delivery (`resendPagedMenu` parity) is out of scope here:
+//! page turns (`:page:` + back-to-list + model/open/ls page navigations)
+//! delete + reply + transition via the future dispatcher/polling caller in
+//! `telegram.rs`, gated by `otb_core::paged_resend_gates`
+//! (`src/bot/menus/inline-menu.ts:118-137`); detail / confirm /
+//! file-detail / toggle screens stay on edit. This registry never
+//! performs I/O.
 
 /// Canonical menu ids, one per `src/bot/menus/*-menu.ts` file.
 pub const MENU_IDS: &[&str] = &[

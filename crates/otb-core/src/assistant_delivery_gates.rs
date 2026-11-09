@@ -394,11 +394,7 @@ pub fn should_announce_download(announce: Option<bool>) -> bool {
 }
 
 /// Missing stat / non-file / over-budget / ready (TS: the `stat` chain).
-pub fn classify_download_target(
-    exists: bool,
-    is_file: bool,
-    size_bytes: u64,
-) -> DownloadGate {
+pub fn classify_download_target(exists: bool, is_file: bool, size_bytes: u64) -> DownloadGate {
     if !exists {
         DownloadGate::NotFound
     } else if !is_file {

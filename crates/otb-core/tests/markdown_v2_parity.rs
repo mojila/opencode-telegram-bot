@@ -19,11 +19,13 @@ fn converts_common_inline_markdown_and_escapes_telegram_markdown_v2_text() {
 
 #[test]
 fn escapes_code_and_link_delimiters_that_would_break_markdown_v2() {
-    let output = convert_to_telegram_markdown_v2(
-        "Use `C:\\temp` and [docs](https://example.com/a_(b))",
-    );
+    let output =
+        convert_to_telegram_markdown_v2("Use `C:\\temp` and [docs](https://example.com/a_(b))");
 
-    assert!(output.contains("`C:\\\\temp`"), "unexpected output: {output}");
+    assert!(
+        output.contains("`C:\\\\temp`"),
+        "unexpected output: {output}"
+    );
     assert!(
         output.contains("[docs](https://example.com/a_(b\\))"),
         "unexpected output: {output}"

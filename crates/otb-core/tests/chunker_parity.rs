@@ -11,9 +11,8 @@
 //! splits inside a scalar value / split parts are valid and lossless").
 
 use otb_core::render::chunker::{
-    ListItem, PLAIN_MAX_PART_CHARS, PartSource, PlainChunkerOptions, RichBlock,
-    TelegramChunkerOptions, TelegramRenderedBlock, chunk_plain_text,
-    chunk_telegram_rendered_blocks,
+    chunk_plain_text, chunk_telegram_rendered_blocks, ListItem, PartSource, PlainChunkerOptions,
+    RichBlock, TelegramChunkerOptions, TelegramRenderedBlock, PLAIN_MAX_PART_CHARS,
 };
 
 fn paragraph(text: &str) -> TelegramRenderedBlock {
@@ -109,12 +108,7 @@ fn plain_never_splits_inside_emoji() {
     // every part holds whole scalar values (byte length is a multiple of the
     // 4-byte emoji) and the parts rejoin losslessly.
     let text = "😀".repeat(10);
-    let parts = chunk_plain_text(
-        &text,
-        Some(PlainChunkerOptions {
-            max_chars: Some(5),
-        }),
-    );
+    let parts = chunk_plain_text(&text, Some(PlainChunkerOptions { max_chars: Some(5) }));
 
     assert!(!parts.is_empty());
     for part in &parts {
@@ -132,8 +126,7 @@ fn plain_never_splits_inside_emoji() {
 
 #[test]
 fn blocks_pack_into_one_part_and_join_fallback_with_blank_lines() {
-    let parts =
-        chunk_telegram_rendered_blocks(vec![paragraph("one"), paragraph("two")], None);
+    let parts = chunk_telegram_rendered_blocks(vec![paragraph("one"), paragraph("two")], None);
 
     assert_eq!(parts.len(), 1);
     assert_eq!(parts[0].source, PartSource::Blocks);
@@ -206,10 +199,8 @@ fn blocks_keep_oversized_block_in_part_of_its_own() {
 
 #[test]
 fn blocks_skip_empty_plain_projections_when_joining_fallback() {
-    let parts = chunk_telegram_rendered_blocks(
-        vec![paragraph("one"), divider(), paragraph("two")],
-        None,
-    );
+    let parts =
+        chunk_telegram_rendered_blocks(vec![paragraph("one"), divider(), paragraph("two")], None);
 
     assert_eq!(parts[0].blocks.len(), 3);
     assert_eq!(parts[0].fallback_text, "one\n\ntwo");

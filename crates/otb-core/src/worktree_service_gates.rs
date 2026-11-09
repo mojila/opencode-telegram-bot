@@ -320,10 +320,7 @@ pub fn ensure_current_entry(
 /// Fills the current row's missing branch from HEAD; rows that already name
 /// a branch and non-current rows stay untouched (TS: the `else if
 /// (!currentEntry.branch)` backfill in `getGitWorktreeContext`).
-pub fn backfill_detached_branch(
-    entries: &mut Vec<GitWorktreeEntry>,
-    head_branch: Option<&str>,
-) {
+pub fn backfill_detached_branch(entries: &mut Vec<GitWorktreeEntry>, head_branch: Option<&str>) {
     let Some(head_branch) = head_branch else {
         return;
     };

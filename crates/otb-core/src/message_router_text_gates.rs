@@ -83,11 +83,7 @@ pub fn should_miss_for_slash(has_input: bool, is_slash: bool) -> bool {
 /// `true` when the active question consumes the text and stops the chain
 /// (TS: `if (container.questionManager.isActive()) {
 /// await handleQuestionTextAnswer(...); return; }`).
-pub fn should_route_to_question(
-    has_input: bool,
-    is_slash: bool,
-    question_active: bool,
-) -> bool {
+pub fn should_route_to_question(has_input: bool, is_slash: bool, question_active: bool) -> bool {
     has_input && !is_slash && question_active
 }
 

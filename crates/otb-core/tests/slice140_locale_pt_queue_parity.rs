@@ -54,14 +54,8 @@ fn pt_queue_templates_value_parity() {
         PT_QUEUE_MEDIA_LIMIT,
         "⚠️ A mídia na fila está limitada a {maxSizeMb} MiB. Aguarde o envio de um item."
     );
-    assert_eq!(
-        PT_QUEUE_REMOVED,
-        "🗑 Mensagem removida da fila."
-    );
-    assert_eq!(
-        PT_QUEUE_NOT_FOUND,
-        "Esta mensagem não está mais na fila."
-    );
+    assert_eq!(PT_QUEUE_REMOVED, "🗑 Mensagem removida da fila.");
+    assert_eq!(PT_QUEUE_NOT_FOUND, "Esta mensagem não está mais na fila.");
     assert_eq!(
         PT_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."

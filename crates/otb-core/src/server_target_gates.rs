@@ -115,41 +115,40 @@ fn parse_server_url(raw: &str) -> Option<ParsedServerUrl> {
     if hostport.is_empty() {
         return None;
     }
-    let (host_raw, is_ipv6, port_text): (&str, bool, Option<&str>) =
-        if hostport.starts_with('[') {
-            let close = hostport.find(']')?;
-            let after_bracket = &hostport[close + 1..];
-            let port = match after_bracket {
-                "" => None,
-                _ if after_bracket.starts_with(':') => {
-                    let text = &after_bracket[1..];
-                    if text.is_empty() {
-                        None
-                    } else {
-                        Some(text)
-                    }
+    let (host_raw, is_ipv6, port_text): (&str, bool, Option<&str>) = if hostport.starts_with('[') {
+        let close = hostport.find(']')?;
+        let after_bracket = &hostport[close + 1..];
+        let port = match after_bracket {
+            "" => None,
+            _ if after_bracket.starts_with(':') => {
+                let text = &after_bracket[1..];
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
                 }
-                _ => return None,
-            };
-            (&hostport[1..close], true, port)
-        } else if let Some(idx) = hostport.rfind(':') {
-            let host = &hostport[..idx];
-            let text = &hostport[idx + 1..];
-            if host.is_empty() {
+            }
+            _ => return None,
+        };
+        (&hostport[1..close], true, port)
+    } else if let Some(idx) = hostport.rfind(':') {
+        let host = &hostport[..idx];
+        let text = &hostport[idx + 1..];
+        if host.is_empty() {
+            return None;
+        }
+        if text.is_empty() {
+            (host, false, None)
+        } else {
+            if host.contains(':') {
+                // Unbracketed IPv6 is rejected by WHATWG (`new URL` throws).
                 return None;
             }
-            if text.is_empty() {
-                (host, false, None)
-            } else {
-                if host.contains(':') {
-                    // Unbracketed IPv6 is rejected by WHATWG (`new URL` throws).
-                    return None;
-                }
-                (host, false, Some(text))
-            }
-        } else {
-            (hostport, false, None)
-        };
+            (host, false, Some(text))
+        }
+    } else {
+        (hostport, false, None)
+    };
     if host_raw.is_empty() || host_raw.bytes().any(|b| b.is_ascii_whitespace()) {
         return None;
     }

@@ -480,8 +480,7 @@ fn interpolate_full(template: &str, params: &[(&str, &str)]) -> String {
         if rest.starts_with('{') {
             if let Some(end) = rest.find('}') {
                 let name = &rest[1..end];
-                if !name.is_empty()
-                    && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
                 {
                     match params.iter().find(|(k, _)| *k == name) {
                         Some((_, value)) => out.push_str(value),
@@ -541,16 +540,15 @@ fn truncate_goal_objective(text: &str, limit: usize) -> String {
 
 /// Reply-keyboard agent-mode button (`keyboard.agent_mode` + params).
 pub fn keyboard_agent_label(_locale: &str, _emoji: &str, _name: &str) -> String {
-    render_full(_locale, "keyboard.agent_mode", &[("emoji", _emoji), ("name", _name)])
+    render_full(
+        _locale,
+        "keyboard.agent_mode",
+        &[("emoji", _emoji), ("name", _name)],
+    )
 }
 
 /// Reply-keyboard context button (`keyboard.context` + params).
-pub fn keyboard_context_label(
-    _locale: &str,
-    _used: &str,
-    _limit: &str,
-    _percent: u32,
-) -> String {
+pub fn keyboard_context_label(_locale: &str, _used: &str, _limit: &str, _percent: u32) -> String {
     let percent = _percent.to_string();
     render_full(
         _locale,
@@ -568,7 +566,11 @@ pub fn keyboard_variant_label(_locale: &str, _name: &str) -> String {
 pub fn queued_prompt_label(_locale: &str, _index: usize, _text: &str) -> String {
     let index = _index.to_string();
     let preview = truncate_preview(_text, 28);
-    render_full(_locale, "keyboard.queued_prompt", &[("index", &index), ("text", &preview)])
+    render_full(
+        _locale,
+        "keyboard.queued_prompt",
+        &[("index", &index), ("text", &preview)],
+    )
 }
 
 /// Queue acknowledgement (`queue.added` + params).
@@ -594,13 +596,21 @@ pub fn queue_media_limit(_locale: &str, _max_size_mb: u32) -> String {
 pub fn queue_steer_added(_locale: &str, _count: u32, _max: u32) -> String {
     let count = _count.to_string();
     let max = _max.to_string();
-    render_full(_locale, "queue.steer_added", &[("count", &count), ("max", &max)])
+    render_full(
+        _locale,
+        "queue.steer_added",
+        &[("count", &count), ("max", &max)],
+    )
 }
 
 /// Pinned goal line (`pinned.line.goal` + params).
 pub fn goal_status_line(_locale: &str, _status: &str, _objective: &str) -> String {
     let objective = truncate_goal_objective(_objective, 120);
-    render_full(_locale, "pinned.line.goal", &[("status", _status), ("objective", &objective)])
+    render_full(
+        _locale,
+        "pinned.line.goal",
+        &[("status", _status), ("objective", &objective)],
+    )
 }
 
 /// Localised goal-status word (`goal.status.*` by status key).
@@ -628,7 +638,11 @@ pub fn goal_confirm_resume(_locale: &str, _objective: &str) -> String {
 pub fn goal_too_long(_locale: &str, _limit: usize, _count: usize) -> String {
     let limit = _limit.to_string();
     let count = _count.to_string();
-    render_full(_locale, "goal.too_long", &[("limit", &limit), ("count", &count)])
+    render_full(
+        _locale,
+        "goal.too_long",
+        &[("limit", &limit), ("count", &count)],
+    )
 }
 
 /// Goal notice (`goal.notice.paused` / `goal.notice.complete` + params).
@@ -663,7 +677,11 @@ pub fn goal_reason_round_limit(_locale: &str, _rounds: u32) -> String {
 pub fn goal_rounds(_locale: &str, _rounds: u32, _max_rounds: u32) -> String {
     let rounds = _rounds.to_string();
     let max = _max_rounds.to_string();
-    render_full(_locale, "goal.status.rounds", &[("rounds", &rounds), ("maxRounds", &max)])
+    render_full(
+        _locale,
+        "goal.status.rounds",
+        &[("rounds", &rounds), ("maxRounds", &max)],
+    )
 }
 
 /// Goal details button (`goal.button.details` + params).
@@ -801,12 +819,7 @@ pub fn prompt_task_created(
 }
 
 /// Poll summary block (`question.summary.question` + `question.summary.answer`).
-pub fn question_summary(
-    _locale: &str,
-    _index: u32,
-    _question: &str,
-    _answer: &str,
-) -> String {
+pub fn question_summary(_locale: &str, _index: u32, _question: &str, _answer: &str) -> String {
     // Mirrors the poll summary block: question template + answer template.
     let index = _index.to_string();
     let question = render_full(
@@ -820,7 +833,11 @@ pub fn question_summary(
 
 /// Permission request header (`permission.header` + params).
 pub fn permission_header(_locale: &str, _emoji: &str, _name: &str) -> String {
-    render_full(_locale, "permission.header", &[("emoji", _emoji), ("name", _name)])
+    render_full(
+        _locale,
+        "permission.header",
+        &[("emoji", _emoji), ("name", _name)],
+    )
 }
 
 /// Progress activity line (`progress.compact.activity` + params).

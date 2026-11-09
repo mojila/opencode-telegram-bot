@@ -75,12 +75,28 @@ pub struct TelegramListItem {
 /// Minimal Telegram block for the split contract (TS: `TelegramBlock`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum TelegramBlock {
-    Paragraph { text: String },
-    Code { language: Option<String>, text: String },
-    Table { rows: Vec<Vec<String>>, align: Option<Vec<String>> },
-    List { ordered: bool, start: Option<i64>, items: Vec<TelegramListItem> },
-    Blockquote { blocks: Vec<TelegramBlock> },
-    Plain { text: String },
+    Paragraph {
+        text: String,
+    },
+    Code {
+        language: Option<String>,
+        text: String,
+    },
+    Table {
+        rows: Vec<Vec<String>>,
+        align: Option<Vec<String>>,
+    },
+    List {
+        ordered: bool,
+        start: Option<i64>,
+        items: Vec<TelegramListItem>,
+    },
+    Blockquote {
+        blocks: Vec<TelegramBlock>,
+    },
+    Plain {
+        text: String,
+    },
     Rule,
 }
 
@@ -187,7 +203,10 @@ pub fn split_code_block(
             let group_text = group.join("\n");
             split_text_into_chunks(&group_text, limits.max_chars as f64)
                 .into_iter()
-                .map(|chunk| TelegramBlock::Code { language: lang.clone(), text: chunk })
+                .map(|chunk| TelegramBlock::Code {
+                    language: lang.clone(),
+                    text: chunk,
+                })
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -205,9 +224,8 @@ pub fn split_table_block(
     };
     let body_rows = &rows[1..];
     let alignment = align.map(|values| values.to_vec());
-    let measure_row = |row: &Vec<String>| -> usize {
-        row.iter().map(|cell| cell.chars().count()).sum()
-    };
+    let measure_row =
+        |row: &Vec<String>| -> usize { row.iter().map(|cell| cell.chars().count()).sum() };
     let char_budget = limits.max_chars.saturating_sub(measure_row(&header)).max(1);
     let groups = group_items(
         body_rows,
@@ -216,14 +234,20 @@ pub fn split_table_block(
         measure_row,
     );
     if groups.is_empty() {
-        return vec![TelegramBlock::Table { rows: vec![header], align: alignment }];
+        return vec![TelegramBlock::Table {
+            rows: vec![header],
+            align: alignment,
+        }];
     }
     groups
         .into_iter()
         .map(|group| {
             let mut table_rows = vec![header.clone()];
             table_rows.extend(group);
-            TelegramBlock::Table { rows: table_rows, align: alignment.clone() }
+            TelegramBlock::Table {
+                rows: table_rows,
+                align: alignment.clone(),
+            }
         })
         .collect()
 }
@@ -313,7 +337,11 @@ fn split_by_type(block: &TelegramBlock, limits: &BlockSplitLimits) -> Vec<Telegr
                 split_to_plain_blocks(block, limits)
             }
         }
-        TelegramBlock::List { ordered, start, items } => {
+        TelegramBlock::List {
+            ordered,
+            start,
+            items,
+        } => {
             if is_text_rendered_list(*ordered, items) {
                 split_text_list(*ordered, *start, items, limits)
             } else {
@@ -337,8 +365,7 @@ fn split_text_list(
         .enumerate()
         .map(|(index, item)| {
             let marker = text_list_marker(item, index, ordered, Some(from));
-            let chars =
-                measure_item(item) + marker.chars().count() + 1;
+            let chars = measure_item(item) + marker.chars().count() + 1;
             (item.clone(), chars)
         })
         .collect();
@@ -360,11 +387,20 @@ fn split_text_list(
 }
 
 fn split_native_list(items: &[TelegramListItem], limits: &BlockSplitLimits) -> Vec<TelegramBlock> {
-    let max_units = items.iter().map(measure_item_units).max().unwrap_or(1).max(1);
+    let max_units = items
+        .iter()
+        .map(measure_item_units)
+        .max()
+        .unwrap_or(1)
+        .max(1);
     let cap = limits.max_blocks.saturating_sub(1) / max_units;
     group_items(items, limits.max_chars, cap, measure_item)
         .into_iter()
-        .map(|group| TelegramBlock::List { ordered: false, start: None, items: group })
+        .map(|group| TelegramBlock::List {
+            ordered: false,
+            start: None,
+            items: group,
+        })
         .collect()
 }
 
@@ -402,7 +438,10 @@ fn max_chars_limit(max_items: usize) -> usize {
 }
 
 fn measure_item(item: &TelegramListItem) -> usize {
-    item.blocks.iter().map(|block| block_plain_text(block).chars().count() + 1).sum()
+    item.blocks
+        .iter()
+        .map(|block| block_plain_text(block).chars().count() + 1)
+        .sum()
 }
 
 /// Block units a native list item costs: the item itself plus its content.
@@ -418,9 +457,7 @@ fn count_rich_chars_owned(block: &TelegramBlock) -> usize {
 /// character limit (TS: `countRichChars` over `toRichBlock`).
 fn count_rich_chars(block: &TelegramBlock) -> usize {
     match block {
-        TelegramBlock::Paragraph { text } | TelegramBlock::Plain { text } => {
-            text.chars().count()
-        }
+        TelegramBlock::Paragraph { text } | TelegramBlock::Plain { text } => text.chars().count(),
         TelegramBlock::Code { text, .. } => text.chars().count(),
         TelegramBlock::Rule => 0,
         TelegramBlock::Table { rows, .. } => {
@@ -433,10 +470,12 @@ fn count_rich_chars(block: &TelegramBlock) -> usize {
                 .map(|cell| cell.chars().count())
                 .sum()
         }
-        TelegramBlock::Blockquote { blocks } => {
-            blocks.iter().map(count_rich_chars).sum()
-        }
-        TelegramBlock::List { ordered, items, start } => {
+        TelegramBlock::Blockquote { blocks } => blocks.iter().map(count_rich_chars).sum(),
+        TelegramBlock::List {
+            ordered,
+            items,
+            start,
+        } => {
             if is_text_rendered_list(*ordered, items) {
                 count_text_list_chars(items, *ordered, start.unwrap_or(1))
             } else {
@@ -468,9 +507,7 @@ fn count_rich_blocks(block: &TelegramBlock) -> usize {
             } else {
                 1 + items
                     .iter()
-                    .map(|item| {
-                        1 + item.blocks.iter().map(count_rich_blocks).sum::<usize>()
-                    })
+                    .map(|item| 1 + item.blocks.iter().map(count_rich_blocks).sum::<usize>())
                     .sum::<usize>()
             }
         }
@@ -539,7 +576,11 @@ fn block_plain_text(block: &TelegramBlock) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        TelegramBlock::List { ordered, start, items } => {
+        TelegramBlock::List {
+            ordered,
+            start,
+            items,
+        } => {
             let from = start.unwrap_or(1);
             items
                 .iter()
@@ -580,7 +621,14 @@ fn build_list_item_text(
     body.split('\n')
         .enumerate()
         .map(|(line_index, line)| {
-            format!("{}{line}", if line_index == 0 { &marker } else { &continuation })
+            format!(
+                "{}{line}",
+                if line_index == 0 {
+                    &marker
+                } else {
+                    &continuation
+                }
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -601,7 +649,11 @@ fn build_aligned_table_text(rows: &[Vec<String>]) -> String {
         .collect();
     let widths: Vec<usize> = (0..column_count)
         .map(|index| {
-            normalized.iter().map(|row| row[index].chars().count()).max().unwrap_or(0)
+            normalized
+                .iter()
+                .map(|row| row[index].chars().count())
+                .max()
+                .unwrap_or(0)
         })
         .collect();
     let format_row = |row: &[&str]| -> String {
@@ -615,8 +667,11 @@ fn build_aligned_table_text(rows: &[Vec<String>]) -> String {
     if formatted.len() <= 1 {
         return formatted.join("\n");
     }
-    let divider =
-        widths.iter().map(|width| "-".repeat(*width)).collect::<Vec<_>>().join("-|-");
+    let divider = widths
+        .iter()
+        .map(|width| "-".repeat(*width))
+        .collect::<Vec<_>>()
+        .join("-|-");
     let mut lines = vec![formatted[0].clone(), divider];
     lines.extend(formatted.into_iter().skip(1));
     lines.join("\n")

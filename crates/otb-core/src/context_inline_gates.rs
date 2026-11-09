@@ -84,9 +84,7 @@ pub fn truncate_callback_answer(text: &str) -> String {
     if text.chars().count() <= CALLBACK_ANSWER_MAX_LENGTH {
         return text.to_string();
     }
-    text.chars()
-        .take(CALLBACK_ANSWER_MAX_LENGTH)
-        .collect()
+    text.chars().take(CALLBACK_ANSWER_MAX_LENGTH).collect()
 }
 
 /// `true` when the answer needs the head cut (TS: `length > 200`).

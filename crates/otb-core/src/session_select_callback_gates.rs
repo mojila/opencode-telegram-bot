@@ -152,9 +152,7 @@ pub fn should_block_background_session_open(
 /// Background-open post-select action (TS: `postSelectAction:
 /// payload.kind === "assistant_response" ? "latest_assistant_response" :
 /// "none"`).
-pub fn background_post_select_action(
-    _is_assistant_response: bool,
-) -> BackgroundPostAction {
+pub fn background_post_select_action(_is_assistant_response: bool) -> BackgroundPostAction {
     if _is_assistant_response {
         BackgroundPostAction::LatestAssistantResponse
     } else {
@@ -189,10 +187,7 @@ pub fn should_load_pick_transcript(_is_preview_action: bool, _has_chat: bool) ->
 /// `type === "text"` parts with string text, joins with `""`, trims
 /// unless `trim === false`, and returns `null` when the trimmed view is
 /// empty).
-pub fn extract_session_text_parts(
-    _parts: &[SessionTextPart],
-    _trim_text: bool,
-) -> Option<String> {
+pub fn extract_session_text_parts(_parts: &[SessionTextPart], _trim_text: bool) -> Option<String> {
     let mut text = String::new();
     let mut has_text = false;
     for part in _parts {

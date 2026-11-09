@@ -70,10 +70,7 @@ fn zh_queue_templates_value_parity() {
         ZH_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."
     );
-    assert_eq!(
-        ZH_QUEUE_DISABLED_HINT,
-        "可在 /settings 中开启消息队列。"
-    );
+    assert_eq!(ZH_QUEUE_DISABLED_HINT, "可在 /settings 中开启消息队列。");
     assert_eq!(ZH_KEYBOARD_UPDATED, "⌨️ 键盘已更新");
 }
 

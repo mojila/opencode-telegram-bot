@@ -256,7 +256,10 @@ fn slice34b_34_iso_datetime_gate() {
 
 #[test]
 fn slice34b_35_short_prompt_passes_through_collapsed() {
-    assert_eq!(truncate_task_prompt("Send me a daily summary"), "Send me a daily summary");
+    assert_eq!(
+        truncate_task_prompt("Send me a daily summary"),
+        "Send me a daily summary"
+    );
 }
 
 #[test]
@@ -380,7 +383,10 @@ fn slice34b_47_merge_with_empty_is_identity() {
         reads: 4,
         tools: 2,
     };
-    assert_eq!(merge_compact_counts(&counts, &empty_compact_counts()), counts);
+    assert_eq!(
+        merge_compact_counts(&counts, &empty_compact_counts()),
+        counts
+    );
 }
 
 #[test]

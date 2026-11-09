@@ -123,7 +123,10 @@ fn slice48_08_redetach_keeps_inbox_entries() {
     detached(&mut handover);
     assert!(handover.add_inbox_entry(inbox("ses-1", "msg-1")));
     handover.record_detach("ses-1", "D:/repo", selection());
-    assert_eq!(handover.get("ses-1").expect("record").inbox_entries.len(), 1);
+    assert_eq!(
+        handover.get("ses-1").expect("record").inbox_entries.len(),
+        1
+    );
 }
 
 #[test]
@@ -302,7 +305,10 @@ fn slice48_27_add_inbox_entry_accumulates() {
     detached(&mut handover);
     assert!(handover.add_inbox_entry(inbox("ses-1", "msg-1")));
     assert!(handover.add_inbox_entry(inbox("ses-1", "msg-2")));
-    assert_eq!(handover.get("ses-1").expect("record").inbox_entries.len(), 2);
+    assert_eq!(
+        handover.get("ses-1").expect("record").inbox_entries.len(),
+        2
+    );
 }
 
 // --- take_next_prompt (28-32) ---
@@ -313,7 +319,10 @@ fn slice48_28_take_next_prompt_shifts_oldest_first() {
     detached(&mut handover);
     handover.add_prompt("ses-1", handed("first"));
     handover.add_prompt("ses-1", handed("second"));
-    assert_eq!(handover.take_next_prompt("ses-1").map(|p| p.text), Some("first".to_string()));
+    assert_eq!(
+        handover.take_next_prompt("ses-1").map(|p| p.text),
+        Some("first".to_string())
+    );
     assert_eq!(handover.get("ses-1").expect("record").prompts.len(), 1);
 }
 
@@ -412,7 +421,11 @@ fn slice48_40_forget_inbox_id_removes_entry() {
     detached(&mut handover);
     handover.add_inbox_entry(inbox("ses-1", "msg-1"));
     handover.forget_inbox_id("msg-1");
-    assert!(handover.get("ses-1").expect("record").inbox_entries.is_empty());
+    assert!(handover
+        .get("ses-1")
+        .expect("record")
+        .inbox_entries
+        .is_empty());
 }
 
 #[test]
@@ -433,7 +446,10 @@ fn slice48_42_forget_unknown_inbox_id_keeps_entries() {
     detached(&mut handover);
     handover.add_inbox_entry(inbox("ses-1", "msg-1"));
     handover.forget_inbox_id("msg-other");
-    assert_eq!(handover.get("ses-1").expect("record").inbox_entries.len(), 1);
+    assert_eq!(
+        handover.get("ses-1").expect("record").inbox_entries.len(),
+        1
+    );
 }
 
 // --- withdraw / withdraw_all / reset (43-48) ---
@@ -446,7 +462,10 @@ fn slice48_43_withdraw_returns_inbox_entries() {
     handover.add_inbox_entry(inbox("ses-1", "msg-2"));
     let mut returned = handover.withdraw("ses-1", "abort_command");
     returned.sort_by(|a, b| a.inbox_id.cmp(&b.inbox_id));
-    assert_eq!(returned, vec![inbox("ses-1", "msg-1"), inbox("ses-1", "msg-2")]);
+    assert_eq!(
+        returned,
+        vec![inbox("ses-1", "msg-1"), inbox("ses-1", "msg-2")]
+    );
 }
 
 #[test]
@@ -474,7 +493,10 @@ fn slice48_46_withdraw_all_returns_every_session_entry() {
     handover.add_inbox_entry(inbox("ses-2", "msg-2"));
     let mut returned = handover.withdraw_all("opencode_stop");
     returned.sort_by(|a, b| a.inbox_id.cmp(&b.inbox_id));
-    assert_eq!(returned, vec![inbox("ses-1", "msg-1"), inbox("ses-2", "msg-2")]);
+    assert_eq!(
+        returned,
+        vec![inbox("ses-1", "msg-1"), inbox("ses-2", "msg-2")]
+    );
     assert!(handover.get("ses-1").is_none());
     assert!(handover.get("ses-2").is_none());
 }

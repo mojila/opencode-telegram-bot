@@ -47,7 +47,7 @@
 //!   the TS `else` chain.
 
 use crate::duration_footer_display_gates::{
-    TOOL_ELAPSED_THRESHOLD_MS, append_duration, format_duration,
+    append_duration, format_duration, TOOL_ELAPSED_THRESHOLD_MS,
 };
 
 /// Resolved `t("subagent.*")` labels for one activity line (TS: the `t(...)`
@@ -203,11 +203,7 @@ pub fn format_subagent_activity(
     labels: &SubagentLabels,
 ) -> String {
     if status == "completed" {
-        return format_ended_line(
-            &format!("✅ {}", labels.completed),
-            finished_at,
-            created_at,
-        );
+        return format_ended_line(&format!("✅ {}", labels.completed), finished_at, created_at);
     }
     if status == "interrupted" {
         return format_ended_line(
@@ -269,10 +265,7 @@ pub fn has_ended_status(status: &str) -> bool {
 /// One line while Task, Agent and Model are not all known yet and the
 /// subagent has not ended, else the full header + activity card (TS:
 /// `renderSubagentCard`).
-pub fn render_subagent_card(
-    card: &SubagentCardInput,
-    templates: &SubagentCardTemplates,
-) -> String {
+pub fn render_subagent_card(card: &SubagentCardInput, templates: &SubagentCardTemplates) -> String {
     let header_lines =
         format_header_lines(card.description, card.agent, card.model_name, templates);
     let is_complete = header_lines.len() == 3;

@@ -106,9 +106,7 @@ pub fn classify_goal_reason(reason: &str) -> GoalReasonKind<'_> {
     match reason {
         "Paused by the user" => return GoalReasonKind::PausedByUser,
         "Stopped by the user" => return GoalReasonKind::StoppedByUser,
-        "The server restarted while the goal was active" => {
-            return GoalReasonKind::ServerRestarted
-        }
+        "The server restarted while the goal was active" => return GoalReasonKind::ServerRestarted,
         "The goal stopped after an error" => return GoalReasonKind::StoppedAfterError,
         "The goal reviewer gave no usable verdict" => return GoalReasonKind::NoVerdict,
         "The goal reviewer's request is too large for the model" => {

@@ -20,17 +20,16 @@
 //! panics until the Rust port lands (step 2). No FS, env, network, or timers.
 
 use otb_core::stores_runtime::{
-    HEARTBEAT_INTERVAL_MS, HEARTBEAT_LOG_EVERY_TICKS, SESSION_IGNORE_TTL_MS,
-    activation_pending_after_enable, backfill_task_agent, build_basic_auth,
-    capped_retry_delay_ms, classify_probe, cron_toggle_is_noop, default_task_enabled,
-    describe_server_url, has_invalid_mode_syntax, heartbeat_should_log, is_container_runtime,
-    is_enabled_flag, is_fatal_token_code, is_fresh_ignore, is_known_preset_key,
-    is_retryable_server_code, is_task_due_ms, join_probe_url, map_set_prompt_queue_enabled,
-    map_set_prompt_queue_mode, next_startup_retry_delay_ms, normalize_response_streaming_mode,
-    normalize_runtime_mode, normalize_tts_mode, parse_mode_from_argv, probe_route,
-    resolve_app_home, resolve_prompt_queue_mode, resolve_runtime_mode,
-    resolve_switched_server, should_ignore_session,
-    is_valid_preset_streaming_value, is_valid_preset_tts_value,
+    activation_pending_after_enable, backfill_task_agent, build_basic_auth, capped_retry_delay_ms,
+    classify_probe, cron_toggle_is_noop, default_task_enabled, describe_server_url,
+    has_invalid_mode_syntax, heartbeat_should_log, is_container_runtime, is_enabled_flag,
+    is_fatal_token_code, is_fresh_ignore, is_known_preset_key, is_retryable_server_code,
+    is_task_due_ms, is_valid_preset_streaming_value, is_valid_preset_tts_value, join_probe_url,
+    map_set_prompt_queue_enabled, map_set_prompt_queue_mode, next_startup_retry_delay_ms,
+    normalize_response_streaming_mode, normalize_runtime_mode, normalize_tts_mode,
+    parse_mode_from_argv, probe_route, resolve_app_home, resolve_prompt_queue_mode,
+    resolve_runtime_mode, resolve_switched_server, should_ignore_session, HEARTBEAT_INTERVAL_MS,
+    HEARTBEAT_LOG_EVERY_TICKS, SESSION_IGNORE_TTL_MS,
 };
 
 // --- response-streaming normalization (settings-store: responseStreamingMode) ---
@@ -223,7 +222,10 @@ fn slice30b_26_normalize_runtime_mode() {
 
 #[test]
 fn slice30b_27_parse_mode_argv_forms() {
-    assert_eq!(parse_mode_from_argv(&["--mode", "installed"]), Some("installed"));
+    assert_eq!(
+        parse_mode_from_argv(&["--mode", "installed"]),
+        Some("installed")
+    );
     assert_eq!(parse_mode_from_argv(&["--mode=sources"]), Some("sources"));
     assert_eq!(parse_mode_from_argv(&[]), None);
 }
@@ -355,19 +357,16 @@ fn slice30b_41_describe_falls_back_on_invalid() {
 
 #[test]
 fn slice30b_42_switched_server_resolution() {
-    assert_eq!(resolve_switched_server(None, "http://127.0.0.1:49374"), None);
     assert_eq!(
-        resolve_switched_server(
-            Some("http://127.0.0.1:49374"),
-            "http://127.0.0.1:49374"
-        ),
+        resolve_switched_server(None, "http://127.0.0.1:49374"),
         None
     );
     assert_eq!(
-        resolve_switched_server(
-            Some("http://127.0.0.1:28894"),
-            "http://127.0.0.1:49374"
-        ),
+        resolve_switched_server(Some("http://127.0.0.1:49374"), "http://127.0.0.1:49374"),
+        None
+    );
+    assert_eq!(
+        resolve_switched_server(Some("http://127.0.0.1:28894"), "http://127.0.0.1:49374"),
         Some("http://127.0.0.1:28894".to_string())
     );
 }

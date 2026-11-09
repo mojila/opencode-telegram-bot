@@ -124,10 +124,7 @@ pub fn should_answer_task_inactive(
     has_callback_message_id: bool,
     is_active_message: bool,
 ) -> bool {
-    !has_flow_state
-        || !is_task_interaction_state
-        || !has_callback_message_id
-        || !is_active_message
+    !has_flow_state || !is_task_interaction_state || !has_callback_message_id || !is_active_message
 }
 
 /// Stale-state clear gate: with no flow state but a live task interaction,

@@ -55,7 +55,10 @@ fn truncation_suffix_value_parity() {
 
 #[test]
 fn session_message_trims_parity() {
-    assert_eq!(format_session_message("  hello  ", "oops"), "hello".to_string());
+    assert_eq!(
+        format_session_message("  hello  ", "oops"),
+        "hello".to_string()
+    );
 }
 
 #[test]
@@ -65,7 +68,10 @@ fn session_message_empty_uses_fallback_parity() {
 
 #[test]
 fn session_message_blank_uses_fallback_parity() {
-    assert_eq!(format_session_message("   \n  ", "oops"), "oops".to_string());
+    assert_eq!(
+        format_session_message("   \n  ", "oops"),
+        "oops".to_string()
+    );
 }
 
 #[test]
@@ -126,12 +132,16 @@ fn run_footer_sends_when_complete_parity() {
 
 #[test]
 fn run_footer_skips_when_hidden_parity() {
-    assert!(!should_send_run_footer(false, true, false, true, true, true));
+    assert!(!should_send_run_footer(
+        false, true, false, true, true, true
+    ));
 }
 
 #[test]
 fn run_footer_skips_without_response_parity() {
-    assert!(!should_send_run_footer(true, false, false, true, true, true));
+    assert!(!should_send_run_footer(
+        true, false, false, true, true, true
+    ));
 }
 
 #[test]
@@ -141,13 +151,19 @@ fn run_footer_skips_when_suppressed_parity() {
 
 #[test]
 fn run_footer_skips_without_agent_parity() {
-    assert!(!should_send_run_footer(true, true, false, false, true, true));
+    assert!(!should_send_run_footer(
+        true, true, false, false, true, true
+    ));
 }
 
 #[test]
 fn run_footer_skips_without_provider_or_model_parity() {
-    assert!(!should_send_run_footer(true, true, false, true, false, true));
-    assert!(!should_send_run_footer(true, true, false, true, true, false));
+    assert!(!should_send_run_footer(
+        true, true, false, true, false, true
+    ));
+    assert!(!should_send_run_footer(
+        true, true, false, true, true, false
+    ));
 }
 
 // ---- dashboard tokens (6) ----

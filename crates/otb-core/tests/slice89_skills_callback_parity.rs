@@ -221,7 +221,10 @@ fn build_select_callback_parity() {
 
 #[test]
 fn build_prompt_text_with_args_parity() {
-    assert_eq!(build_skills_prompt_text("deploy", "prod now"), "/deploy prod now");
+    assert_eq!(
+        build_skills_prompt_text("deploy", "prod now"),
+        "/deploy prod now"
+    );
 }
 
 #[test]

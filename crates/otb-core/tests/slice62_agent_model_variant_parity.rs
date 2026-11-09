@@ -100,7 +100,10 @@ fn model_search_result_prefix() {
 
 #[test]
 fn parse_agent_callback_ok() {
-    assert_eq!(parse_agent_callback("agent:build"), Some("build".to_string()));
+    assert_eq!(
+        parse_agent_callback("agent:build"),
+        Some("build".to_string())
+    );
 }
 
 #[test]
@@ -134,7 +137,10 @@ fn pick_fallback_agent_parity() {
 
 #[test]
 fn configured_field_parity() {
-    assert_eq!(configured_field(Some("  openai  ")), Some("openai".to_string()));
+    assert_eq!(
+        configured_field(Some("  openai  ")),
+        Some("openai".to_string())
+    );
     assert_eq!(configured_field(Some("   ")), None);
     assert_eq!(configured_field(None), None);
 }
@@ -209,9 +215,18 @@ fn collect_variants_parity() {
     assert_eq!(
         built,
         vec![
-            VariantEntry { id: "default".to_string(), disabled: false },
-            VariantEntry { id: "low".to_string(), disabled: false },
-            VariantEntry { id: "high".to_string(), disabled: true },
+            VariantEntry {
+                id: "default".to_string(),
+                disabled: false
+            },
+            VariantEntry {
+                id: "low".to_string(),
+                disabled: false
+            },
+            VariantEntry {
+                id: "high".to_string(),
+                disabled: true
+            },
         ]
     );
     // A duplicate `default` from the API is skipped.
@@ -219,8 +234,14 @@ fn collect_variants_parity() {
     assert_eq!(
         dup,
         vec![
-            VariantEntry { id: "default".to_string(), disabled: false },
-            VariantEntry { id: "low".to_string(), disabled: false },
+            VariantEntry {
+                id: "default".to_string(),
+                disabled: false
+            },
+            VariantEntry {
+                id: "low".to_string(),
+                disabled: false
+            },
         ]
     );
 }
@@ -254,7 +275,10 @@ fn filter_models_by_catalog_parity() {
     let models = vec![m("a", "x"), m("b", "y")];
     assert_eq!(filter_models_by_catalog(models.clone(), None), models);
     let valid = key_set(&["a/x"]);
-    assert_eq!(filter_models_by_catalog(models, Some(&valid)), vec![m("a", "x")]);
+    assert_eq!(
+        filter_models_by_catalog(models, Some(&valid)),
+        vec![m("a", "x")]
+    );
 }
 
 #[test]
@@ -300,7 +324,10 @@ fn classify_model_availability_parity() {
 fn is_model_adoptable_parity() {
     assert!(is_model_adoptable(ModelAvailability::Offered, false));
     assert!(is_model_adoptable(ModelAvailability::Unknown, false));
-    assert!(!is_model_adoptable(ModelAvailability::ProviderMissing, false));
+    assert!(!is_model_adoptable(
+        ModelAvailability::ProviderMissing,
+        false
+    ));
     assert!(is_model_adoptable(ModelAvailability::ProviderMissing, true));
     assert!(!is_model_adoptable(ModelAvailability::ModelMissing, true));
 }
@@ -363,7 +390,12 @@ fn calculate_models_pagination_range_parity() {
     let first = calculate_models_pagination_range(25, 0, 10);
     assert_eq!(
         first,
-        ModelsPaginationRange { page: 0, total_pages: 3, start_index: 0, end_index: 10 }
+        ModelsPaginationRange {
+            page: 0,
+            total_pages: 3,
+            start_index: 0,
+            end_index: 10
+        }
     );
     let clamped = calculate_models_pagination_range(25, 99, 10);
     assert_eq!(clamped.page, 2);
@@ -371,7 +403,12 @@ fn calculate_models_pagination_range_parity() {
     let empty = calculate_models_pagination_range(0, 0, 10);
     assert_eq!(
         empty,
-        ModelsPaginationRange { page: 0, total_pages: 1, start_index: 0, end_index: 0 }
+        ModelsPaginationRange {
+            page: 0,
+            total_pages: 1,
+            start_index: 0,
+            end_index: 0
+        }
     );
 }
 
@@ -424,7 +461,11 @@ fn parse_model_item_parity() {
 fn parse_provider_item_parity() {
     assert_eq!(
         parse_provider_item(Some("o"), Some("OpenAI"), Some(12)),
-        Some(ProviderRow { id: "o".to_string(), name: "OpenAI".to_string(), model_count: 12 })
+        Some(ProviderRow {
+            id: "o".to_string(),
+            name: "OpenAI".to_string(),
+            model_count: 12
+        })
     );
     // A non-number count reads as zero.
     assert_eq!(
@@ -437,9 +478,18 @@ fn parse_provider_item_parity() {
 
 #[test]
 fn parse_callback_index_parity() {
-    assert_eq!(parse_callback_index("model:result:3", "model:result:"), Some(3));
-    assert_eq!(parse_callback_index("model:result:x", "model:result:"), None);
-    assert_eq!(parse_callback_index("model:list:favorites:1", "model:result:"), None);
+    assert_eq!(
+        parse_callback_index("model:result:3", "model:result:"),
+        Some(3)
+    );
+    assert_eq!(
+        parse_callback_index("model:result:x", "model:result:"),
+        None
+    );
+    assert_eq!(
+        parse_callback_index("model:list:favorites:1", "model:result:"),
+        None
+    );
 }
 
 #[test]
@@ -455,13 +505,21 @@ fn resolve_model_list_callback_parity() {
         })
     );
     assert_eq!(
-        resolve_model_list_callback("model:list:recent:0", &favorites, &recent)
-            .map(|r| r.model_id),
+        resolve_model_list_callback("model:list:recent:0", &favorites, &recent).map(|r| r.model_id),
         Some("y".to_string())
     );
-    assert_eq!(resolve_model_list_callback("model:list:other:0", &favorites, &recent), None);
-    assert_eq!(resolve_model_list_callback("model:list:favorites:5", &favorites, &recent), None);
-    assert_eq!(resolve_model_list_callback("model:list:favorites", &favorites, &recent), None);
+    assert_eq!(
+        resolve_model_list_callback("model:list:other:0", &favorites, &recent),
+        None
+    );
+    assert_eq!(
+        resolve_model_list_callback("model:list:favorites:5", &favorites, &recent),
+        None
+    );
+    assert_eq!(
+        resolve_model_list_callback("model:list:favorites", &favorites, &recent),
+        None
+    );
 }
 
 #[test]
@@ -500,7 +558,10 @@ fn short_and_provider_browser_classification() {
 
 #[test]
 fn routes_dispatch() {
-    assert_eq!(route_model_select_callback("other"), ModelSelectRoute::Ignored);
+    assert_eq!(
+        route_model_select_callback("other"),
+        ModelSelectRoute::Ignored
+    );
     assert_eq!(
         route_model_select_callback("model:search"),
         ModelSelectRoute::SearchFlow
@@ -523,7 +584,10 @@ fn routes_dispatch() {
     );
     assert_eq!(
         route_provider_browser_callback("model:provider:3:1"),
-        ProviderBrowserRoute::ProviderModels { provider_index: 3, page: 1 }
+        ProviderBrowserRoute::ProviderModels {
+            provider_index: 3,
+            page: 1
+        }
     );
     assert_eq!(
         route_provider_browser_callback("model:pick:4"),

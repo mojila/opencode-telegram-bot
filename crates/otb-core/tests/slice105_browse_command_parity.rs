@@ -78,8 +78,7 @@ fn reports_session_project_mismatch_parity() {
 #[test]
 fn keeps_matching_session_project_parity() {
     assert!(!should_report_session_project_mismatch(
-        "/project",
-        "/project"
+        "/project", "/project"
     ));
 }
 
@@ -100,7 +99,10 @@ fn falls_back_to_remembered_ls_dir_parity() {
 
 #[test]
 fn empty_ls_arg_falls_back_parity() {
-    assert_eq!(resolve_ls_target(Some(""), Some("/project")), Some("/project"));
+    assert_eq!(
+        resolve_ls_target(Some(""), Some("/project")),
+        Some("/project")
+    );
     assert_eq!(
         resolve_ls_target(Some("   "), Some("/project")),
         Some("/project")

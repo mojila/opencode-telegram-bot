@@ -120,7 +120,9 @@ fn valid_env_passes_parity() {
 #[test]
 fn missing_or_blank_token_fails_first_parity() {
     assert_eq!(
-        validate_runtime_env(None, Some("42"), Some("p"), Some("m"), None).reason.as_deref(),
+        validate_runtime_env(None, Some("42"), Some("p"), Some("m"), None)
+            .reason
+            .as_deref(),
         Some("Missing TELEGRAM_BOT_TOKEN")
     );
     assert_eq!(
@@ -136,21 +138,31 @@ fn invalid_user_id_fails_parity() {
     for bad in ["", "0", "01", "abc", "-7", "12a"] {
         let result = validate_runtime_env(Some("tok:1"), Some(bad), Some("p"), Some("m"), None);
         assert!(!result.is_valid, "user id {bad:?} should fail");
-        assert_eq!(result.reason.as_deref(), Some("Invalid TELEGRAM_ALLOWED_USER_ID"));
+        assert_eq!(
+            result.reason.as_deref(),
+            Some("Invalid TELEGRAM_ALLOWED_USER_ID")
+        );
     }
 }
 
 #[test]
 fn missing_provider_or_model_fails_parity() {
     let no_provider = validate_runtime_env(Some("tok:1"), Some("5"), None, Some("m"), None);
-    assert_eq!(no_provider.reason.as_deref(), Some("Missing OPENCODE_MODEL_PROVIDER"));
-    let blank_provider = validate_runtime_env(Some("tok:1"), Some("5"), Some("  "), Some("m"), None);
+    assert_eq!(
+        no_provider.reason.as_deref(),
+        Some("Missing OPENCODE_MODEL_PROVIDER")
+    );
+    let blank_provider =
+        validate_runtime_env(Some("tok:1"), Some("5"), Some("  "), Some("m"), None);
     assert_eq!(
         blank_provider.reason.as_deref(),
         Some("Missing OPENCODE_MODEL_PROVIDER")
     );
     let no_model = validate_runtime_env(Some("tok:1"), Some("5"), Some("p"), None, None);
-    assert_eq!(no_model.reason.as_deref(), Some("Missing OPENCODE_MODEL_ID"));
+    assert_eq!(
+        no_model.reason.as_deref(),
+        Some("Missing OPENCODE_MODEL_ID")
+    );
 }
 
 #[test]
@@ -273,20 +285,21 @@ fn custom_assignments_keep_non_template_order_parity() {
         "TEMPLATE_K=1\nCUSTOM_B=2\nCUSTOM_A=3\n",
         &["TEMPLATE_K".to_string()],
     );
-    assert_eq!(custom, vec!["CUSTOM_B=2".to_string(), "CUSTOM_A=3".to_string()]);
+    assert_eq!(
+        custom,
+        vec!["CUSTOM_B=2".to_string(), "CUSTOM_A=3".to_string()]
+    );
 }
 
 #[test]
 fn custom_assignments_dedupe_to_last_in_order_parity() {
-    let custom =
-        collect_custom_env_assignments("Z=1\nZ=2\nT=0\n", &["T".to_string()]);
+    let custom = collect_custom_env_assignments("Z=1\nZ=2\nT=0\n", &["T".to_string()]);
     assert_eq!(custom, vec!["Z=2".to_string()]);
 }
 
 #[test]
 fn custom_assignments_empty_when_all_template_parity() {
-    let custom =
-        collect_custom_env_assignments("A=1\nB=2\n", &["A".to_string(), "B".to_string()]);
+    let custom = collect_custom_env_assignments("A=1\nB=2\n", &["A".to_string(), "B".to_string()]);
     assert!(custom.is_empty());
 }
 
@@ -330,19 +343,23 @@ fn sample_wizard_values() -> WizardEnvValues {
 #[test]
 fn flat_rewrites_keys_in_order_parity() {
     let content = build_flat_env_file_content("", &sample_wizard_values());
-    let token_pos = content.find("TELEGRAM_BOT_TOKEN=tok:123").expect("token line");
-    let user_pos = content.find("TELEGRAM_ALLOWED_USER_ID=42").expect("user line");
-    let provider_pos = content.find("OPENCODE_MODEL_PROVIDER=opencode").expect("provider");
+    let token_pos = content
+        .find("TELEGRAM_BOT_TOKEN=tok:123")
+        .expect("token line");
+    let user_pos = content
+        .find("TELEGRAM_ALLOWED_USER_ID=42")
+        .expect("user line");
+    let provider_pos = content
+        .find("OPENCODE_MODEL_PROVIDER=opencode")
+        .expect("provider");
     assert!(token_pos < user_pos && user_pos < provider_pos);
     assert!(content.ends_with('\n'));
 }
 
 #[test]
 fn flat_removes_old_key_before_append_parity() {
-    let content = build_flat_env_file_content(
-        "TELEGRAM_BOT_TOKEN=old\nKEEP=1\n",
-        &sample_wizard_values(),
-    );
+    let content =
+        build_flat_env_file_content("TELEGRAM_BOT_TOKEN=old\nKEEP=1\n", &sample_wizard_values());
     assert_eq!(content.matches("TELEGRAM_BOT_TOKEN=").count(), 1);
     assert!(content.contains("TELEGRAM_BOT_TOKEN=tok:123"));
     assert!(content.contains("KEEP=1"));
@@ -376,11 +393,7 @@ fn template_missing_falls_back_to_flat_parity() {
 #[test]
 fn template_wizard_override_wins_parity() {
     let values = sample_wizard_values();
-    let content = build_env_file_content(
-        "",
-        &values,
-        Some("TELEGRAM_BOT_TOKEN=\nOTHER=keep\n"),
-    );
+    let content = build_env_file_content("", &values, Some("TELEGRAM_BOT_TOKEN=\nOTHER=keep\n"));
     assert!(content.contains("TELEGRAM_BOT_TOKEN=tok:123"));
     assert!(content.contains("OTHER=keep"));
 }
@@ -397,22 +410,15 @@ fn template_blank_override_keeps_template_line_parity() {
 #[test]
 fn template_existing_value_fills_non_wizard_key_parity() {
     let values = sample_wizard_values();
-    let content = build_env_file_content(
-        "CUSTOM_EXISTING=yes\n",
-        &values,
-        Some("CUSTOM_EXISTING=\n"),
-    );
+    let content =
+        build_env_file_content("CUSTOM_EXISTING=yes\n", &values, Some("CUSTOM_EXISTING=\n"));
     assert!(content.contains("CUSTOM_EXISTING=yes"));
 }
 
 #[test]
 fn template_appends_custom_after_blank_separator_parity() {
     let values = sample_wizard_values();
-    let content = build_env_file_content(
-        "MY_CUSTOM=1\n",
-        &values,
-        Some("TELEGRAM_BOT_TOKEN=\n"),
-    );
+    let content = build_env_file_content("MY_CUSTOM=1\n", &values, Some("TELEGRAM_BOT_TOKEN=\n"));
     assert!(content.contains("TELEGRAM_BOT_TOKEN=tok:123"));
     assert!(content.contains("\n\nMY_CUSTOM=1\n"));
 }
@@ -438,7 +444,10 @@ fn wizard_default_saved_choice_parity() {
         wizard_server_version_default(Some("OPENCODE_SERVER_VERSION=v1\n")),
         ServerVersion::V1
     );
-    assert_eq!(wizard_server_version_default(Some("OTHER=1\n")), ServerVersion::V1);
+    assert_eq!(
+        wizard_server_version_default(Some("OTHER=1\n")),
+        ServerVersion::V1
+    );
 }
 
 #[test]
@@ -447,7 +456,10 @@ fn pick_password_typed_answer_wins_parity() {
         pick_server_password("secret", Some("old")),
         Some("secret".to_string())
     );
-    assert_eq!(pick_server_password("secret", None), Some("secret".to_string()));
+    assert_eq!(
+        pick_server_password("secret", None),
+        Some("secret".to_string())
+    );
 }
 
 #[test]

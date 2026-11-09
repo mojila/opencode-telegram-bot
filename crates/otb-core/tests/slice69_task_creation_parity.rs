@@ -108,10 +108,7 @@ fn slice69_clone_parsed_cron_independent_parity() {
     if let ParsedTaskSchedule::Cron { cron, .. } = &mut cloned {
         *cron = "mutated".to_string();
     }
-    assert_eq!(
-        clone_parsed_task_schedule(&parsed),
-        sample_parsed_cron()
-    );
+    assert_eq!(clone_parsed_task_schedule(&parsed), sample_parsed_cron());
 }
 
 #[test]
@@ -293,10 +290,7 @@ fn slice69_get_state_returns_clone_parity() {
     manager.start("proj-1", "/work/a", sample_model(), "build");
     let mut first = manager.get_state().expect("state");
     first.project_id = "mutated".to_string();
-    assert_eq!(
-        manager.get_state().expect("again").project_id,
-        "proj-1"
-    );
+    assert_eq!(manager.get_state().expect("again").project_id, "proj-1");
 }
 
 #[test]

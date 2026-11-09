@@ -53,14 +53,8 @@ fn es_queue_templates_value_parity() {
         ES_QUEUE_MEDIA_LIMIT,
         "⚠️ Los archivos multimedia en cola están limitados a {maxSizeMb} MiB. Espera a que se envíe un elemento."
     );
-    assert_eq!(
-        ES_QUEUE_REMOVED,
-        "🗑 Mensaje eliminado de la cola."
-    );
-    assert_eq!(
-        ES_QUEUE_NOT_FOUND,
-        "Este mensaje ya no está en la cola."
-    );
+    assert_eq!(ES_QUEUE_REMOVED, "🗑 Mensaje eliminado de la cola.");
+    assert_eq!(ES_QUEUE_NOT_FOUND, "Este mensaje ya no está en la cola.");
     assert_eq!(
         ES_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."

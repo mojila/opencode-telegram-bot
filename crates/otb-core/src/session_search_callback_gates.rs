@@ -159,7 +159,9 @@ pub fn resolve_session_search_result_id(ids: Option<&[String]>, raw: &str) -> Op
 
 /// Live `session-search` flow state: `custom` kind plus
 /// `flow === "session-search"` (TS: `sessionSearchState(deps)`).
-pub fn session_search_flow_state(state: Option<&SessionSearchSnapshot>) -> Option<SessionSearchFlow> {
+pub fn session_search_flow_state(
+    state: Option<&SessionSearchSnapshot>,
+) -> Option<SessionSearchFlow> {
     let s = state?;
     if s.kind != "custom" {
         return None;

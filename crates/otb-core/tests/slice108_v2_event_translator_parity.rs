@@ -120,10 +120,7 @@ fn idle_id_appends_idle_parity() {
 
 #[test]
 fn assistant_updated_id_appends_updated_parity() {
-    assert_eq!(
-        assistant_updated_event_id("m1"),
-        "m1:updated".to_string()
-    );
+    assert_eq!(assistant_updated_event_id("m1"), "m1:updated".to_string());
 }
 
 #[test]

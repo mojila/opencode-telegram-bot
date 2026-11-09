@@ -36,7 +36,13 @@ fn obj(pairs: &[(&str, JsonVal)]) -> JsonVal {
 }
 
 fn tokens() -> TokenUsage {
-    TokenUsage { input: 10, output: 2, reasoning: 0, cache_read: 0, cache_write: 0 }
+    TokenUsage {
+        input: 10,
+        output: 2,
+        reasoning: 0,
+        cache_read: 0,
+        cache_write: 0,
+    }
 }
 
 fn session() -> V2SessionInfo {
@@ -69,13 +75,22 @@ fn model() -> V2Model {
             output: vec!["text".to_string()],
         },
         cost: vec![],
-        limit: V2ModelLimit { context: 1000, output: 100 },
+        limit: V2ModelLimit {
+            context: 1000,
+            output: 100,
+        },
         status: "active".to_string(),
         package: None,
         released_ms: 0,
         variants: vec![
-            V2Variant { id: "low".to_string(), settings: None },
-            V2Variant { id: "high".to_string(), settings: None },
+            V2Variant {
+                id: "low".to_string(),
+                settings: None,
+            },
+            V2Variant {
+                id: "high".to_string(),
+                settings: None,
+            },
         ],
         enabled: true,
     }
@@ -109,15 +124,24 @@ fn slice42_04_unknown_tool_names_pass_through() {
 fn slice42_05_path_backfills_file_path() {
     let input = str_map(&[("path", "a.txt")]);
     let mapped = to_v1_tool_input("read", &input);
-    assert_eq!(mapped.get("path"), Some(&JsonVal::Text("a.txt".to_string())));
-    assert_eq!(mapped.get("filePath"), Some(&JsonVal::Text("a.txt".to_string())));
+    assert_eq!(
+        mapped.get("path"),
+        Some(&JsonVal::Text("a.txt".to_string()))
+    );
+    assert_eq!(
+        mapped.get("filePath"),
+        Some(&JsonVal::Text("a.txt".to_string()))
+    );
 }
 
 #[test]
 fn slice42_06_existing_file_path_is_kept() {
     let input = str_map(&[("path", "a.txt"), ("filePath", "b.txt")]);
     let mapped = to_v1_tool_input("read", &input);
-    assert_eq!(mapped.get("filePath"), Some(&JsonVal::Text("b.txt".to_string())));
+    assert_eq!(
+        mapped.get("filePath"),
+        Some(&JsonVal::Text("b.txt".to_string()))
+    );
 }
 
 #[test]
@@ -128,7 +152,10 @@ fn slice42_07_task_agent_backfills_subagent_type() {
         mapped.get("subagent_type"),
         Some(&JsonVal::Text("explore".to_string()))
     );
-    assert_eq!(mapped.get("agent"), Some(&JsonVal::Text("explore".to_string())));
+    assert_eq!(
+        mapped.get("agent"),
+        Some(&JsonVal::Text("explore".to_string()))
+    );
 }
 
 #[test]
@@ -219,7 +246,10 @@ fn slice42_14_apply_patch_files_gain_relative_paths() {
         JsonVal::Obj(map) => map.clone(),
         other => panic!("expected file record, got {other:?}"),
     };
-    assert_eq!(first.get("filePath"), Some(&JsonVal::Text("src/a.ts".to_string())));
+    assert_eq!(
+        first.get("filePath"),
+        Some(&JsonVal::Text("src/a.ts".to_string()))
+    );
     assert_eq!(
         first.get("relativePath"),
         Some(&JsonVal::Text("src/a.ts".to_string()))
@@ -242,9 +272,18 @@ fn slice42_16_missing_content_is_empty_text() {
 #[test]
 fn slice42_17_text_items_join_with_newlines() {
     let content = vec![
-        V2ContentItem { kind: "text".to_string(), text: Some("hi".to_string()) },
-        V2ContentItem { kind: "image".to_string(), text: None },
-        V2ContentItem { kind: "text".to_string(), text: Some("there".to_string()) },
+        V2ContentItem {
+            kind: "text".to_string(),
+            text: Some("hi".to_string()),
+        },
+        V2ContentItem {
+            kind: "image".to_string(),
+            text: None,
+        },
+        V2ContentItem {
+            kind: "text".to_string(),
+            text: Some("there".to_string()),
+        },
     ];
     assert_eq!(tool_content_text(Some(&content)), "hi\nthere");
 }
@@ -394,13 +433,23 @@ fn assistant_message() -> V2Message {
     V2Message::Assistant(V2AssistantMessage {
         id: "msg-1".to_string(),
         agent: "build".to_string(),
-        model: V2ModelRef { id: "m".to_string(), provider_id: "p".to_string(), variant: None },
-        time: V2Time { created: 1, completed: Some(5), streamed: None },
+        model: V2ModelRef {
+            id: "m".to_string(),
+            provider_id: "p".to_string(),
+            variant: None,
+        },
+        time: V2Time {
+            created: 1,
+            completed: Some(5),
+            streamed: None,
+        },
         tokens: tokens(),
         cost: Some(0.5),
         error: None,
         finish: None,
-        content: vec![V2Content::Text { text: "DONE".to_string() }],
+        content: vec![V2Content::Text {
+            text: "DONE".to_string(),
+        }],
     })
 }
 
@@ -408,7 +457,14 @@ fn assistant_message() -> V2Message {
 fn slice42_28_assistant_info_fields_map() {
     let mapped = to_v1_message(&assistant_message(), "ses-1", "D:/repo").expect("maps");
     match mapped.info {
-        V1MessageInfo::Assistant { id, agent, model_id, provider_id, cost, .. } => {
+        V1MessageInfo::Assistant {
+            id,
+            agent,
+            model_id,
+            provider_id,
+            cost,
+            ..
+        } => {
             assert_eq!(id, "msg-1");
             assert_eq!(agent, "build");
             assert_eq!(model_id, "m");
@@ -443,8 +499,16 @@ fn slice42_30_shell_tool_renames_to_bash_with_output() {
     let message = V2Message::Assistant(V2AssistantMessage {
         id: "msg-1".to_string(),
         agent: "build".to_string(),
-        model: V2ModelRef { id: "m".to_string(), provider_id: "p".to_string(), variant: None },
-        time: V2Time { created: 1, completed: Some(5), streamed: None },
+        model: V2ModelRef {
+            id: "m".to_string(),
+            provider_id: "p".to_string(),
+            variant: None,
+        },
+        time: V2Time {
+            created: 1,
+            completed: Some(5),
+            streamed: None,
+        },
         tokens: tokens(),
         cost: Some(0.0),
         error: None,
@@ -480,8 +544,16 @@ fn slice42_31_streaming_tool_state_becomes_pending() {
     let message = V2Message::Assistant(V2AssistantMessage {
         id: "msg-1".to_string(),
         agent: "build".to_string(),
-        model: V2ModelRef { id: "m".to_string(), provider_id: "p".to_string(), variant: None },
-        time: V2Time { created: 1, completed: None, streamed: None },
+        model: V2ModelRef {
+            id: "m".to_string(),
+            provider_id: "p".to_string(),
+            variant: None,
+        },
+        time: V2Time {
+            created: 1,
+            completed: None,
+            streamed: None,
+        },
         tokens: tokens(),
         cost: None,
         error: None,
@@ -498,7 +570,10 @@ fn slice42_31_streaming_tool_state_becomes_pending() {
     let mapped = to_v1_message(&message, "ses-1", "D:/repo").expect("maps");
     assert!(mapped.parts.iter().any(|part| matches!(
         part,
-        V1Part::Tool { state: V1ToolState::Pending { .. }, .. }
+        V1Part::Tool {
+            state: V1ToolState::Pending { .. },
+            ..
+        }
     )));
 }
 
@@ -554,9 +629,10 @@ fn slice42_35_model_missing_cost_defaults_to_zero() {
 
 #[test]
 fn slice42_36_providers_group_models_and_skip_disabled() {
-    let providers = vec![
-        V2ProviderRef { id: "openai".to_string(), name: "OpenAI".to_string() },
-    ];
+    let providers = vec![V2ProviderRef {
+        id: "openai".to_string(),
+        name: "OpenAI".to_string(),
+    }];
     let mut models = vec![model()];
     let mut disabled = model();
     disabled.id = "old".to_string();
@@ -568,11 +644,17 @@ fn slice42_36_providers_group_models_and_skip_disabled() {
     models.push(foreign);
     let mapped = to_v1_providers(&providers, &models);
     assert_eq!(mapped.len(), 2);
-    let openai = mapped.iter().find(|p| p.id == "openai").expect("openai provider");
+    let openai = mapped
+        .iter()
+        .find(|p| p.id == "openai")
+        .expect("openai provider");
     assert_eq!(openai.name, "OpenAI");
     assert_eq!(openai.models.len(), 1);
     assert!(openai.models.contains_key("gpt"));
-    let unknown = mapped.iter().find(|p| p.id == "unknown-p").expect("fallback provider");
+    let unknown = mapped
+        .iter()
+        .find(|p| p.id == "unknown-p")
+        .expect("fallback provider");
     assert_eq!(unknown.name, "unknown-p");
 }
 
@@ -600,8 +682,14 @@ fn slice42_37_agent_id_becomes_name_with_model() {
 #[test]
 fn slice42_38_commands_then_skills_with_source_tags() {
     let mapped = to_v1_commands(
-        &[V2CommandDef { name: "commit".to_string(), description: Some("d".to_string()) }],
-        &[V2SkillDef { id: "review".to_string(), description: None }],
+        &[V2CommandDef {
+            name: "commit".to_string(),
+            description: Some("d".to_string()),
+        }],
+        &[V2SkillDef {
+            id: "review".to_string(),
+            description: None,
+        }],
     );
     assert_eq!(mapped.len(), 2);
     assert_eq!(mapped[0].source, "command");
@@ -613,16 +701,30 @@ fn slice42_38_commands_then_skills_with_source_tags() {
 #[test]
 fn slice42_39_mcp_connected_and_auth_statuses_pass_through() {
     let mapped = to_v1_mcp_status(&[
-        V2McpServer { name: "a".to_string(), status: "connected".to_string(), error: None },
-        V2McpServer { name: "b".to_string(), status: "needs_auth".to_string(), error: None },
+        V2McpServer {
+            name: "a".to_string(),
+            status: "connected".to_string(),
+            error: None,
+        },
+        V2McpServer {
+            name: "b".to_string(),
+            status: "needs_auth".to_string(),
+            error: None,
+        },
     ]);
     assert_eq!(
         mapped.get("a"),
-        Some(&V1McpStatus { status: "connected".to_string(), error: None })
+        Some(&V1McpStatus {
+            status: "connected".to_string(),
+            error: None
+        })
     );
     assert_eq!(
         mapped.get("b"),
-        Some(&V1McpStatus { status: "needs_auth".to_string(), error: None })
+        Some(&V1McpStatus {
+            status: "needs_auth".to_string(),
+            error: None
+        })
     );
 }
 
@@ -634,15 +736,25 @@ fn slice42_40_mcp_failed_and_unknown_statuses_become_failed() {
             status: "failed".to_string(),
             error: Some("refused".to_string()),
         },
-        V2McpServer { name: "d".to_string(), status: "weird".to_string(), error: None },
+        V2McpServer {
+            name: "d".to_string(),
+            status: "weird".to_string(),
+            error: None,
+        },
     ]);
     assert_eq!(
         mapped.get("c"),
-        Some(&V1McpStatus { status: "failed".to_string(), error: Some("refused".to_string()) })
+        Some(&V1McpStatus {
+            status: "failed".to_string(),
+            error: Some("refused".to_string())
+        })
     );
     assert_eq!(
         mapped.get("d"),
-        Some(&V1McpStatus { status: "failed".to_string(), error: Some("weird".to_string()) })
+        Some(&V1McpStatus {
+            status: "failed".to_string(),
+            error: Some("weird".to_string())
+        })
     );
 }
 
@@ -697,7 +809,10 @@ fn slice42_42_visible_fields_drop_hidden_and_unmet_conditions() {
         fields: vec![form_field("color", "string"), secret, extra],
     };
     let visible = visible_form_fields(&form);
-    assert_eq!(visible.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(), vec!["color"]);
+    assert_eq!(
+        visible.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(),
+        vec!["color"]
+    );
 }
 
 #[test]
@@ -715,7 +830,11 @@ fn slice42_43_boolean_and_plain_questions_map() {
     let request = to_v1_question(&form);
     assert_eq!(request.questions.len(), 2);
     assert_eq!(
-        request.questions[0].options.iter().map(|o| o.label.as_str()).collect::<Vec<_>>(),
+        request.questions[0]
+            .options
+            .iter()
+            .map(|o| o.label.as_str())
+            .collect::<Vec<_>>(),
         vec!["true", "false"]
     );
     assert_eq!(request.questions[0].custom, Some(false));
@@ -742,8 +861,16 @@ fn slice42_44_form_without_visible_fields_falls_back_to_title() {
 fn slice42_45_form_answers_resolve_labels_and_booleans() {
     let mut color = form_field("color", "string");
     color.options = vec![
-        V2FormOption { value: "r".to_string(), label: "Red".to_string(), description: None },
-        V2FormOption { value: "g".to_string(), label: "Green".to_string(), description: None },
+        V2FormOption {
+            value: "r".to_string(),
+            label: "Red".to_string(),
+            description: None,
+        },
+        V2FormOption {
+            value: "g".to_string(),
+            label: "Green".to_string(),
+            description: None,
+        },
     ];
     let ok = form_field("ok", "boolean");
     let form = V2Form {
@@ -754,7 +881,10 @@ fn slice42_45_form_answers_resolve_labels_and_booleans() {
     };
     let answers = vec![vec!["Green".to_string()], vec!["false".to_string()]];
     let mapped = to_form_answer(&form, &answers).expect("valid answers");
-    assert_eq!(mapped.get("color"), Some(&FormAnswerValue::Text("g".to_string())));
+    assert_eq!(
+        mapped.get("color"),
+        Some(&FormAnswerValue::Text("g".to_string()))
+    );
     assert_eq!(mapped.get("ok"), Some(&FormAnswerValue::Bool(false)));
 }
 

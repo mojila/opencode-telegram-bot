@@ -62,7 +62,10 @@ fn known_command_hit_parity() {
 
 #[test]
 fn known_command_miss_parity() {
-    assert!(!is_known_command("frobnicate", &["start", "status", "help"]));
+    assert!(!is_known_command(
+        "frobnicate",
+        &["start", "status", "help"]
+    ));
 }
 
 // --- should_flush_pending_prompt ---
@@ -182,10 +185,7 @@ fn auth_denies_stranger_and_hides_commands_parity() {
 
 #[test]
 fn auth_denies_stranger_in_allowed_chat_without_hide_parity() {
-    assert_eq!(
-        decide_auth(Some(9), 7, 99, Some(7)),
-        AuthVerdict::Deny
-    );
+    assert_eq!(decide_auth(Some(9), 7, 99, Some(7)), AuthVerdict::Deny);
 }
 
 #[test]

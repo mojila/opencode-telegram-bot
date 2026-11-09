@@ -216,7 +216,10 @@ pub fn is_question_request_gone(tag: Option<&str>, is_not_found: bool) -> bool {
     if is_not_found {
         return true;
     }
-    matches!(tag, Some("QuestionNotFoundError") | Some("FormAlreadySettledError"))
+    matches!(
+        tag,
+        Some("QuestionNotFoundError") | Some("FormAlreadySettledError")
+    )
 }
 
 /// `n/total` progress text, empty when there is no total (TS:
@@ -236,10 +239,7 @@ pub fn format_question_button_text(label: &str, selected: bool) -> String {
     if text.chars().count() <= QUESTION_BUTTON_MAX_LENGTH {
         return text;
     }
-    let kept: String = text
-        .chars()
-        .take(QUESTION_BUTTON_MAX_LENGTH - 3)
-        .collect();
+    let kept: String = text.chars().take(QUESTION_BUTTON_MAX_LENGTH - 3).collect();
     format!("{kept}...")
 }
 
@@ -277,7 +277,12 @@ pub fn normalize_custom_answer_label(text: &str) -> String {
 
 /// Length of a card segment: label plus rest (TS: `segmentLength`).
 pub fn question_segment_length(segment: &QuestionSegment) -> usize {
-    segment.label.as_ref().map(|s| s.chars().count()).unwrap_or(0) + segment.rest.chars().count()
+    segment
+        .label
+        .as_ref()
+        .map(|s| s.chars().count())
+        .unwrap_or(0)
+        + segment.rest.chars().count()
 }
 
 /// Plain text of a card segment: label plus rest (TS:
@@ -303,7 +308,11 @@ pub fn truncate_question_segments(
     let mut result: Vec<QuestionSegment> = Vec::new();
     let mut used: usize = 0;
     for segment in segments {
-        let prefix = if result.is_empty() { 0 } else { SEPARATOR_LENGTH };
+        let prefix = if result.is_empty() {
+            0
+        } else {
+            SEPARATOR_LENGTH
+        };
         let length = question_segment_length(segment);
         if used.saturating_add(prefix).saturating_add(length) <= limit {
             result.push(segment.clone());
@@ -314,7 +323,11 @@ pub fn truncate_question_segments(
             .saturating_sub(used)
             .saturating_sub(prefix)
             .saturating_sub(suffix_len);
-        let label_len = segment.label.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+        let label_len = segment
+            .label
+            .as_ref()
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         if available > label_len {
             let rest_cut =
                 slice_on_safe_boundary(&segment.rest, available.saturating_sub(label_len));
@@ -385,7 +398,10 @@ pub enum PermissionReply {
 /// How a permission prompt ended (TS: `PermissionOutcome`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PermissionOutcomeKind {
-    Replied { reply: PermissionReply, outside: bool },
+    Replied {
+        reply: PermissionReply,
+        outside: bool,
+    },
     SettledOutside,
     NotAnswered,
 }
@@ -558,17 +574,8 @@ pub const LEGACY_CONTEXT_CANCEL_CALLBACK: &str = "compact:cancel";
 
 /// All inline menu kinds (TS: `INLINE_MENU_KINDS`).
 pub const INLINE_MENU_KINDS: [&str; 11] = [
-    "project",
-    "session",
-    "recent",
-    "model",
-    "agent",
-    "variant",
-    "context",
-    "open",
-    "ls",
-    "worktree",
-    "settings",
+    "project", "session", "recent", "model", "agent", "variant", "context", "open", "ls",
+    "worktree", "settings",
 ];
 
 /// Telegram limit for callback answer toasts (TS:

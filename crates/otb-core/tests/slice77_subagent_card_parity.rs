@@ -82,10 +82,7 @@ fn slice77_model_display_name_missing_model_parity() {
 
 #[test]
 fn slice77_model_display_name_empty_provider_parity() {
-    assert_eq!(
-        format_model_display_name(Some(""), Some("gpt"), None),
-        None
-    );
+    assert_eq!(format_model_display_name(Some(""), Some("gpt"), None), None);
 }
 
 #[test]
@@ -120,7 +117,10 @@ fn slice77_input_details_apply_patch_path_parity() {
 
 #[test]
 fn slice77_input_details_bash_command_parity() {
-    assert!(should_prefer_input_details("bash", &["command", "description"]));
+    assert!(should_prefer_input_details(
+        "bash",
+        &["command", "description"]
+    ));
 }
 
 #[test]
@@ -306,17 +306,7 @@ fn slice77_activity_error_blank_message_parity() {
 #[test]
 fn slice77_activity_error_no_message_parity() {
     assert_eq!(
-        format_subagent_activity(
-            "error",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            1000,
-            &labels()
-        ),
+        format_subagent_activity("error", None, None, None, None, None, None, 1000, &labels()),
         "❌ Task failed"
     );
 }
@@ -494,10 +484,7 @@ fn slice77_render_complete_running_parity() {
 fn slice77_render_ended_no_headers_parity() {
     let mut failed = card("", "", "error");
     failed.terminal_message = Some("boom");
-    assert_eq!(
-        render_subagent_card(&failed, &templates()),
-        "🧩 ❌ boom"
-    );
+    assert_eq!(render_subagent_card(&failed, &templates()), "🧩 ❌ boom");
 }
 
 // --- join_rendered_cards ---
@@ -509,8 +496,5 @@ fn slice77_join_empty_parity() {
 
 #[test]
 fn slice77_join_filters_and_joins_parity() {
-    assert_eq!(
-        join_rendered_cards(&["🧩 a", "", "🧩 b"]),
-        "🧩 a\n\n🧩 b"
-    );
+    assert_eq!(join_rendered_cards(&["🧩 a", "", "🧩 b"]), "🧩 a\n\n🧩 b");
 }

@@ -159,7 +159,10 @@ pub const BACKGROUND_SESSION_CALLBACK_PREFIX: &str = "background-session:";
 /// Cap a typed search query (TS: `text.slice(0, 100)` in the search input
 /// handler).
 pub fn cap_session_search_query(query: &str) -> String {
-    query.chars().take(SESSION_SEARCH_QUERY_MAX_LENGTH).collect()
+    query
+        .chars()
+        .take(SESSION_SEARCH_QUERY_MAX_LENGTH)
+        .collect()
 }
 
 /// Parse a JS `Number()`-produced page: empty/whitespace-only reads as `0`;

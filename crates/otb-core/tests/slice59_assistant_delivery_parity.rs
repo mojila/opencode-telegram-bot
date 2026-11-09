@@ -59,7 +59,10 @@ fn thinking_entity_collapsed_vs_open() {
 
 #[test]
 fn resolve_parse_mode_picks_format() {
-    assert_eq!(resolve_parse_mode(TelegramTextFormat::MarkdownV2), Some("MarkdownV2"));
+    assert_eq!(
+        resolve_parse_mode(TelegramTextFormat::MarkdownV2),
+        Some("MarkdownV2")
+    );
     assert_eq!(resolve_parse_mode(TelegramTextFormat::Raw), None);
 }
 
@@ -194,7 +197,10 @@ fn assistant_format_mode_pick() {
         select_assistant_format_mode("markdown"),
         AssistantFormatMode::Blocks
     );
-    assert_eq!(select_assistant_format_mode("raw"), AssistantFormatMode::Raw);
+    assert_eq!(
+        select_assistant_format_mode("raw"),
+        AssistantFormatMode::Raw
+    );
 }
 
 #[test]
@@ -321,20 +327,32 @@ fn announce_defaults_to_on() {
 
 #[test]
 fn classify_download_targets() {
-    assert_eq!(classify_download_target(false, false, 0), DownloadGate::NotFound);
-    assert_eq!(classify_download_target(true, false, 0), DownloadGate::NotFile);
+    assert_eq!(
+        classify_download_target(false, false, 0),
+        DownloadGate::NotFound
+    );
+    assert_eq!(
+        classify_download_target(true, false, 0),
+        DownloadGate::NotFile
+    );
     assert_eq!(
         classify_download_target(true, true, DOWNLOAD_MAX_FILE_BYTES + 1),
         DownloadGate::TooLarge
     );
-    assert_eq!(classify_download_target(true, true, 10), DownloadGate::Ready);
+    assert_eq!(
+        classify_download_target(true, true, 10),
+        DownloadGate::Ready
+    );
 }
 
 // --- external user input ---
 
 #[test]
 fn normalize_external_user_input_text() {
-    assert_eq!(normalize_external_user_input("  a\r\nb  "), "a\nb".to_string());
+    assert_eq!(
+        normalize_external_user_input("  a\r\nb  "),
+        "a\nb".to_string()
+    );
 }
 
 #[test]
@@ -368,7 +386,10 @@ fn external_delivery_gate() {
 
 #[test]
 fn external_notification_format_is_markdown_v2() {
-    assert_eq!(external_notification_format(), TelegramTextFormat::MarkdownV2);
+    assert_eq!(
+        external_notification_format(),
+        TelegramTextFormat::MarkdownV2
+    );
 }
 
 // --- finalize-assistant-response.ts ---

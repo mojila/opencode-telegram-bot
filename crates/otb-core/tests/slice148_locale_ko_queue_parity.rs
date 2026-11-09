@@ -58,14 +58,8 @@ fn ko_queue_templates_value_parity() {
         KO_QUEUE_MEDIA_LIMIT,
         "⚠️ 대기열 미디어는 총 {maxSizeMb} MiB로 제한됩니다. 항목이 전송된 후 다시 시도하세요."
     );
-    assert_eq!(
-        KO_QUEUE_REMOVED,
-        "🗑 대기열에서 메시지를 삭제했습니다."
-    );
-    assert_eq!(
-        KO_QUEUE_NOT_FOUND,
-        "이 메시지는 더 이상 대기열에 없습니다."
-    );
+    assert_eq!(KO_QUEUE_REMOVED, "🗑 대기열에서 메시지를 삭제했습니다.");
+    assert_eq!(KO_QUEUE_NOT_FOUND, "이 메시지는 더 이상 대기열에 없습니다.");
     assert_eq!(
         KO_QUEUE_STEER_ADDED,
         "📥 Added to the current task ({count}/{max})."

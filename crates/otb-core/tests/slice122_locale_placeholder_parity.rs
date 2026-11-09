@@ -39,16 +39,19 @@ fn placeholder_pattern_source_value_parity() {
 
 #[test]
 fn placeholder_sets_equal_parity() {
-    assert!(placeholder_sets_equal("Status: {health}", "Status: {health}"));
-    assert!(placeholder_sets_equal("no placeholders", "ohne Platzhalter"));
+    assert!(placeholder_sets_equal(
+        "Status: {health}",
+        "Status: {health}"
+    ));
+    assert!(placeholder_sets_equal(
+        "no placeholders",
+        "ohne Platzhalter"
+    ));
 }
 
 #[test]
 fn placeholder_sets_reject_missing_parity() {
-    assert!(!placeholder_sets_equal(
-        "Status: {health}",
-        "Status: ok"
-    ));
+    assert!(!placeholder_sets_equal("Status: {health}", "Status: ok"));
     assert!(!placeholder_sets_equal(
         "Quote {index}:\n{question}",
         "Quote {index}:"
@@ -58,10 +61,7 @@ fn placeholder_sets_reject_missing_parity() {
 #[test]
 fn placeholder_sets_reject_extra_parity() {
     assert!(!placeholder_sets_equal("Done", "Done {extra}"));
-    assert!(!placeholder_sets_equal(
-        "Hi {name}",
-        "Hi {name} {surname}"
-    ));
+    assert!(!placeholder_sets_equal("Hi {name}", "Hi {name} {surname}"));
 }
 
 // ---- missing / extra (3) ----
@@ -86,8 +86,14 @@ fn extra_placeholders_parity() {
 
 #[test]
 fn non_identifier_braces_are_not_placeholders_parity() {
-    assert!(placeholder_sets_equal("empty {} braces", "leere {} Klammern"));
-    assert!(placeholder_sets_equal("dash {with-dash}", "Bindestrich {with-dash}"));
+    assert!(placeholder_sets_equal(
+        "empty {} braces",
+        "leere {} Klammern"
+    ));
+    assert!(placeholder_sets_equal(
+        "dash {with-dash}",
+        "Bindestrich {with-dash}"
+    ));
     assert!(!placeholder_sets_equal("Hello {name}", "Hallo {Name}"));
 }
 
@@ -107,13 +113,15 @@ fn translation_ok_parity() {
 
 #[test]
 fn mismatch_line_names_key_and_sets_parity() {
-    let line = format_placeholder_mismatch(
-        "status.line.health",
-        "Status: {health}",
-        "Status: ok",
-        "de",
+    let line =
+        format_placeholder_mismatch("status.line.health", "Status: {health}", "Status: ok", "de");
+    assert!(
+        line.contains("status.line.health"),
+        "line must name the key: {line}"
     );
-    assert!(line.contains("status.line.health"), "line must name the key: {line}");
-    assert!(line.contains("{health}"), "line must show the en set: {line}");
+    assert!(
+        line.contains("{health}"),
+        "line must show the en set: {line}"
+    );
     assert!(line.contains("de"), "line must name the locale: {line}");
 }

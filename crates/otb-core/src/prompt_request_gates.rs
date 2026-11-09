@@ -93,11 +93,7 @@ pub fn attachment_placeholder_text(file_count: usize) -> &'static str {
 /// without text gain the placeholder up front (TS: `buildPromptOptions`
 /// parts assembly; the placeholder is keyed on `input.fileParts.length`,
 /// so an attachment on its own gets none).
-pub fn build_prompt_parts(
-    text: &str,
-    file_count: usize,
-    has_attachment: bool,
-) -> Vec<PromptPart> {
+pub fn build_prompt_parts(text: &str, file_count: usize, has_attachment: bool) -> Vec<PromptPart> {
     let mut parts: Vec<PromptPart> = Vec::new();
     if !text.trim().is_empty() {
         parts.push(PromptPart::Text(text.to_string()));
@@ -172,9 +168,7 @@ pub fn build_prompt_options(
     selection: PromptSelection,
 ) -> PromptOptions {
     let parts = build_prompt_parts(text, file_count, has_attachment);
-    let agent = selection
-        .agent
-        .filter(|agent| non_empty(agent));
+    let agent = selection.agent.filter(|agent| non_empty(agent));
     let model = if non_empty(&selection.provider_id) && non_empty(&selection.model_id) {
         Some(PromptModelRef {
             provider_id: selection.provider_id.clone(),

@@ -184,10 +184,7 @@ fn parse_question_index(raw: &str) -> Option<usize> {
     if text.starts_with('-') {
         return None;
     }
-    let digits: String = text
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
         return None;
     }
@@ -296,7 +293,10 @@ pub enum ProbeKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailedHealthCause {
     Unauthorized,
-    Mismatch { actual: String, other_version: String },
+    Mismatch {
+        actual: String,
+        other_version: String,
+    },
     Unknown,
 }
 

@@ -153,12 +153,22 @@ fn slice36b_20_no_session_when_event_carries_none() {
 
 #[test]
 fn slice36b_21_status_busy_marks_attached_busy() {
-    assert!(should_mark_attached_busy("session.status", None, false, true));
+    assert!(should_mark_attached_busy(
+        "session.status",
+        None,
+        false,
+        true
+    ));
 }
 
 #[test]
 fn slice36b_22_status_idle_does_not_mark_busy() {
-    assert!(!should_mark_attached_busy("session.status", None, false, false));
+    assert!(!should_mark_attached_busy(
+        "session.status",
+        None,
+        false,
+        false
+    ));
 }
 
 #[test]
@@ -201,7 +211,12 @@ fn slice36b_25_part_and_question_marks_busy() {
         false,
         false
     ));
-    assert!(should_mark_attached_busy("question.asked", None, false, false));
+    assert!(should_mark_attached_busy(
+        "question.asked",
+        None,
+        false,
+        false
+    ));
     assert!(should_mark_attached_busy(
         "permission.asked",
         None,
@@ -212,7 +227,12 @@ fn slice36b_25_part_and_question_marks_busy() {
 
 #[test]
 fn slice36b_26_unrelated_event_does_not_mark_busy() {
-    assert!(!should_mark_attached_busy("session.idle", None, false, false));
+    assert!(!should_mark_attached_busy(
+        "session.idle",
+        None,
+        false,
+        false
+    ));
     assert!(!should_mark_attached_busy(
         "server.heartbeat",
         None,

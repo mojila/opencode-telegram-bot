@@ -278,10 +278,7 @@ pub fn stored_agent_or_default(stored: Option<&str>) -> String {
 
 /// `preferred ?? stored ?? default` (TS: `resolveProjectAgent` request).
 pub fn requested_agent(preferred: Option<&str>, stored: Option<&str>) -> String {
-    preferred
-        .or(stored)
-        .unwrap_or(DEFAULT_AGENT)
-        .to_string()
+    preferred.or(stored).unwrap_or(DEFAULT_AGENT).to_string()
 }
 
 /// A stored pick wins over a stale session agent
@@ -498,11 +495,9 @@ pub fn assemble_selection_lists(
 ) -> SelectionLists {
     let validated_favorites = filter_models_by_catalog(raw_favorites, valid_keys);
     let validated_recent = filter_models_by_catalog(raw_recent, valid_keys);
-    let offered_default =
-        filter_models_by_catalog(env_default.into_iter().collect(), valid_keys);
+    let offered_default = filter_models_by_catalog(env_default.into_iter().collect(), valid_keys);
 
-    let favorites =
-        dedupe_models([validated_favorites, offered_default].concat());
+    let favorites = dedupe_models([validated_favorites, offered_default].concat());
     let favorite_keys: HashSet<String> = favorites
         .iter()
         .map(|model| model_key(&model.provider_id, &model.model_id))

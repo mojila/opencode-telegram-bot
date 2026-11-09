@@ -26,7 +26,10 @@ fn max_catalog_button_label_length_is_64() {
 
 #[test]
 fn catalog_select_text_kind_branches() {
-    assert_eq!(catalog_select_text_kind(0), CatalogSelectTextKind::FirstPage);
+    assert_eq!(
+        catalog_select_text_kind(0),
+        CatalogSelectTextKind::FirstPage
+    );
     assert_eq!(catalog_select_text_kind(2), CatalogSelectTextKind::Page(2));
 }
 
@@ -117,14 +120,22 @@ fn format_command_button_label_cuts_at_64() {
 fn commands_pagination_empty_list() {
     assert_eq!(
         calculate_commands_pagination_range(0, 0, 10),
-        CatalogPaginationRange { page: 0, total_pages: 1, start_index: 0, end_index: 0 }
+        CatalogPaginationRange {
+            page: 0,
+            total_pages: 1,
+            start_index: 0,
+            end_index: 0
+        }
     );
 }
 
 #[test]
 fn commands_pagination_clamps_high_page() {
     let range = calculate_commands_pagination_range(25, 99, 10);
-    assert_eq!((range.page, range.start_index, range.end_index), (2, 20, 25));
+    assert_eq!(
+        (range.page, range.start_index, range.end_index),
+        (2, 20, 25)
+    );
 }
 
 // --- skills prefixes ---
@@ -212,7 +223,10 @@ fn mcp_status_emoji_map() {
     assert_eq!(mcp_status_emoji(McpStatusKind::Disabled), "🔴");
     assert_eq!(mcp_status_emoji(McpStatusKind::Failed), "⚠️");
     assert_eq!(mcp_status_emoji(McpStatusKind::NeedsAuth), "🔒");
-    assert_eq!(mcp_status_emoji(McpStatusKind::NeedsClientRegistration), "🔒");
+    assert_eq!(
+        mcp_status_emoji(McpStatusKind::NeedsClientRegistration),
+        "🔒"
+    );
     assert_eq!(mcp_status_emoji(McpStatusKind::Unknown), "❓");
 }
 
@@ -268,21 +282,28 @@ fn mcp_detail_toggle_absent_without_switchable_status() {
 fn mcp_detail_rows_with_toggle_have_two_rows() {
     assert_eq!(
         mcp_detail_callback_rows(McpStatusKind::Connected),
-        vec![vec![MCPS_CALLBACK_TOGGLE], vec![MCPS_CALLBACK_BACK, MCPS_CALLBACK_CANCEL]]
+        vec![
+            vec![MCPS_CALLBACK_TOGGLE],
+            vec![MCPS_CALLBACK_BACK, MCPS_CALLBACK_CANCEL]
+        ]
     );
 }
 
 #[test]
 fn mcp_detail_error_gate() {
     assert!(mcp_detail_shows_error(McpStatusKind::Failed));
-    assert!(mcp_detail_shows_error(McpStatusKind::NeedsClientRegistration));
+    assert!(mcp_detail_shows_error(
+        McpStatusKind::NeedsClientRegistration
+    ));
     assert!(!mcp_detail_shows_error(McpStatusKind::Connected));
 }
 
 #[test]
 fn mcp_detail_auth_gate() {
     assert!(mcp_detail_shows_auth_notice(McpStatusKind::NeedsAuth));
-    assert!(mcp_detail_shows_auth_notice(McpStatusKind::NeedsClientRegistration));
+    assert!(mcp_detail_shows_auth_notice(
+        McpStatusKind::NeedsClientRegistration
+    ));
     assert!(!mcp_detail_shows_auth_notice(McpStatusKind::Disabled));
 }
 
@@ -297,7 +318,12 @@ fn build_mcp_detail_text_minimal() {
 #[test]
 fn build_mcp_detail_text_with_error_and_auth() {
     assert_eq!(
-        build_mcp_detail_text("Title", "Status: bad", Some("Error: boom"), Some("Auth needed")),
+        build_mcp_detail_text(
+            "Title",
+            "Status: bad",
+            Some("Error: boom"),
+            Some("Auth needed")
+        ),
         "Title\n\nStatus: bad\nError: boom\n\nAuth needed"
     );
 }
@@ -346,15 +372,31 @@ fn format_boolean_setting_value_branches() {
 
 #[test]
 fn format_tts_mode_value_three_way() {
-    assert_eq!(format_tts_mode_value(TtsMode::All, "All", "Auto", "Off"), "All");
-    assert_eq!(format_tts_mode_value(TtsMode::Auto, "All", "Auto", "Off"), "Auto");
-    assert_eq!(format_tts_mode_value(TtsMode::Off, "All", "Auto", "Off"), "Off");
+    assert_eq!(
+        format_tts_mode_value(TtsMode::All, "All", "Auto", "Off"),
+        "All"
+    );
+    assert_eq!(
+        format_tts_mode_value(TtsMode::Auto, "All", "Auto", "Off"),
+        "Auto"
+    );
+    assert_eq!(
+        format_tts_mode_value(TtsMode::Off, "All", "Auto", "Off"),
+        "Off"
+    );
 }
 
 #[test]
 fn format_prompt_queue_mode_value_v1_is_on_off() {
     assert_eq!(
-        format_prompt_queue_mode_value(false, PromptQueueMode::Queue, "Queue", "Steer", "On", "Off"),
+        format_prompt_queue_mode_value(
+            false,
+            PromptQueueMode::Queue,
+            "Queue",
+            "Steer",
+            "On",
+            "Off"
+        ),
         "On"
     );
     assert_eq!(

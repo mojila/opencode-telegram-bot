@@ -37,7 +37,10 @@ fn slice32b_01_folder_name_from_unix_path() {
 
 #[test]
 fn slice32b_02_folder_name_from_windows_path() {
-    assert_eq!(get_project_folder_name("C:\\work\\my-project"), "my-project");
+    assert_eq!(
+        get_project_folder_name("C:\\work\\my-project"),
+        "my-project"
+    );
 }
 
 #[test]
@@ -179,7 +182,12 @@ fn slice32b_15_long_label_truncates_to_64_chars() {
 
 #[test]
 fn slice32b_16_project_matches_folder_substring_case_insensitively() {
-    assert!(project_matches_search("opencode-telegram-bot", None, false, "TELEGRAM"));
+    assert!(project_matches_search(
+        "opencode-telegram-bot",
+        None,
+        false,
+        "TELEGRAM"
+    ));
     assert!(project_matches_search(
         "other",
         Some("My Cool Project"),
@@ -282,7 +290,10 @@ fn slice32b_26_parses_permission_background_marker() {
 #[test]
 fn slice32b_27_rejects_bad_background_callbacks() {
     assert_eq!(parse_background_session_callback("model:openai/gpt"), None);
-    assert_eq!(parse_background_session_callback("background-session:"), None);
+    assert_eq!(
+        parse_background_session_callback("background-session:"),
+        None
+    );
     assert_eq!(
         parse_background_session_callback("background-session:z:session-1"),
         None
@@ -368,7 +379,10 @@ fn slice32b_36_poll_busy_stays_busy() {
 
 #[test]
 fn slice32b_37_poll_missing_or_unknown_is_not_found() {
-    assert_eq!(classify_poll_session_status(None), PollSessionState::NotFound);
+    assert_eq!(
+        classify_poll_session_status(None),
+        PollSessionState::NotFound
+    );
     assert_eq!(
         classify_poll_session_status(Some("archived")),
         PollSessionState::NotFound
@@ -401,7 +415,10 @@ fn slice32b_40_oga_filename_becomes_ogg() {
 
 #[test]
 fn slice32b_41_filename_defaults_when_no_basename() {
-    assert_eq!(voice_filename_from_file_path("voice/file_1.ogg"), "file_1.ogg");
+    assert_eq!(
+        voice_filename_from_file_path("voice/file_1.ogg"),
+        "file_1.ogg"
+    );
     assert_eq!(normalize_recognized_text("   "), None);
 }
 
@@ -416,7 +433,10 @@ fn slice32b_42_recognized_text_trims() {
 #[test]
 fn slice32b_43_stt_note_gating() {
     let note = "Handle with care";
-    assert_eq!(stt_note_prefix(note), Some("[Note: Handle with care]".to_string()));
+    assert_eq!(
+        stt_note_prefix(note),
+        Some("[Note: Handle with care]".to_string())
+    );
     assert_eq!(stt_note_prefix(""), None);
     assert_eq!(stt_note_prefix("false"), None);
     assert_eq!(stt_note_prefix("FALSE"), None);
@@ -463,10 +483,7 @@ fn slice32b_47_status_project_display_with_branch() {
         format_status_project_display("/repo-main", Some("feature/mobile")),
         "/repo-main: feature/mobile"
     );
-    assert_eq!(
-        format_status_project_display("/repo", None),
-        "/repo"
-    );
+    assert_eq!(format_status_project_display("/repo", None), "/repo");
 }
 
 #[test]

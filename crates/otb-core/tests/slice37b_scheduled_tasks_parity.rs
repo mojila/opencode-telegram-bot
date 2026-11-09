@@ -31,7 +31,10 @@ fn slice37b_01_short_prompt_passes_through() {
 
 #[test]
 fn slice37b_02_prompt_collapses_whitespace() {
-    assert_eq!(normalize_task_prompt("Send  report\nnow"), "Send report now");
+    assert_eq!(
+        normalize_task_prompt("Send  report\nnow"),
+        "Send report now"
+    );
 }
 
 #[test]
@@ -331,9 +334,15 @@ fn slice37b_42_finish_reason_prefers_step_finish() {
 
 #[test]
 fn slice37b_43_tool_calls_awaits_final_reply() {
-    assert!(assistant_completed_is_awaiting_tool(true, Some("tool-calls")));
+    assert!(assistant_completed_is_awaiting_tool(
+        true,
+        Some("tool-calls")
+    ));
     assert!(!assistant_completed_is_awaiting_tool(true, Some("stop")));
-    assert!(!assistant_completed_is_awaiting_tool(false, Some("tool-calls")));
+    assert!(!assistant_completed_is_awaiting_tool(
+        false,
+        Some("tool-calls")
+    ));
 }
 
 #[test]

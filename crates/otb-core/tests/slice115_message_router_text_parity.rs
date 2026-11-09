@@ -113,7 +113,9 @@ fn slice115_14_no_queue_when_handled_or_not_queued() {
 #[test]
 fn slice115_15_no_input_misses() {
     assert_eq!(
-        select_message_router_text_route(false, false, false, false, false, false, false, false, false, false, false),
+        select_message_router_text_route(
+            false, false, false, false, false, false, false, false, false, false, false
+        ),
         MessageRouterTextRoute::MissNoInput
     );
 }
@@ -121,7 +123,9 @@ fn slice115_15_no_input_misses() {
 #[test]
 fn slice115_16_slash_misses_before_question() {
     assert_eq!(
-        select_message_router_text_route(true, true, true, false, false, false, false, false, false, false, false),
+        select_message_router_text_route(
+            true, true, true, false, false, false, false, false, false, false, false
+        ),
         MessageRouterTextRoute::MissSlash
     );
 }
@@ -129,7 +133,9 @@ fn slice115_16_slash_misses_before_question() {
 #[test]
 fn slice115_17_question_wins_over_all_handlers() {
     assert_eq!(
-        select_message_router_text_route(true, false, true, true, true, true, true, true, true, true, true),
+        select_message_router_text_route(
+            true, false, true, true, true, true, true, true, true, true, true
+        ),
         MessageRouterTextRoute::Question
     );
 }
@@ -137,15 +143,21 @@ fn slice115_17_question_wins_over_all_handlers() {
 #[test]
 fn slice115_18_handler_precedence_is_goal_first() {
     assert_eq!(
-        select_message_router_text_route(true, false, false, true, true, true, true, true, true, true, false),
+        select_message_router_text_route(
+            true, false, false, true, true, true, true, true, true, true, false
+        ),
         MessageRouterTextRoute::Goal
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, true, true, true, true, true, true, false),
+        select_message_router_text_route(
+            true, false, false, false, true, true, true, true, true, true, false
+        ),
         MessageRouterTextRoute::Task
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, true, true, true, true, true, false),
+        select_message_router_text_route(
+            true, false, false, false, false, true, true, true, true, true, false
+        ),
         MessageRouterTextRoute::ModelSearch
     );
 }
@@ -153,19 +165,27 @@ fn slice115_18_handler_precedence_is_goal_first() {
 #[test]
 fn slice115_19_late_stages_win_only_when_early_missed() {
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, true, true, true, true, false),
+        select_message_router_text_route(
+            true, false, false, false, false, false, true, true, true, true, false
+        ),
         MessageRouterTextRoute::ProjectSearch
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, false, true, true, true, false),
+        select_message_router_text_route(
+            true, false, false, false, false, false, false, true, true, true, false
+        ),
         MessageRouterTextRoute::SessionSearch
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, false, false, true, true, false),
+        select_message_router_text_route(
+            true, false, false, false, false, false, false, false, true, true, false
+        ),
         MessageRouterTextRoute::Rename
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, false, false, false, true, false),
+        select_message_router_text_route(
+            true, false, false, false, false, false, false, false, false, true, false
+        ),
         MessageRouterTextRoute::Catalog
     );
 }
@@ -173,11 +193,15 @@ fn slice115_19_late_stages_win_only_when_early_missed() {
 #[test]
 fn slice115_20_queue_wins_over_merge_only_when_all_missed() {
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, false, false, false, false, true),
+        select_message_router_text_route(
+            true, false, false, false, false, false, false, false, false, false, true
+        ),
         MessageRouterTextRoute::Queue
     );
     assert_eq!(
-        select_message_router_text_route(true, false, false, false, false, false, false, false, false, false, false),
+        select_message_router_text_route(
+            true, false, false, false, false, false, false, false, false, false, false
+        ),
         MessageRouterTextRoute::Merge
     );
 }

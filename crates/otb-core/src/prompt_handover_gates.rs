@@ -220,7 +220,9 @@ impl PromptHandover {
     /// `forgetInboxId`: drops the id from every session).
     pub fn forget_inbox_id(&mut self, inbox_id: &str) {
         for record in self.sessions.values_mut() {
-            record.inbox_entries.retain(|entry| entry.inbox_id != inbox_id);
+            record
+                .inbox_entries
+                .retain(|entry| entry.inbox_id != inbox_id);
         }
     }
 

@@ -21,7 +21,10 @@ use otb_core::markdown_normalizer::{
 
 #[test]
 fn slice43_01_render_h1_becomes_bold() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("# Main heading"), "**Main heading**");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("# Main heading"),
+        "**Main heading**"
+    );
 }
 
 #[test]
@@ -33,27 +36,42 @@ fn slice43_02_render_all_heading_levels_become_bold() {
 
 #[test]
 fn slice43_03_render_heading_trailing_whitespace_stripped() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("## Title   "), "**Title**");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("## Title   "),
+        "**Title**"
+    );
 }
 
 #[test]
 fn slice43_04_render_heading_with_up_to_three_leading_spaces() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("   ### Indented"), "**Indented**");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("   ### Indented"),
+        "**Indented**"
+    );
 }
 
 #[test]
 fn slice43_05_render_four_leading_spaces_not_a_heading() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("    # Code"), "    # Code");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("    # Code"),
+        "    # Code"
+    );
 }
 
 #[test]
 fn slice43_06_render_seven_hashes_not_a_heading() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("####### Too many"), "####### Too many");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("####### Too many"),
+        "####### Too many"
+    );
 }
 
 #[test]
 fn slice43_07_render_hash_without_space_not_a_heading() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("#nospace"), "#nospace");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("#nospace"),
+        "#nospace"
+    );
 }
 
 #[test]
@@ -65,7 +83,10 @@ fn slice43_08_render_bare_hash_with_space_only_untouched() {
 
 #[test]
 fn slice43_09_render_triple_dash_rule_becomes_box_line() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("---"), "──────────");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("---"),
+        "──────────"
+    );
 }
 
 #[test]
@@ -82,29 +103,50 @@ fn slice43_10_render_rule_variants_become_box_line() {
 #[test]
 fn slice43_11_render_rule_lookalikes_untouched() {
     assert_eq!(normalize_markdown_for_telegram_rendering("---x"), "---x");
-    assert_eq!(normalize_markdown_for_telegram_rendering("**bold**"), "**bold**");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("**bold**"),
+        "**bold**"
+    );
 }
 
 // --- rendering: checklists (12-16, 37, 39) ---
 
 #[test]
 fn slice43_12_render_dash_checklist_markers() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("- [ ] Open"), "🔲 Open");
-    assert_eq!(normalize_markdown_for_telegram_rendering("- [x] Done"), "✅ Done");
-    assert_eq!(normalize_markdown_for_telegram_rendering("- [X] Done"), "✅ Done");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("- [ ] Open"),
+        "🔲 Open"
+    );
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("- [x] Done"),
+        "✅ Done"
+    );
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("- [X] Done"),
+        "✅ Done"
+    );
 }
 
 #[test]
 fn slice43_13_render_plus_star_and_numbered_checklist_markers() {
     assert_eq!(normalize_markdown_for_telegram_rendering("+ [ ] a"), "🔲 a");
     assert_eq!(normalize_markdown_for_telegram_rendering("* [x] b"), "✅ b");
-    assert_eq!(normalize_markdown_for_telegram_rendering("1. [ ] c"), "🔲 c");
-    assert_eq!(normalize_markdown_for_telegram_rendering("12. [X] d"), "✅ d");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("1. [ ] c"),
+        "🔲 c"
+    );
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("12. [X] d"),
+        "✅ d"
+    );
 }
 
 #[test]
 fn slice43_14_render_indented_checklist_keeps_indent() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("  - [ ] task"), "  🔲 task");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("  - [ ] task"),
+        "  🔲 task"
+    );
 }
 
 #[test]
@@ -114,25 +156,40 @@ fn slice43_15_render_empty_checkbox_without_text_untouched() {
 
 #[test]
 fn slice43_16_render_invalid_checkbox_state_untouched() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("- [y] task"), "- [y] task");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("- [y] task"),
+        "- [y] task"
+    );
 }
 
 #[test]
 fn slice43_37_render_numbered_checked_task() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("1. [x] Done"), "✅ Done");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("1. [x] Done"),
+        "✅ Done"
+    );
 }
 
 #[test]
 fn slice43_39_render_checklist_without_space_after_bracket_untouched() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("- [ ]task"), "- [ ]task");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("- [ ]task"),
+        "- [ ]task"
+    );
 }
 
 // --- rendering: quotes (17-25, 33-34, 38) ---
 
 #[test]
 fn slice43_17_render_quote_spacing_normalized() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("> quoted"), "> quoted");
-    assert_eq!(normalize_markdown_for_telegram_rendering(">quoted"), "> quoted");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("> quoted"),
+        "> quoted"
+    );
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering(">quoted"),
+        "> quoted"
+    );
 }
 
 #[test]
@@ -214,15 +271,25 @@ fn slice43_34_render_nested_quote_preserved() {
 
 #[test]
 fn slice43_38_render_quote_extra_leading_spaces_collapsed() {
-    assert_eq!(normalize_markdown_for_telegram_rendering(">   hello"), "> hello");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering(">   hello"),
+        "> hello"
+    );
 }
 
 // --- rendering: code fences (26-29) ---
 
 #[test]
 fn slice43_26_render_fenced_code_untouched() {
-    let input = ["```ts", "# Not a heading", "> not a quote", "- [ ] not a checklist", "---", "```"]
-        .join("\n");
+    let input = [
+        "```ts",
+        "# Not a heading",
+        "> not a quote",
+        "- [ ] not a checklist",
+        "---",
+        "```",
+    ]
+    .join("\n");
     assert_eq!(normalize_markdown_for_telegram_rendering(&input), input);
 }
 
@@ -309,7 +376,10 @@ fn slice43_36_render_quote_checklist_doc_example() {
 
 #[test]
 fn slice43_40_render_rule_with_leading_spaces() {
-    assert_eq!(normalize_markdown_for_telegram_rendering("  ---"), "──────────");
+    assert_eq!(
+        normalize_markdown_for_telegram_rendering("  ---"),
+        "──────────"
+    );
 }
 
 // --- block-parsing mode (41-48) ---
@@ -389,5 +459,8 @@ fn slice43_48_parse_combined_doc_example() {
         "---",
     ]
     .join("\n");
-    assert_eq!(normalize_markdown_for_telegram_block_parsing(&input), expected);
+    assert_eq!(
+        normalize_markdown_for_telegram_block_parsing(&input),
+        expected
+    );
 }

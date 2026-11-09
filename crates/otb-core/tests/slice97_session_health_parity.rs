@@ -105,7 +105,10 @@ fn session_title_falls_back_when_missing_parity() {
 
 #[test]
 fn session_title_empty_fetched_kept_parity() {
-    assert_eq!(resolve_session_title(Some(""), false, "Remembered"), String::new());
+    assert_eq!(
+        resolve_session_title(Some(""), false, "Remembered"),
+        String::new()
+    );
 }
 
 // ---- run-control (8) ----
@@ -138,28 +141,19 @@ fn reconcile_gate_parity() {
 
 #[test]
 fn busy_dirs_fg_only_parity() {
-    let dirs = collect_busy_directories(
-        &["/a".to_string(), "/b".to_string()],
-        Some("/c"),
-        false,
-    );
+    let dirs = collect_busy_directories(&["/a".to_string(), "/b".to_string()], Some("/c"), false);
     assert_eq!(dirs, vec!["/a".to_string(), "/b".to_string()]);
 }
 
 #[test]
 fn busy_dirs_includes_busy_attached_parity() {
-    let dirs =
-        collect_busy_directories(&["/a".to_string()], Some("/b"), true);
+    let dirs = collect_busy_directories(&["/a".to_string()], Some("/b"), true);
     assert_eq!(dirs, vec!["/a".to_string(), "/b".to_string()]);
 }
 
 #[test]
 fn busy_dirs_dedupes_parity() {
-    let dirs = collect_busy_directories(
-        &["/a".to_string(), "/a".to_string()],
-        Some("/a"),
-        true,
-    );
+    let dirs = collect_busy_directories(&["/a".to_string(), "/a".to_string()], Some("/a"), true);
     assert_eq!(dirs, vec!["/a".to_string()]);
 }
 
@@ -178,7 +172,10 @@ fn health_method_post_rejected_parity() {
 
 #[test]
 fn health_route_live_parity() {
-    assert_eq!(resolve_health_route("GET", Some("/health/live")), HealthRoute::Live);
+    assert_eq!(
+        resolve_health_route("GET", Some("/health/live")),
+        HealthRoute::Live
+    );
 }
 
 #[test]
@@ -199,7 +196,10 @@ fn health_route_ready_parity() {
 
 #[test]
 fn health_route_root_parity() {
-    assert_eq!(resolve_health_route("GET", Some("/health")), HealthRoute::Root);
+    assert_eq!(
+        resolve_health_route("GET", Some("/health")),
+        HealthRoute::Root
+    );
     assert_eq!(resolve_health_route("GET", None), HealthRoute::Root);
 }
 

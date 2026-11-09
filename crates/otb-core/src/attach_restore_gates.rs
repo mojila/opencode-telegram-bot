@@ -160,10 +160,7 @@ pub fn should_settle_shown_permission(pending_has: bool, still_settleable: bool)
 
 /// `true` when settled-permission changes are drawn
 /// (TS: `if (changes.length > 0 && attachPresentation)`).
-pub fn should_apply_permission_settle_changes(
-    change_count: usize,
-    has_presentation: bool,
-) -> bool {
+pub fn should_apply_permission_settle_changes(change_count: usize, has_presentation: bool) -> bool {
     change_count > 0 && has_presentation
 }
 

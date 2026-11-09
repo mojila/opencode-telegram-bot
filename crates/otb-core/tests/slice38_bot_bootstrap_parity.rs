@@ -37,7 +37,10 @@ fn slice38_02_unknown_words_are_not_commands() {
 
 #[test]
 fn slice38_03_normalize_cli_mode_accepts_only_two_modes() {
-    assert_eq!(normalize_cli_mode("installed"), Some(RuntimeMode::Installed));
+    assert_eq!(
+        normalize_cli_mode("installed"),
+        Some(RuntimeMode::Installed)
+    );
     assert_eq!(normalize_cli_mode("sources"), Some(RuntimeMode::Sources));
     assert_eq!(normalize_cli_mode("qa"), None);
     assert_eq!(normalize_cli_mode(""), None);
@@ -107,40 +110,44 @@ fn slice38_10_invalid_mode_value_shows_help() {
     let parsed = parse_cli_args(&["start", "--mode=invalid"]);
     assert!(!parsed.daemon);
     assert!(parsed.show_help);
-    assert!(
-        parsed
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("Invalid mode value")
-    );
+    assert!(parsed
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Invalid mode value"));
 }
 
 #[test]
 fn slice38_11_bare_mode_value_rejected() {
     let parsed = parse_cli_args(&["start", "--mode", "qa"]);
     assert!(parsed.show_help);
-    assert!(
-        parsed
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("Invalid mode value")
-    );
+    assert!(parsed
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Invalid mode value"));
 }
 
 #[test]
 fn slice38_12_mode_without_value_reports_requires_value() {
     let parsed = parse_cli_args(&["start", "--mode"]);
     assert!(parsed.show_help);
-    assert!(parsed.error.as_deref().unwrap().contains("requires a value"));
+    assert!(parsed
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("requires a value"));
 }
 
 #[test]
 fn slice38_13_mode_flag_value_rejected() {
     let parsed = parse_cli_args(&["start", "--mode", "--daemon"]);
     assert!(parsed.show_help);
-    assert!(parsed.error.as_deref().unwrap().contains("requires a value"));
+    assert!(parsed
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("requires a value"));
 }
 
 #[test]
@@ -148,13 +155,11 @@ fn slice38_14_mode_rejected_for_non_start_commands() {
     let parsed = parse_cli_args(&["status", "--mode", "sources"]);
     assert_eq!(parsed.command, CliCommand::Status);
     assert!(parsed.show_help);
-    assert!(
-        parsed
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("supported only for the start command")
-    );
+    assert!(parsed
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("supported only for the start command"));
 }
 
 #[test]
@@ -191,23 +196,20 @@ fn slice38_18_status_stop_config_parse() {
 fn slice38_19_unknown_option_shows_help() {
     let parsed = parse_cli_args(&["start", "--nope"]);
     assert!(parsed.show_help);
-    assert!(
-        parsed
-            .error
-            .as_deref()
-            .unwrap()
-            .contains("Unknown option")
-    );
+    assert!(parsed.error.as_deref().unwrap().contains("Unknown option"));
 }
 
 #[test]
 fn slice38_20_error_message_builders() {
-    assert_eq!(cli_unknown_command_message("deploy"), "Unknown command: deploy");
-    assert!(
-        cli_invalid_mode_message("qa")
-            .contains("Invalid mode value: qa")
+    assert_eq!(
+        cli_unknown_command_message("deploy"),
+        "Unknown command: deploy"
     );
-    assert_eq!(cli_unknown_option_message("--nope"), "Unknown option: --nope");
+    assert!(cli_invalid_mode_message("qa").contains("Invalid mode value: qa"));
+    assert_eq!(
+        cli_unknown_option_message("--nope"),
+        "Unknown option: --nope"
+    );
 }
 
 // --- runtime mode normalize/parse (5) ---
@@ -218,7 +220,10 @@ fn slice38_21_normalize_runtime_mode() {
         normalize_runtime_mode("installed"),
         Some(RuntimeMode::Installed)
     );
-    assert_eq!(normalize_runtime_mode("sources"), Some(RuntimeMode::Sources));
+    assert_eq!(
+        normalize_runtime_mode("sources"),
+        Some(RuntimeMode::Sources)
+    );
     assert_eq!(normalize_runtime_mode("qa"), None);
     assert_eq!(normalize_runtime_mode(""), None);
 }
@@ -303,7 +308,11 @@ fn slice38_30_resolve_argv_overrides_default() {
 fn slice38_31_resolve_invalid_argv_keeps_default_with_error() {
     let out = resolve_runtime_mode(RuntimeMode::Installed, &["--mode=invalid"], None);
     assert_eq!(out.mode, RuntimeMode::Installed);
-    assert!(out.error.as_deref().unwrap().contains("Invalid value for --mode"));
+    assert!(out
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Invalid value for --mode"));
 }
 
 #[test]
@@ -319,7 +328,10 @@ fn slice38_32_resolve_explicit_mode_wins_over_argv() {
 
 #[test]
 fn slice38_33_env_mode_normalization_falls_back_to_sources() {
-    assert_eq!(normalize_env_mode(Some("installed")), RuntimeMode::Installed);
+    assert_eq!(
+        normalize_env_mode(Some("installed")),
+        RuntimeMode::Installed
+    );
     assert_eq!(normalize_env_mode(Some("sources")), RuntimeMode::Sources);
     assert_eq!(normalize_env_mode(Some("qa")), RuntimeMode::Sources);
     assert_eq!(normalize_env_mode(Some("")), RuntimeMode::Sources);
@@ -385,36 +397,78 @@ fn slice38_37_chat_delivery_methods_are_tracked() {
 
 #[test]
 fn slice38_38_text_send_or_edit_without_choice_gets_default() {
-    assert!(should_apply_link_preview_default("sendMessage", true, false));
-    assert!(should_apply_link_preview_default("editMessageText", true, false));
+    assert!(should_apply_link_preview_default(
+        "sendMessage",
+        true,
+        false
+    ));
+    assert!(should_apply_link_preview_default(
+        "editMessageText",
+        true,
+        false
+    ));
 }
 
 #[test]
 fn slice38_39_caller_choice_is_kept() {
-    assert!(!should_apply_link_preview_default("sendMessage", true, true));
-    assert!(!should_apply_link_preview_default("editMessageText", true, true));
+    assert!(!should_apply_link_preview_default(
+        "sendMessage",
+        true,
+        true
+    ));
+    assert!(!should_apply_link_preview_default(
+        "editMessageText",
+        true,
+        true
+    ));
 }
 
 #[test]
 fn slice38_40_non_text_payloads_keep_flowing_untouched() {
-    assert!(!should_apply_link_preview_default("sendMessage", false, false));
-    assert!(!should_apply_link_preview_default("editMessageText", false, false));
+    assert!(!should_apply_link_preview_default(
+        "sendMessage",
+        false,
+        false
+    ));
+    assert!(!should_apply_link_preview_default(
+        "editMessageText",
+        false,
+        false
+    ));
 }
 
 #[test]
 fn slice38_41_other_methods_are_never_touched() {
-    assert!(!should_apply_link_preview_default("sendRichMessage", true, false));
-    assert!(!should_apply_link_preview_default("sendDocument", true, false));
-    assert!(!should_apply_link_preview_default("editMessageReplyMarkup", true, false));
+    assert!(!should_apply_link_preview_default(
+        "sendRichMessage",
+        true,
+        false
+    ));
+    assert!(!should_apply_link_preview_default(
+        "sendDocument",
+        true,
+        false
+    ));
+    assert!(!should_apply_link_preview_default(
+        "editMessageReplyMarkup",
+        true,
+        false
+    ));
 }
 
 // --- client wiring gates (7) ---
 
 #[test]
 fn slice38_42_client_configured_for_custom_root_or_secret() {
-    assert!(should_configure_telegram_client("https://tg-proxy.example.com", ""));
+    assert!(should_configure_telegram_client(
+        "https://tg-proxy.example.com",
+        ""
+    ));
     assert!(should_configure_telegram_client("", "secret-abc"));
-    assert!(should_configure_telegram_client("https://tg-proxy.example.com", "secret-abc"));
+    assert!(should_configure_telegram_client(
+        "https://tg-proxy.example.com",
+        "secret-abc"
+    ));
     assert!(!should_configure_telegram_client("", ""));
 }
 

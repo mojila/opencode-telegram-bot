@@ -93,10 +93,7 @@ fn parse_messages_rejects_non_string_id_parity() {
 
 #[test]
 fn parse_messages_rejects_non_string_text_parity() {
-    assert_eq!(
-        parse_messages(&[raw(Some("m1"), None, Some(7.0))]),
-        None
-    );
+    assert_eq!(parse_messages(&[raw(Some("m1"), None, Some(7.0))]), None);
 }
 
 #[test]

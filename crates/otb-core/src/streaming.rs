@@ -244,10 +244,7 @@ pub fn chunk_plain_fallback(text: &str, limit: usize) -> Vec<String> {
             }
             index -= 1;
         }
-        let end = boundary
-            .or(whitespace)
-            .or(fallback)
-            .unwrap_or(hard_end);
+        let end = boundary.or(whitespace).or(fallback).unwrap_or(hard_end);
         chunks.push(chars[start..end].iter().collect());
         start = end;
     }
@@ -628,5 +625,53 @@ pub fn decide_guard(
         reason: Some(expected_input_block_reason(expected)),
         command: command_owned,
         busy: false,
+    }
+}
+
+// --- Slice 20 remainder (GREEN): response / tool-call / compact-progress ---
+
+///
+/// Rust port of the remaining pure gates in:
+/// - `src/bot/streaming/response-streamer.ts` (draft vs edit routing,
+///   broken-stream flush, payload shrink deletes)
+/// - `src/bot/streaming/tool-call-streamer.ts` (tool-line flush gating)
+/// - `src/bot/streaming/compact-progress-streamer.ts` (hold/release,
+///   parked background cards)
+/// - `src/bot/streaming/stream-throttle.ts` (gap between pick sends)
+///
+/// No Telegram I/O lives here — only pure predicates for parity tests.
+
+/// True when the response streamer must use draft mode
+/// (TS: `MESSAGE_FORMAT_MODE === "raw"` or explicit draft; edit mode is the
+/// default for markdown).
+pub fn should_use_draft_response_mode(raw_format: bool, draft_requested: bool) -> bool {
+    raw_format || draft_requested
+}
+
+/// True when a broken stream flushes pending output immediately instead of
+/// waiting for the next edit tick (TS: `flushPending` when broken).
+pub fn should_flush_broken_stream_pending(is_broken: bool, pending_count: usize) -> bool {
+    is_broken && pending_count > 0
+}
+
+/// True when a tool-call line needs a send (TS: new call id or status
+/// transition out of pending).
+pub fn should_flush_tool_call_line(is_new_call: bool, status_changed: bool) -> bool {
+    is_new_call || status_changed
+}
+
+/// True when compact progress holds its card instead of emitting
+/// (TS: hold is on and no terminal counts are ready yet).
+pub fn should_hold_compact_progress(hold_on: bool, has_terminal_counts: bool) -> bool {
+    hold_on && !has_terminal_counts
+}
+
+/// Send gap between session-pick transcript messages
+/// (TS: `SESSION_PICK_SEND_GAP_MS`, 0 under `VITEST`).
+pub fn session_pick_send_gap_ms(is_test: bool, configured_ms: u64) -> u64 {
+    if is_test {
+        0
+    } else {
+        configured_ms
     }
 }

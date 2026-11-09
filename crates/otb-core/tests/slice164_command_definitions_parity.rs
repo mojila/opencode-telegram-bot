@@ -20,8 +20,10 @@ use otb_core::command_definitions_gates::*;
 
 #[test]
 fn command_definitions_canonical_order_parity() {
-    let names: Vec<&str> =
-        COMMAND_DEFINITIONS.iter().map(|definition| definition.command).collect();
+    let names: Vec<&str> = COMMAND_DEFINITIONS
+        .iter()
+        .map(|definition| definition.command)
+        .collect();
     assert_eq!(
         names,
         vec![
@@ -94,7 +96,10 @@ fn command_active_v2_contains_reload_and_goal_parity() {
 #[test]
 fn command_v2_reload_follows_opencode_stop_parity() {
     let names = active_command_names("v2");
-    let stop = names.iter().position(|name| *name == "opencode_stop").unwrap();
+    let stop = names
+        .iter()
+        .position(|name| *name == "opencode_stop")
+        .unwrap();
     assert_eq!(names[stop + 1], "reload");
     assert!(reload_follows_opencode_stop("v2"));
 }
@@ -105,8 +110,10 @@ fn command_v2_localized_order_matches_active_parity() {
     // `BOT_COMMANDS.map(({ command }) => command)`; both follow the active
     // definitions order (description localization stays with the caller).
     let names = active_command_names("v2");
-    let canonical: Vec<&str> =
-        COMMAND_DEFINITIONS.iter().map(|definition| definition.command).collect();
+    let canonical: Vec<&str> = COMMAND_DEFINITIONS
+        .iter()
+        .map(|definition| definition.command)
+        .collect();
     assert_eq!(names, canonical);
 }
 

@@ -27,12 +27,12 @@ mod telegram;
 // lands in a later milestone, so allow dead code until then.
 #[allow(dead_code)]
 mod opencode;
+/// T15: read-only `settings.json` `current*` view for `/status`.
+mod settings_current;
 /// T5: rusqlite session/project directory cache (isolated path only).
 /// Not wired into the scaffold yet, so allow dead code until then.
 #[allow(dead_code)]
 mod store;
-/// T15: read-only `settings.json` `current*` view for `/status`.
-mod settings_current;
 
 use clap::Parser;
 
@@ -56,8 +56,10 @@ async fn main() -> anyhow::Result<()> {
                 app_config.bot_locale,
                 app_config.health_port,
             );
-            let _health =
-                crate::health::spawn(app_config.health_port, env!("CARGO_PKG_VERSION").to_string());
+            let _health = crate::health::spawn(
+                app_config.health_port,
+                env!("CARGO_PKG_VERSION").to_string(),
+            );
             // T13: real polling only when explicitly opted in
             // (`OTB_ENABLE_POLLING=1`); default stays scaffold-only so the
             // live install keeps its current exit-0 behavior. Tests never
@@ -76,9 +78,7 @@ async fn main() -> anyhow::Result<()> {
             println!("{}", otb_core::cli_entry_gates::CLI_STATUS_STOPPED);
             println!(
                 "{}",
-                otb_core::cli_entry_gates::line_app_home(
-                    &app_config.app_home.to_string_lossy()
-                )
+                otb_core::cli_entry_gates::line_app_home(&app_config.app_home.to_string_lossy())
             );
             println!("commands: {}", crate::commands::command_count());
             println!(

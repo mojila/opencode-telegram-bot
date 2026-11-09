@@ -32,8 +32,13 @@ pub const MAX_SERVER_ERROR_BACKOFF_MS: u64 = 8000;
 
 /// Connection codes proving nothing was sent
 /// (TS: `CONNECT_NOT_ESTABLISHED_CODES`).
-pub const CONNECT_NOT_ESTABLISHED_CODES: [&str; 5] =
-    ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"];
+pub const CONNECT_NOT_ESTABLISHED_CODES: [&str; 5] = [
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "EAI_AGAIN",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+];
 
 /// Broader retryable-when-enabled network codes
 /// (TS: `TRANSIENT_NETWORK_ERROR_CODES`).

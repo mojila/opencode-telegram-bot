@@ -12,8 +12,8 @@
 //! assertions use `text.encode_utf16().count()`.
 
 use otb_core::i18n::{
-    ALL_KEYS, CALLBACK_ANSWER_KEYS, CALLBACK_ANSWER_MAX_LENGTH, SUPPORTED_LOCALES,
-    extract_placeholders, t,
+    extract_placeholders, t, ALL_KEYS, CALLBACK_ANSWER_KEYS, CALLBACK_ANSWER_MAX_LENGTH,
+    SUPPORTED_LOCALES,
 };
 use std::collections::BTreeSet;
 
@@ -72,7 +72,10 @@ fn placeholder_sets_match_en_for_every_key_in_every_locale() {
             }
         }
     }
-    assert!(mismatches.is_empty(), "placeholder mismatches: {mismatches:?}");
+    assert!(
+        mismatches.is_empty(),
+        "placeholder mismatches: {mismatches:?}"
+    );
 }
 
 #[test]

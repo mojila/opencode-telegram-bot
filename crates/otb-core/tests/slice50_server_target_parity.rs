@@ -318,12 +318,7 @@ fn slice50_40_mismatch_key_with_unknown_version_actual() {
 #[test]
 fn slice50_41_mismatch_message_configured_v2() {
     assert_eq!(
-        format_mismatch_health_message(
-            "v2",
-            "http://localhost:4096",
-            "OpenCode 1.9.0",
-            "v1"
-        ),
+        format_mismatch_health_message("v2", "http://localhost:4096", "OpenCode 1.9.0", "v1"),
         "[OpenCode] Server version mismatch: OPENCODE_SERVER_VERSION=v2, \
          but the server at http://localhost:4096 is OpenCode 1.9.0 (API v1). \
          Set OPENCODE_SERVER_VERSION=v1 and restart the bot, or run an \
@@ -334,12 +329,7 @@ fn slice50_41_mismatch_message_configured_v2() {
 #[test]
 fn slice50_42_mismatch_message_configured_v1() {
     assert_eq!(
-        format_mismatch_health_message(
-            "v1",
-            "https://srv:8443/x",
-            "an OpenCode server",
-            "v2"
-        ),
+        format_mismatch_health_message("v1", "https://srv:8443/x", "an OpenCode server", "v2"),
         "[OpenCode] Server version mismatch: OPENCODE_SERVER_VERSION=v1, \
          but the server at https://srv:8443/x is an OpenCode server (API v2). \
          Set OPENCODE_SERVER_VERSION=v2 and restart the bot, or run an \

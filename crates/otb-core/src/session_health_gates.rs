@@ -162,12 +162,20 @@ pub fn resolve_health_route(method: &str, url: Option<&str>) -> HealthRoute {
 /// Ready status code: healthy reads live, degraded does not
 /// (TS: `payload.status === "healthy" ? 200 : 503`).
 pub fn health_ready_status(healthy: bool) -> u16 {
-    if healthy { 200 } else { 503 }
+    if healthy {
+        200
+    } else {
+        503
+    }
 }
 
 /// Payload status field (TS: `opencode.healthy ? "healthy" : "degraded"`).
 pub fn health_payload_status(healthy: bool) -> &'static str {
-    if healthy { "healthy" } else { "degraded" }
+    if healthy {
+        "healthy"
+    } else {
+        "degraded"
+    }
 }
 
 /// Whole seconds since start, `0` without a start
@@ -196,9 +204,7 @@ pub fn doc_extractor_auth_header(api_key: Option<&str>) -> Option<String> {
 
 /// Timeout error text (TS: `` `Document extractor request timed out after ...` ``).
 pub fn doc_extractor_timeout_message() -> String {
-    format!(
-        "Document extractor request timed out after {DOC_EXTRACTOR_REQUEST_TIMEOUT_MS}ms"
-    )
+    format!("Document extractor request timed out after {DOC_EXTRACTOR_REQUEST_TIMEOUT_MS}ms")
 }
 
 /// HTTP-error text preferring the body over the status text

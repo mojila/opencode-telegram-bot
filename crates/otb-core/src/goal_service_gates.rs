@@ -97,7 +97,9 @@ pub enum FailVal {
     Bool(bool),
     Num(f64),
     Text(String),
-    ErrorInstance { message: String },
+    ErrorInstance {
+        message: String,
+    },
     Record {
         name: Option<String>,
         error_type: Option<String>,
@@ -313,10 +315,7 @@ pub fn decide_apply_changed(
 /// Maps a failed `goal.command` to its outcome (TS: `command` error
 /// branches; `GoalSelectionError` logging and localization stay with the
 /// caller, which passes the already-extracted message).
-pub fn map_command_error(
-    is_unsupported_error: bool,
-    message: &str,
-) -> CommandErrorDecision {
+pub fn map_command_error(is_unsupported_error: bool, message: &str) -> CommandErrorDecision {
     if is_unsupported_error {
         return CommandErrorDecision::Unsupported;
     }

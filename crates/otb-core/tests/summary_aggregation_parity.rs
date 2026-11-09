@@ -59,7 +59,9 @@ fn includes_session_id_in_tool_callback_payload() {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&seen);
     aggregator.set_on_tool(Box::new(move |info| {
-        probe.borrow_mut().push((info.session_id, info.call_id, info.tool));
+        probe
+            .borrow_mut()
+            .push((info.session_id, info.call_id, info.tool));
     }));
     aggregator.set_session("session-1");
 
@@ -91,7 +93,9 @@ fn emits_root_tool_updates_before_completion_filtering() {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&seen);
     aggregator.set_on_root_tool_update(Box::new(move |info| {
-        probe.borrow_mut().push((info.session_id, info.call_id, info.tool));
+        probe
+            .borrow_mut()
+            .push((info.session_id, info.call_id, info.tool));
     }));
     aggregator.set_session("session-1");
 
@@ -153,8 +157,14 @@ fn does_not_emit_root_tool_updates_for_unrelated_child_sessions() {
 fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -205,7 +215,10 @@ fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
     // in a later slice; the Rust assistant-message signal carries only
     // provider/model/variant by design).
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -217,7 +230,10 @@ fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
     assert_eq!(card.provider_id, Some("openai".to_string()));
     assert_eq!(card.model_id, Some("gpt-5.4".to_string()));
     assert_eq!(card.model, "openai/gpt-5.4");
-    assert_eq!(card.status, otb_core::managers::summary_aggregation::SubagentStatus::Running);
+    assert_eq!(
+        card.status,
+        otb_core::managers::summary_aggregation::SubagentStatus::Running
+    );
     assert_eq!(card.current_tool, Some("read".to_string()));
     assert_eq!(card.current_tool_call_id, Some("call-child-1".to_string()));
     assert_eq!(card.current_tool_started_at, Some(2_000));
@@ -239,8 +255,14 @@ fn slice2_emits_live_subagent_updates_with_model_context_and_current_tool() {
 fn slice2_variant_shown_as_provider_id_variant() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -255,7 +277,10 @@ fn slice2_variant_shown_as_provider_id_variant() {
 
     // Card shows provider/id with variant.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -308,8 +333,14 @@ fn slice2_task_call_input_reaches_its_own_card() {
 fn slice2_current_tool_timing_starts_for_new_call() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -325,13 +356,19 @@ fn slice2_current_tool_timing_starts_for_new_call() {
 
     // Card carries the new call id + start.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
     let card = &cards[0];
     assert_eq!(card.session_id, Some("child-session-1".to_string()));
-    assert_eq!(card.status, otb_core::managers::summary_aggregation::SubagentStatus::Running);
+    assert_eq!(
+        card.status,
+        otb_core::managers::summary_aggregation::SubagentStatus::Running
+    );
     assert_eq!(card.current_tool, Some("bash".to_string()));
     assert_eq!(card.current_tool_call_id, Some("call-1".to_string()));
     assert_eq!(card.current_tool_started_at, Some(1_000));
@@ -348,8 +385,14 @@ fn slice2_current_tool_timing_starts_for_new_call() {
 fn slice2_subtask_part_creates_pending_card() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -365,7 +408,10 @@ fn slice2_subtask_part_creates_pending_card() {
 
     // A pending card exists for the subtask (no child session bound yet).
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -375,7 +421,10 @@ fn slice2_subtask_part_creates_pending_card() {
     assert_eq!(card.parent_session_id, "root-session");
     assert_eq!(card.agent, "explore");
     assert_eq!(card.task, "Explore project architecture");
-    assert_eq!(card.status, otb_core::managers::summary_aggregation::SubagentStatus::Pending);
+    assert_eq!(
+        card.status,
+        otb_core::managers::summary_aggregation::SubagentStatus::Pending
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -399,8 +448,14 @@ fn slice2_subtask_part_creates_pending_card() {
 fn slice3_interrupted_subagent_card_ends_interrupted() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -419,7 +474,10 @@ fn slice3_interrupted_subagent_card_ends_interrupted() {
 
     // GREEN: the child card ends Interrupted.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -442,8 +500,14 @@ fn slice3_interrupted_subagent_card_ends_interrupted() {
 fn slice3_nested_subagent_has_no_own_card() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -462,7 +526,10 @@ fn slice3_nested_subagent_has_no_own_card() {
 
     // GREEN: no card of its own; the parent still shows its running task.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -509,8 +576,14 @@ fn slice3_live_turn_start_emits_new_turn() {
 fn slice3_subagent_error_ends_error() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -529,7 +602,10 @@ fn slice3_subagent_error_ends_error() {
 
     // GREEN: the child card ends Error.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -565,7 +641,12 @@ fn slice4_thinking_block_tracked_per_session() {
     aggregator.set_session("session-1");
 
     // Slice-4 stub (panics while RED).
-    aggregator.track_thinking("session-1", "message-1", "part-reasoning-1", "Let me think...");
+    aggregator.track_thinking(
+        "session-1",
+        "message-1",
+        "part-reasoning-1",
+        "Let me think...",
+    );
 
     // GREEN: the reasoning block is tracked under its session/message.
     let sections: Vec<ThinkingSection> = aggregator.thinking_sections("session-1", "message-1");
@@ -666,8 +747,14 @@ fn slice5_token_accumulation_per_subagent_card() {
     use otb_core::managers::summary_aggregation::TokensInfo;
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -949,7 +1036,10 @@ fn slice6_session_status_gating_only_current_session_emits() {
     // GREEN: another session's busy starts no turn; the current one's does.
     assert_eq!(aggregator.get_live_turn_started_at("session-1"), None);
     aggregator.handle_session_status("session-1", "busy");
-    assert_eq!(aggregator.get_live_turn_started_at("session-1"), Some(1_000));
+    assert_eq!(
+        aggregator.get_live_turn_started_at("session-1"),
+        Some(1_000)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1414,7 +1504,9 @@ fn slice10_combines_multiple_text_parts_into_final_message() {
 fn slice10_write_tool_oversized_has_no_file_attachment() {
     // Slice-10 stubs (panic while RED).
     // GREEN: 101 KiB is over the 100 KiB attachment budget; 1 KiB fits.
-    assert!(!SummaryAggregator::write_tool_attachment_allowed(101 * 1024));
+    assert!(!SummaryAggregator::write_tool_attachment_allowed(
+        101 * 1024
+    ));
     assert!(SummaryAggregator::write_tool_attachment_allowed(1024));
 }
 
@@ -1710,14 +1802,21 @@ fn slice12_edit_fallback_title_yields_path() {
     // Slice-12 stub (panics while RED).
     // GREEN: the first status line yields the patched path.
     assert_eq!(
-        SummaryAggregator::edit_path_from_title("Success. Updated the following files:\nM README.md"),
+        SummaryAggregator::edit_path_from_title(
+            "Success. Updated the following files:\nM README.md"
+        ),
         Some("README.md".to_string())
     );
     assert_eq!(
-        SummaryAggregator::edit_path_from_title("Success. Updated the following files:\nM src/one.ts"),
+        SummaryAggregator::edit_path_from_title(
+            "Success. Updated the following files:\nM src/one.ts"
+        ),
         Some("src/one.ts".to_string())
     );
-    assert_eq!(SummaryAggregator::edit_path_from_title("Success, nothing listed"), None);
+    assert_eq!(
+        SummaryAggregator::edit_path_from_title("Success, nothing listed"),
+        None
+    );
 }
 
 /// SLICE 12: write fallback yields no file without path and content.
@@ -1748,9 +1847,15 @@ fn slice12_write_fallback_missing_path_yields_no_file() {
 fn slice12_thinking_finished_once_after_reasoning() {
     // Slice-12 stub (panics while RED).
     // GREEN: only the first text-after-reasoning signals.
-    assert!(SummaryAggregator::should_signal_thinking_finished(true, false));
-    assert!(!SummaryAggregator::should_signal_thinking_finished(true, true));
-    assert!(!SummaryAggregator::should_signal_thinking_finished(false, false));
+    assert!(SummaryAggregator::should_signal_thinking_finished(
+        true, false
+    ));
+    assert!(!SummaryAggregator::should_signal_thinking_finished(
+        true, true
+    ));
+    assert!(!SummaryAggregator::should_signal_thinking_finished(
+        false, false
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1795,7 +1900,9 @@ fn slice13_patch_file_line_per_changed_file() {
 fn slice13_oversized_patch_file_loses_attachment_keeps_line() {
     // Slice-13 stub (panics while RED).
     // GREEN: 101 KiB is over budget; 1 KiB fits.
-    assert!(!SummaryAggregator::apply_patch_attachment_allowed(101 * 1024));
+    assert!(!SummaryAggregator::apply_patch_attachment_allowed(
+        101 * 1024
+    ));
     assert!(SummaryAggregator::apply_patch_attachment_allowed(1024));
 }
 
@@ -1876,8 +1983,14 @@ fn slice13_session_error_variants_fallback_and_passthrough() {
 fn slice14_session_created_enriches_card_from_title() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -1892,7 +2005,10 @@ fn slice14_session_created_enriches_card_from_title() {
 
     // GREEN: the created session binds a card enriched from its title.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -1914,8 +2030,14 @@ fn slice14_session_created_enriches_card_from_title() {
 fn slice14_assistant_message_pairs_agent_provider_model_variant() {
     let mut aggregator = SummaryAggregator::new();
     aggregator.set_session("root-session");
-    let snapshots: Rc<RefCell<Vec<(String, Vec<otb_core::managers::summary_aggregation::SubagentInfo>)>>> =
-        Rc::new(RefCell::new(Vec::new()));
+    let snapshots: Rc<
+        RefCell<
+            Vec<(
+                String,
+                Vec<otb_core::managers::summary_aggregation::SubagentInfo>,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(Vec::new()));
     let probe = Rc::clone(&snapshots);
     aggregator.set_on_subagent(Box::new(move |session_id, subagents| {
         probe.borrow_mut().push((session_id, subagents));
@@ -1933,7 +2055,10 @@ fn slice14_assistant_message_pairs_agent_provider_model_variant() {
     // GREEN: agent + provider/model/variant land on the card with the
     // `provider/id (variant)` display.
     let snapshots = snapshots.borrow();
-    assert!(!snapshots.is_empty(), "expected at least one subagent snapshot");
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one subagent snapshot"
+    );
     let (session_id, cards) = &snapshots[snapshots.len() - 1];
     assert_eq!(session_id, "root-session");
     assert_eq!(cards.len(), 1);
@@ -1959,14 +2084,22 @@ fn slice14_thinking_snapshot_registers_once_dedups_identical() {
     aggregator.set_session("session-1");
 
     // Slice-14 stub (panics while RED): (is_first_update, was_updated).
-    let (is_first, was_updated) =
-        aggregator.register_thinking_snapshot("message-1", "part-reasoning-1", "Let me think...", None);
+    let (is_first, was_updated) = aggregator.register_thinking_snapshot(
+        "message-1",
+        "part-reasoning-1",
+        "Let me think...",
+        None,
+    );
     assert!(is_first);
     assert!(was_updated);
 
     // GREEN: the identical snapshot is a no-op (no re-emit).
-    let (is_first_again, was_updated_again) =
-        aggregator.register_thinking_snapshot("message-1", "part-reasoning-1", "Let me think...", None);
+    let (is_first_again, was_updated_again) = aggregator.register_thinking_snapshot(
+        "message-1",
+        "part-reasoning-1",
+        "Let me think...",
+        None,
+    );
     assert!(!is_first_again);
     assert!(!was_updated_again);
 }
@@ -2257,11 +2390,21 @@ fn slice16_write_fallback_counts_additions_by_lines() {
 fn slice16_nested_part_and_subtask_guards_drop() {
     // Slice-16 stub (panics while RED).
     // GREEN: nested parts always drop; subtasks drop off-root only.
-    assert!(SummaryAggregator::should_drop_nested_subtask(true, false, true));
-    assert!(SummaryAggregator::should_drop_nested_subtask(true, true, false));
-    assert!(SummaryAggregator::should_drop_nested_subtask(false, true, false));
-    assert!(!SummaryAggregator::should_drop_nested_subtask(false, true, true));
-    assert!(!SummaryAggregator::should_drop_nested_subtask(false, false, true));
+    assert!(SummaryAggregator::should_drop_nested_subtask(
+        true, false, true
+    ));
+    assert!(SummaryAggregator::should_drop_nested_subtask(
+        true, true, false
+    ));
+    assert!(SummaryAggregator::should_drop_nested_subtask(
+        false, true, false
+    ));
+    assert!(!SummaryAggregator::should_drop_nested_subtask(
+        false, true, true
+    ));
+    assert!(!SummaryAggregator::should_drop_nested_subtask(
+        false, false, true
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2307,7 +2450,8 @@ fn slice17_token_cache_defaults_to_zero() {
     assert_eq!(tokens.cache_read, 0);
     assert_eq!(tokens.cache_write, 0);
 
-    let tokens = SummaryAggregator::tokens_with_cache_defaults(4000, 300, 0, Some(12_000), Some(50));
+    let tokens =
+        SummaryAggregator::tokens_with_cache_defaults(4000, 300, 0, Some(12_000), Some(50));
     assert_eq!(tokens.cache_read, 12_000);
     assert_eq!(tokens.cache_write, 50);
 }
@@ -2378,7 +2522,10 @@ fn slice17_abort_error_and_interrupt_reason_gates() {
         SummaryAggregator::read_interrupt_reason(Some("user"), true),
         Some("user".to_string())
     );
-    assert_eq!(SummaryAggregator::read_interrupt_reason(Some("bogus"), true), None);
+    assert_eq!(
+        SummaryAggregator::read_interrupt_reason(Some("bogus"), true),
+        None
+    );
     assert_eq!(
         SummaryAggregator::read_interrupt_reason(Some("user"), false),
         None
@@ -2460,7 +2607,10 @@ fn slice18_model_label_partial_ids() {
         SummaryAggregator::subagent_model_label(Some("openai"), Some("gpt-5.4"), Some("  ")),
         Some("openai/gpt-5.4".to_string())
     );
-    assert_eq!(SummaryAggregator::subagent_model_label(None, None, None), None);
+    assert_eq!(
+        SummaryAggregator::subagent_model_label(None, None, None),
+        None
+    );
 }
 
 /// SLICE 18: thinking update skipped with no callback or no sections.
@@ -2490,10 +2640,21 @@ fn slice18_thinking_update_skipped_when_empty_or_no_callback() {
 fn slice18_footer_suppressed_on_cancelled_and_reject() {
     // Slice-18 stub (panics while RED).
     // GREEN: cancelled + reject suppress; answered + allow + unknown do not.
-    assert!(SummaryAggregator::footer_suppressed_for_settled("cancelled", None));
-    assert!(SummaryAggregator::footer_suppressed_for_settled("", Some("reject")));
-    assert!(!SummaryAggregator::footer_suppressed_for_settled("answered", None));
-    assert!(!SummaryAggregator::footer_suppressed_for_settled("", Some("allow")));
+    assert!(SummaryAggregator::footer_suppressed_for_settled(
+        "cancelled",
+        None
+    ));
+    assert!(SummaryAggregator::footer_suppressed_for_settled(
+        "",
+        Some("reject")
+    ));
+    assert!(!SummaryAggregator::footer_suppressed_for_settled(
+        "answered", None
+    ));
+    assert!(!SummaryAggregator::footer_suppressed_for_settled(
+        "",
+        Some("allow")
+    ));
     assert!(!SummaryAggregator::footer_suppressed_for_settled("", None));
 }
 
@@ -2578,7 +2739,10 @@ fn slice19b_variant_keeps_last_when_omitted_2() {
 fn slice19b_variant_ignores_empty_3() {
     // Slice-19B stub (panics while RED).
     // GREEN: blank variants keep the previous value (or stay absent).
-    assert_eq!(SummaryAggregator::apply_variant_to_card(None, Some("")), None);
+    assert_eq!(
+        SummaryAggregator::apply_variant_to_card(None, Some("")),
+        None
+    );
     assert_eq!(
         SummaryAggregator::apply_variant_to_card(Some("high"), Some("  ")),
         Some("high".to_string())
@@ -2596,9 +2760,15 @@ fn slice19b_variant_ignores_empty_3() {
 fn slice19b_thinking_skipped_without_reasoning_4() {
     // Slice-19B stub (panics while RED).
     // GREEN: only messages with reasoning parts emit thinking updates.
-    assert!(!SummaryAggregator::should_emit_thinking_for_message(false, true));
-    assert!(SummaryAggregator::should_emit_thinking_for_message(true, true));
-    assert!(!SummaryAggregator::should_emit_thinking_for_message(true, false));
+    assert!(!SummaryAggregator::should_emit_thinking_for_message(
+        false, true
+    ));
+    assert!(SummaryAggregator::should_emit_thinking_for_message(
+        true, true
+    ));
+    assert!(!SummaryAggregator::should_emit_thinking_for_message(
+        true, false
+    ));
 }
 
 /// SLICE 19B: only the first reasoning part flags the thinking update.
@@ -2662,8 +2832,14 @@ fn slice19b_complete_carries_assistant_metadata_6() {
 fn slice19b_questions_settled_outside_telegram_7() {
     // Slice-19B stubs (panic while RED).
     // GREEN: replied/rejected map to answered/cancelled for followed runs.
-    assert_eq!(SummaryAggregator::question_settled_outcome("replied"), "answered");
-    assert_eq!(SummaryAggregator::question_settled_outcome("rejected"), "cancelled");
+    assert_eq!(
+        SummaryAggregator::question_settled_outcome("replied"),
+        "answered"
+    );
+    assert_eq!(
+        SummaryAggregator::question_settled_outcome("rejected"),
+        "cancelled"
+    );
     assert!(SummaryAggregator::should_emit_question_settled(true));
     assert!(!SummaryAggregator::should_emit_question_settled(false));
 }
@@ -2714,9 +2890,15 @@ fn slice19b_permission_dispatch_serialized_9() {
 fn slice19b_permission_unrelated_session_ignored_10() {
     // Slice-19B stub (panics while RED).
     // GREEN: only the current session and tracked children forward.
-    assert!(SummaryAggregator::should_forward_permission_asked(true, false));
-    assert!(SummaryAggregator::should_forward_permission_asked(false, true));
-    assert!(!SummaryAggregator::should_forward_permission_asked(false, false));
+    assert!(SummaryAggregator::should_forward_permission_asked(
+        true, false
+    ));
+    assert!(SummaryAggregator::should_forward_permission_asked(
+        false, true
+    ));
+    assert!(!SummaryAggregator::should_forward_permission_asked(
+        false, false
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2861,7 +3043,9 @@ fn slice19b_tool_timing_new_call_restarts_18() {
         Some("call-1"),
         "call-2"
     ));
-    assert!(SummaryAggregator::should_restart_current_tool_timing(None, "call-1"));
+    assert!(SummaryAggregator::should_restart_current_tool_timing(
+        None, "call-1"
+    ));
 }
 
 /// SLICE 19B: a promoted task is background when only metadata says so.
@@ -2961,8 +3145,12 @@ fn slice19b_delta_streaming_accumulates_partials_23() {
 fn slice19b_delta_without_part_type_streams_24() {
     // Slice-19B stub (panics while RED).
     // GREEN: an untyped non-empty delta streams while no reasoning runs.
-    assert!(SummaryAggregator::should_stream_part_delta(false, true, false));
-    assert!(!SummaryAggregator::should_stream_part_delta(false, false, false));
+    assert!(SummaryAggregator::should_stream_part_delta(
+        false, true, false
+    ));
+    assert!(!SummaryAggregator::should_stream_part_delta(
+        false, false, false
+    ));
 }
 
 /// SLICE 19B: unknown deltas stay silent once reasoning started.
@@ -2975,8 +3163,12 @@ fn slice19b_delta_without_part_type_streams_24() {
 fn slice19b_unknown_delta_after_reasoning_suppressed_25() {
     // Slice-19B stub (panics while RED).
     // GREEN: reasoning suppresses later unknown-part deltas.
-    assert!(!SummaryAggregator::should_stream_part_delta(false, true, true));
-    assert!(SummaryAggregator::should_stream_part_delta(true, true, true));
+    assert!(!SummaryAggregator::should_stream_part_delta(
+        false, true, true
+    ));
+    assert!(SummaryAggregator::should_stream_part_delta(
+        true, true, true
+    ));
 }
 
 /// SLICE 19B: a root error freezes unfinished subagent cards.
@@ -3041,8 +3233,16 @@ fn slice19b_background_intent_before_child_created_28() {
 fn slice19b_external_user_input_current_session_only_29() {
     // Slice-19B stub (panics while RED).
     // GREEN: only non-blank user text for the current session emits.
-    assert!(SummaryAggregator::should_emit_external_user_input(true, true, true));
-    assert!(!SummaryAggregator::should_emit_external_user_input(false, true, true));
-    assert!(!SummaryAggregator::should_emit_external_user_input(true, true, false));
-    assert!(!SummaryAggregator::should_emit_external_user_input(true, false, true));
+    assert!(SummaryAggregator::should_emit_external_user_input(
+        true, true, true
+    ));
+    assert!(!SummaryAggregator::should_emit_external_user_input(
+        false, true, true
+    ));
+    assert!(!SummaryAggregator::should_emit_external_user_input(
+        true, true, false
+    ));
+    assert!(!SummaryAggregator::should_emit_external_user_input(
+        true, false, true
+    ));
 }

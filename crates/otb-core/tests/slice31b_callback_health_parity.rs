@@ -26,8 +26,14 @@ use otb_core::callback_health_gates::*;
 
 #[test]
 fn slice31b_01_parses_prefix_before_first_colon() {
-    assert_eq!(parse_callback_prefix("agent:subagent"), Some("agent".to_string()));
-    assert_eq!(parse_callback_prefix("model:anthropic:claude"), Some("model".to_string()));
+    assert_eq!(
+        parse_callback_prefix("agent:subagent"),
+        Some("agent".to_string())
+    );
+    assert_eq!(
+        parse_callback_prefix("model:anthropic:claude"),
+        Some("model".to_string())
+    );
 }
 
 #[test]
@@ -43,12 +49,23 @@ fn slice31b_03_rejects_leading_separator() {
 
 #[test]
 fn slice31b_04_takes_text_before_first_of_many_colons() {
-    assert_eq!(parse_callback_prefix("question:select:0:1"), Some("question".to_string()));
+    assert_eq!(
+        parse_callback_prefix("question:select:0:1"),
+        Some("question".to_string())
+    );
 }
 
 #[test]
 fn slice31b_05_knows_registered_prefixes() {
-    for prefix in ["agent", "permission", "question", "model", "variant", "settings", "task"] {
+    for prefix in [
+        "agent",
+        "permission",
+        "question",
+        "model",
+        "variant",
+        "settings",
+        "task",
+    ] {
         assert!(is_known_callback_prefix(prefix), "prefix={prefix}");
     }
     assert!(!is_known_callback_prefix("nonexistent"));
@@ -111,27 +128,42 @@ fn slice31b_12_reply_match_is_case_sensitive() {
 
 #[test]
 fn slice31b_13_tag_marks_gone_request() {
-    let err = PermissionErrorShape { tag: Some("PermissionNotFoundError".to_string()), ..Default::default() };
+    let err = PermissionErrorShape {
+        tag: Some("PermissionNotFoundError".to_string()),
+        ..Default::default()
+    };
     assert!(is_permission_request_not_found(&err));
 }
 
 #[test]
 fn slice31b_14_name_marks_gone_request() {
-    let err = PermissionErrorShape { name: Some("NotFoundError".to_string()), ..Default::default() };
+    let err = PermissionErrorShape {
+        name: Some("NotFoundError".to_string()),
+        ..Default::default()
+    };
     assert!(is_permission_request_not_found(&err));
 }
 
 #[test]
 fn slice31b_15_message_marks_gone_request_case_insensitively() {
-    let err = PermissionErrorShape { message: Some("Permission Request Not Found".to_string()), ..Default::default() };
+    let err = PermissionErrorShape {
+        message: Some("Permission Request Not Found".to_string()),
+        ..Default::default()
+    };
     assert!(is_permission_request_not_found(&err));
 }
 
 #[test]
 fn slice31b_16_data_message_marks_gone_request() {
-    let err = PermissionErrorShape { data_message: Some("permission request not found".to_string()), ..Default::default() };
+    let err = PermissionErrorShape {
+        data_message: Some("permission request not found".to_string()),
+        ..Default::default()
+    };
     assert!(is_permission_request_not_found(&err));
-    let other = PermissionErrorShape { message: Some("boom".to_string()), ..Default::default() };
+    let other = PermissionErrorShape {
+        message: Some("boom".to_string()),
+        ..Default::default()
+    };
     assert!(!is_permission_request_not_found(&other));
 }
 
@@ -139,8 +171,14 @@ fn slice31b_16_data_message_marks_gone_request() {
 
 #[test]
 fn slice31b_17_parses_permission_action() {
-    assert_eq!(parse_permission_callback_action("permission:once:req-1"), Some("once".to_string()));
-    assert_eq!(parse_permission_callback_action("permission:reject:req-1"), Some("reject".to_string()));
+    assert_eq!(
+        parse_permission_callback_action("permission:once:req-1"),
+        Some("once".to_string())
+    );
+    assert_eq!(
+        parse_permission_callback_action("permission:reject:req-1"),
+        Some("reject".to_string())
+    );
 }
 
 #[test]
@@ -155,7 +193,11 @@ fn slice31b_18_rejects_wrong_prefix_or_missing_action() {
 fn slice31b_19_parses_select_with_option() {
     assert_eq!(
         parse_question_callback("question:select:0:1"),
-        Some(ParsedQuestionCallback { action: QuestionCallbackAction::Select, question_index: 0, option_index: Some(1) })
+        Some(ParsedQuestionCallback {
+            action: QuestionCallbackAction::Select,
+            question_index: 0,
+            option_index: Some(1)
+        })
     );
 }
 
@@ -163,7 +205,11 @@ fn slice31b_19_parses_select_with_option() {
 fn slice31b_20_parses_submit() {
     assert_eq!(
         parse_question_callback("question:submit:2"),
-        Some(ParsedQuestionCallback { action: QuestionCallbackAction::Submit, question_index: 2, option_index: None })
+        Some(ParsedQuestionCallback {
+            action: QuestionCallbackAction::Submit,
+            question_index: 2,
+            option_index: None
+        })
     );
 }
 
@@ -171,7 +217,11 @@ fn slice31b_20_parses_submit() {
 fn slice31b_21_parses_custom() {
     assert_eq!(
         parse_question_callback("question:custom:1"),
-        Some(ParsedQuestionCallback { action: QuestionCallbackAction::Custom, question_index: 1, option_index: None })
+        Some(ParsedQuestionCallback {
+            action: QuestionCallbackAction::Custom,
+            question_index: 1,
+            option_index: None
+        })
     );
 }
 
@@ -179,7 +229,11 @@ fn slice31b_21_parses_custom() {
 fn slice31b_22_parses_toggle_custom() {
     assert_eq!(
         parse_question_callback("question:toggle_custom:0"),
-        Some(ParsedQuestionCallback { action: QuestionCallbackAction::ToggleCustom, question_index: 0, option_index: None })
+        Some(ParsedQuestionCallback {
+            action: QuestionCallbackAction::ToggleCustom,
+            question_index: 0,
+            option_index: None
+        })
     );
 }
 
@@ -187,7 +241,11 @@ fn slice31b_22_parses_toggle_custom() {
 fn slice31b_23_parses_cancel() {
     assert_eq!(
         parse_question_callback("question:cancel:0"),
-        Some(ParsedQuestionCallback { action: QuestionCallbackAction::Cancel, question_index: 0, option_index: None })
+        Some(ParsedQuestionCallback {
+            action: QuestionCallbackAction::Cancel,
+            question_index: 0,
+            option_index: None
+        })
     );
 }
 
@@ -215,8 +273,14 @@ fn slice31b_26_single_question_poll_is_last() {
 
 #[test]
 fn slice31b_27_strips_prefix_name() {
-    assert_eq!(parse_prefixed_callback_name("agent", "agent:build"), Some("build".to_string()));
-    assert_eq!(parse_prefixed_callback_name("variant", "variant:concise"), Some("concise".to_string()));
+    assert_eq!(
+        parse_prefixed_callback_name("agent", "agent:build"),
+        Some("build".to_string())
+    );
+    assert_eq!(
+        parse_prefixed_callback_name("variant", "variant:concise"),
+        Some("concise".to_string())
+    );
 }
 
 #[test]
@@ -268,7 +332,10 @@ fn slice31b_33_configured_unauthorized_wins() {
 fn slice31b_34_other_version_found_is_mismatch() {
     assert_eq!(
         classify_health_cause(false, ProbeKind::Found, "1.2.3", "v2"),
-        FailedHealthCause::Mismatch { actual: "OpenCode 1.2.3".to_string(), other_version: "v2".to_string() }
+        FailedHealthCause::Mismatch {
+            actual: "OpenCode 1.2.3".to_string(),
+            other_version: "v2".to_string()
+        }
     );
 }
 
@@ -276,7 +343,10 @@ fn slice31b_34_other_version_found_is_mismatch() {
 fn slice31b_35_locked_other_version_is_mismatch_without_exact_version() {
     assert_eq!(
         classify_health_cause(false, ProbeKind::Unauthorized, "", "v1"),
-        FailedHealthCause::Mismatch { actual: "an OpenCode server".to_string(), other_version: "v1".to_string() }
+        FailedHealthCause::Mismatch {
+            actual: "an OpenCode server".to_string(),
+            other_version: "v1".to_string()
+        }
     );
 }
 
@@ -314,13 +384,22 @@ fn slice31b_39_backs_off_exponentially() {
 
 #[test]
 fn slice31b_40_caps_backoff_at_8000() {
-    assert_eq!(server_error_backoff_ms(20, 1000), MAX_SERVER_ERROR_BACKOFF_MS);
+    assert_eq!(
+        server_error_backoff_ms(20, 1000),
+        MAX_SERVER_ERROR_BACKOFF_MS
+    );
     assert_eq!(MAX_SERVER_ERROR_BACKOFF_MS, 8_000);
 }
 
 #[test]
 fn slice31b_41_detects_unsent_network_codes() {
-    for code in ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH"] {
+    for code in [
+        "ECONNREFUSED",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ENETUNREACH",
+        "EHOSTUNREACH",
+    ] {
         assert!(is_unsent_network_code(code), "code={code}");
     }
     assert!(!is_unsent_network_code("ECONNRESET"));
@@ -345,7 +424,9 @@ fn slice31b_43_resolves_retry_after_or_fallback() {
 #[test]
 fn slice31b_44_detects_expected_unavailable_messages() {
     assert!(is_expected_unavailable_message("fetch failed"));
-    assert!(is_expected_unavailable_message("request failed: econnrefused"));
+    assert!(is_expected_unavailable_message(
+        "request failed: econnrefused"
+    ));
     assert!(is_expected_unavailable_message("connect ECONNRESET"));
     assert!(!is_expected_unavailable_message("timeout"));
 }
@@ -365,17 +446,36 @@ fn slice31b_46_detects_server_unavailable_markers() {
 
 #[test]
 fn slice31b_47_extracts_message_with_fallback_chain() {
-    let direct = ErrorMessageShape { message: Some("boom".to_string()), ..Default::default() };
+    let direct = ErrorMessageShape {
+        message: Some("boom".to_string()),
+        ..Default::default()
+    };
     assert_eq!(extract_error_message(&direct), Some("boom".to_string()));
-    let via_data = ErrorMessageShape { message: Some("   ".to_string()), data_message: Some("Model not found.".to_string()), ..Default::default() };
-    assert_eq!(extract_error_message(&via_data), Some("Model not found.".to_string()));
-    let via_name = ErrorMessageShape { name: Some("UnknownError".to_string()), ..Default::default() };
-    assert_eq!(extract_error_message(&via_name), Some("UnknownError".to_string()));
+    let via_data = ErrorMessageShape {
+        message: Some("   ".to_string()),
+        data_message: Some("Model not found.".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        extract_error_message(&via_data),
+        Some("Model not found.".to_string())
+    );
+    let via_name = ErrorMessageShape {
+        name: Some("UnknownError".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        extract_error_message(&via_name),
+        Some("UnknownError".to_string())
+    );
     assert_eq!(extract_error_message(&ErrorMessageShape::default()), None);
 }
 
 #[test]
 fn slice31b_48_extract_trims_whitespace() {
-    let shape = ErrorMessageShape { message: Some("  oops  ".to_string()), ..Default::default() };
+    let shape = ErrorMessageShape {
+        message: Some("  oops  ".to_string()),
+        ..Default::default()
+    };
     assert_eq!(extract_error_message(&shape), Some("oops".to_string()));
 }
