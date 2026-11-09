@@ -1,0 +1,8077 @@
+//! Thin Telegram wiring over `teloxide-core` (T6 scaffold).
+//!
+//! Node parity (`src/bot/index.ts`, `src/bot/middleware/auth.ts`,
+//! `src/config.ts`):
+//! - The bot is constructed from a token with `teloxide_core::Bot::new`
+//!   (grammy `new Bot(token)` parity). Construction performs zero requests.
+//! - Auth mirrors `authMiddleware`: only `TELEGRAM_ALLOWED_USER_ID` passes;
+//!   the bot's own updates are ignored; strangers are denied (the
+//!   hide-commands side effect stays Node-side until a dispatcher exists).
+//!   The verdict reuses
+//!   `otb_core::router_middleware_gates::decide_auth`.
+//! - Outbound text honours the Telegram 4096-char limit
+//!   (`TELEGRAM_TEXT_MESSAGE_LIMIT` in `src/bot/render/limits.ts`).
+//!
+//! SAFETY (explicit):
+//! 1. The token is resolved `TELEGRAM_BOT_TOKEN` -> `OTB_TEST_TOKEN` ->
+//!    dummy. The value itself is never logged (only `token_len`); the dummy
+//!    is not a real credential and must never reach the network (polling is
+//!    off by default).
+//! 2. Constructing the bot or building payloads performs no network I/O.
+//!    `send_message` is a plain async helper; only the opt-in poll loop
+//!    (`run_telegram_from_env`, never called by tests) invokes it.
+
+use teloxide_core::payloads::{AnswerCallbackQuerySetters, GetUpdatesSetters, SendMessageSetters};
+use teloxide_core::requests::Requester;
+use teloxide_core::types::{
+    CallbackQuery, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MaybeInaccessibleMessage,
+    MessageId, Update, UpdateKind,
+};
+
+/// Env flag that opts into (future) polling. Anything but `"1"` means off.
+pub const POLLING_ENV: &str = "OTB_ENABLE_POLLING";
+
+/// Live bot token (Node `TELEGRAM_BOT_TOKEN`). Preferred over the test key.
+pub const LIVE_TOKEN_ENV: &str = "TELEGRAM_BOT_TOKEN";
+
+/// Test-only token override. Used when the live token is absent.
+pub const TEST_TOKEN_ENV: &str = "OTB_TEST_TOKEN";
+
+/// Allowed-user override for tests; falls back to `TELEGRAM_ALLOWED_USER_ID`.
+pub const TEST_ALLOWED_USER_ENV: &str = "OTB_TEST_ALLOWED_USER_ID";
+
+/// Dummy token used whenever no test token is provided. It is not a real
+/// credential and must never reach the network (polling is off by default).
+pub const DUMMY_TOKEN: &str = "0000000000:TEST-DUMMY-TOKEN-DO-NOT-USE";
+
+/// Telegram text-message limit (Node: `TELEGRAM_TEXT_MESSAGE_LIMIT = 4096`).
+pub const TELEGRAM_TEXT_LIMIT: usize = 4096;
+
+/// Pure gate: polling is enabled only for the literal value `"1"`.
+pub fn polling_enabled_from(raw: Option<&str>) -> bool {
+    raw == Some("1")
+}
+
+/// Read the polling flag from the environment. Default: disabled.
+pub fn polling_enabled() -> bool {
+    polling_enabled_from(std::env::var(POLLING_ENV).ok().as_deref())
+}
+
+/// Pure token resolution: non-blank explicit value wins, else the dummy.
+pub fn resolve_token(explicit: Option<&str>) -> String {
+    match explicit {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => DUMMY_TOKEN.to_string(),
+    }
+}
+
+/// Pure ordered resolution: live token wins, then test token, else dummy.
+pub fn resolve_token_ordered(live: Option<&str>, test: Option<&str>) -> String {
+    match live {
+        Some(raw) if !raw.trim().is_empty() => return raw.trim().to_string(),
+        _ => {}
+    }
+    resolve_token(test)
+}
+
+/// Token from the environment (`TELEGRAM_BOT_TOKEN`, else `OTB_TEST_TOKEN`,
+/// else dummy). Reads env only; the value itself is never logged.
+pub fn token_from_env() -> String {
+    resolve_token_ordered(
+        std::env::var(LIVE_TOKEN_ENV).ok().as_deref(),
+        std::env::var(TEST_TOKEN_ENV).ok().as_deref(),
+    )
+}
+
+/// Pure allowed-user parse: digits only, else `0` (deny-all sentinel).
+pub fn parse_allowed_user_id(raw: Option<&str>) -> u64 {
+    raw.and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// Allowed user from the environment: `OTB_TEST_ALLOWED_USER_ID`, else the
+/// Node `TELEGRAM_ALLOWED_USER_ID` key (the ID is not a secret). Reads env
+/// only; unparseable/missing becomes `0`.
+pub fn allowed_user_id_from_env() -> u64 {
+    let test = std::env::var(TEST_ALLOWED_USER_ENV).ok();
+    if let Some(raw) = test.filter(|value| !value.trim().is_empty()) {
+        return parse_allowed_user_id(Some(&raw));
+    }
+    parse_allowed_user_id(std::env::var("TELEGRAM_ALLOWED_USER_ID").ok().as_deref())
+}
+
+/// Pure auth check (Node `authMiddleware` head): the update passes only when
+/// it carries the allowed user id.
+pub fn is_authorized(user_id: Option<u64>, allowed_user_id: u64) -> bool {
+    otb_core::router_middleware_gates::decide_auth(user_id, allowed_user_id, 0, None)
+        == otb_core::router_middleware_gates::AuthVerdict::Allow
+}
+
+/// Truncate outbound text to the Telegram limit on a char boundary
+/// (pure; testable). Short text is returned unchanged.
+pub fn truncate_text(text: &str, limit: usize) -> &str {
+    if text.len() <= limit {
+        return text;
+    }
+    let mut end = limit;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+/// Build the `(chat_id, text)` payload for an outbound message (pure).
+/// Text is truncated to [`TELEGRAM_TEXT_LIMIT`].
+pub fn build_send_payload(chat_id: i64, text: &str) -> (ChatId, String) {
+    (ChatId(chat_id), truncate_text(text, TELEGRAM_TEXT_LIMIT).to_string())
+}
+
+/// Construct the thin API client. Performs zero requests; safe with the
+/// dummy token as long as no request is sent (polling stays off by default).
+pub fn create_bot(token: &str) -> teloxide_core::Bot {
+    teloxide_core::Bot::new(token)
+}
+
+/// Send a text message (thin `sendMessage` parity). Plain async helper with
+/// no auto-call: the scaffold never invokes it.
+pub async fn send_message(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    text: &str,
+) -> Result<(), teloxide_core::RequestError> {
+    let (chat, body) = build_send_payload(chat_id, text);
+    bot.send_message(chat, body).await?;
+    Ok(())
+}
+
+/// Env key for the configured model provider (Node `OPENCODE_MODEL_PROVIDER`).
+pub const MODEL_PROVIDER_ENV: &str = "OPENCODE_MODEL_PROVIDER";
+
+/// Env key for the configured model id (Node `OPENCODE_MODEL_ID`).
+pub const MODEL_ID_ENV: &str = "OPENCODE_MODEL_ID";
+
+/// Placeholder model display until the live model fetch lands (T15
+/// follow-up: `fetchCurrentModel` parity with variant + availability).
+/// Reads the Node-required `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`
+/// env keys; falls back to an explicit `not set` marker. Pure; no I/O.
+/// Used only when `settings.json` holds no `currentModel` (see
+/// [`build_status_snapshot_from`]).
+pub fn default_model_display() -> String {
+    let provider = std::env::var(MODEL_PROVIDER_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let model = std::env::var(MODEL_ID_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    match (provider, model) {
+        (Some(provider), Some(model)) => {
+            format_status_model_display(provider.trim(), model.trim(), None)
+        }
+        _ => "🧠 not set".to_string(),
+    }
+}
+
+/// Pure `🧠 provider/id` display with an optional ` (variant)` suffix
+/// (Node `status-command.ts` parity:
+/// `` `🧠 ${providerID}/${modelID}` + ` (${variant})` `` when set).
+pub fn format_status_model_display(provider: &str, model: &str, variant: Option<&str>) -> String {
+    let base = format!("🧠 {}/{}", provider.trim(), model.trim());
+    match variant.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(variant) => format!("{base} ({variant})"),
+        None => base,
+    }
+}
+
+/// Pure snapshot from an explicit settings view (no env/file I/O beyond the
+/// [`default_model_display`] env fallback; testable).
+///
+/// Precedence: `settings.json` `current*` → `OPENCODE_MODEL_PROVIDER`/`ID`
+/// env → placeholders.
+///
+/// Field mapping (Node `status-command.ts` parity):
+/// - `agent_display`: settings `currentAgent` through
+///   `get_agent_display_name` (`getAgentDisplayName` parity); `None` until
+///   the live `fetchCurrentAgent` session-message fetch lands.
+/// - `model_display`: settings `currentModel` (`provider/id + variant`)
+///   first, else the env fallback above.
+/// - `project_display`: settings `currentProject.worktree` verbatim; the
+///   `mainProjectPath: branch` enrichment (`getGitWorktreeContext`) is a
+///   follow-up, so `worktree_path` (linked-worktree only) stays `None`.
+/// - `session_title`: the remembered settings title; the live
+///   `fetchSessionTitle` refresh is a follow-up.
+pub fn build_status_snapshot_from(
+    health: &crate::opencode::HealthProbe,
+    current: &crate::settings_current::SettingsCurrent,
+) -> crate::commands::StatusSnapshot {
+    let model_display = match (
+        current.model_provider.as_deref(),
+        current.model_id.as_deref(),
+    ) {
+        (Some(provider), Some(model)) => {
+            format_status_model_display(provider, model, current.model_variant.as_deref())
+        }
+        _ => default_model_display(),
+    };
+    crate::commands::StatusSnapshot {
+        bot_version: env!("CARGO_PKG_VERSION").to_string(),
+        healthy: health.ok,
+        opencode_version: health.version.clone(),
+        agent_display: current
+            .agent
+            .as_deref()
+            .map(otb_core::types_config::get_agent_display_name),
+        model_display,
+        project_display: current.project_worktree.clone(),
+        worktree_path: None,
+        session_title: current.session_title.clone(),
+    }
+}
+
+/// Build the live `/status` snapshot from a health probe (read-only).
+///
+/// Resolves the App Home (`OPENCODE_TELEGRAM_HOME` override else the
+/// installed/current-dir default) and reads `<app_home>/settings.json`
+/// tolerantly: a missing or invalid file keeps the env/placeholder
+/// fallbacks. [`crate::commands::render_status`] stays pure and unchanged.
+pub fn build_status_snapshot(
+    health: &crate::opencode::HealthProbe,
+) -> crate::commands::StatusSnapshot {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    build_status_snapshot_from(health, &current)
+}
+
+/// Pure session identity from a create/list entry (testable).
+/// Accepts a bare session (`{"id":...,"title":...}`) or the live V2
+/// envelope (`{"data":{"id":...,"title":...}}`); anything else yields
+/// empty ids/titles. Only shapes are handled here — no I/O, no logging.
+pub fn session_identity_from_value(value: &serde_json::Value) -> (String, String) {
+    let inner = value.get("data").unwrap_or(value);
+    let id = inner
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("");
+    let title = inner
+        .get("title")
+        .and_then(|title| title.as_str())
+        .unwrap_or("");
+    (id.to_string(), title.to_string())
+}
+
+/// Node `SESSION_CALLBACK_PREFIX` parity (`session-selection-menu.ts`):
+/// each session row carries `callback_data = "session:<id>"`.
+pub const SESSION_CALLBACK_PREFIX: &str = "session:";
+
+/// Node `SESSION_PAGE_CALLBACK_PREFIX` parity: `"session:page:<n>"`.
+/// The scaffold sends no page buttons yet; page taps are only acked.
+pub const SESSION_PAGE_CALLBACK_PREFIX: &str = "session:page:";
+
+/// Parse a `session:<id>` callback into the session id (pure; testable).
+/// Node `parseSessionIdCallback` parity: page callbacks are excluded and an
+/// empty id yields `None`.
+pub fn parse_session_id_callback(data: &str) -> Option<&str> {
+    let id = data.strip_prefix(SESSION_CALLBACK_PREFIX)?;
+    if data.starts_with(SESSION_PAGE_CALLBACK_PREFIX) || id.is_empty() {
+        return None;
+    }
+    Some(id)
+}
+
+/// Parse a `session:page:<n>` callback into the page number (pure; testable).
+/// Node `parseSessionPageCallback` parity: anything but a non-negative
+/// integer yields `None`.
+pub fn parse_session_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(SESSION_PAGE_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Node exact search taps (`session-selection-menu.ts`):
+/// `"session:search"` opens the prompt, `"session:search:again"` re-opens
+/// it, `"session:search:cancel"` dismisses the results message.
+pub const SESSION_SEARCH_CALLBACK: &str = "session:search";
+pub const SESSION_SEARCH_AGAIN_CALLBACK: &str = "session:search:again";
+pub const SESSION_SEARCH_CANCEL_CALLBACK: &str = "session:search:cancel";
+
+/// Node `session:search:page:<n>` pager-button prefix (search-results
+/// paging; the query itself travels in interaction memory Node-side).
+pub const SESSION_SEARCH_PAGE_PREFIX: &str = "session:search:page:";
+
+/// Node `session:search:result:<index>` result-button prefix (the index is
+/// global within the filtered results and resolves via remembered ids).
+pub const SESSION_SEARCH_RESULT_PREFIX: &str = "session:search:result:";
+
+/// Parse a `session:search:page:<n>` callback into the page number (pure;
+/// digits-only, empty yields `None`).
+pub fn parse_session_search_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(SESSION_SEARCH_PAGE_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `session:search:result:<n>` callback into the global result
+/// index (pure; digits-only, empty yields `None`).
+pub fn parse_session_search_result_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(SESSION_SEARCH_RESULT_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Node `project:<id>` button parity (`project-selection-menu.ts`): each
+/// project row carries `callback_data = "project:<id>"`.
+pub const PROJECT_CALLBACK_PREFIX: &str = "project:";
+
+/// Node `projects:page:<n>` paging-button parity.
+pub const PROJECT_PAGE_CALLBACK_PREFIX: &str = "projects:page:";
+
+/// Node `worktree:<gitIndex>` button parity
+/// (`worktree-selection-menu.ts`). The scaffold carries the position in the
+/// *presented* (missing-folder-filtered) list instead of the raw git index,
+/// because the presented list is what the buttons show.
+pub const WORKTREE_CALLBACK_PREFIX: &str = "worktree:";
+
+/// Node `worktree:page:<n>` paging-button parity.
+pub const WORKTREE_PAGE_CALLBACK_PREFIX: &str = "worktree:page:";
+
+/// Node `recent:<index>` button parity (`recent-selection-menu.ts`): the
+/// position in the presented recent list.
+pub const RECENT_CALLBACK_PREFIX: &str = "recent:";
+
+/// `recent:page:<n>` paging-button parity (scaffold extension of the Node
+/// `recent-selection-menu.ts` shape, which carries no paging buttons; the
+/// prefix follows the `session:page:` / `projects:page:` pattern so page
+/// taps round-trip through [`parse_recent_page_callback`]).
+pub const RECENT_PAGE_CALLBACK_PREFIX: &str = "recent:page:";
+
+/// Node `messages:select:<index>` button parity
+/// (`message-history-menu.ts`): the position in the presented user-message
+/// list (newest-first).
+pub const MESSAGES_SELECT_CALLBACK_PREFIX: &str = "messages:select:";
+
+/// Node `messages:page:<n>` paging-button parity.
+pub const MESSAGES_PAGE_CALLBACK_PREFIX: &str = "messages:page:";
+
+/// Node `MESSAGES_CALLBACK_PREFIX` parity (`message-history-menu.ts`):
+/// every detail/list callback starts with `"messages:"`.
+pub const MESSAGES_CALLBACK_PREFIX: &str = "messages:";
+
+/// Node `MESSAGES_CALLBACK_REVERT` parity: exact revert tap (no payload;
+/// the target resolves from the detail message text, see
+/// [`resolve_message_detail_index`]).
+pub const MESSAGES_REVERT_CALLBACK: &str = "messages:revert";
+
+/// Node `MESSAGES_CALLBACK_FORK` parity: exact fork tap (no payload).
+pub const MESSAGES_FORK_CALLBACK: &str = "messages:fork";
+
+/// Node `MESSAGES_CALLBACK_BACK` parity: exact back-to-list tap.
+pub const MESSAGES_BACK_CALLBACK: &str = "messages:back";
+
+/// Node `MESSAGES_CALLBACK_CANCEL` parity: exact cancel tap.
+pub const MESSAGES_CANCEL_CALLBACK: &str = "messages:cancel";
+
+/// Exact `messages:revert` match (Node `data === MESSAGES_CALLBACK_REVERT`).
+pub fn is_messages_revert(data: &str) -> bool {
+    data == MESSAGES_REVERT_CALLBACK
+}
+
+/// Exact `messages:fork` match (Node `data === MESSAGES_CALLBACK_FORK`).
+pub fn is_messages_fork(data: &str) -> bool {
+    data == MESSAGES_FORK_CALLBACK
+}
+
+/// Exact `messages:back` match (Node `data === MESSAGES_CALLBACK_BACK`).
+pub fn is_messages_back(data: &str) -> bool {
+    data == MESSAGES_BACK_CALLBACK
+}
+
+/// Exact `messages:cancel` match (Node `data === MESSAGES_CALLBACK_CANCEL`).
+pub fn is_messages_cancel(data: &str) -> bool {
+    data == MESSAGES_CANCEL_CALLBACK
+}
+
+/// Parse a `project:<id>` callback into the project id (pure; testable).
+/// Page callbacks are excluded and an empty id yields `None`.
+pub fn parse_project_id_callback(data: &str) -> Option<&str> {
+    let id = data.strip_prefix(PROJECT_CALLBACK_PREFIX)?;
+    if data.starts_with(PROJECT_PAGE_CALLBACK_PREFIX) || id.is_empty() {
+        return None;
+    }
+    Some(id)
+}
+
+/// Parse a `projects:page:<n>` callback into the page number (pure).
+pub fn parse_project_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(PROJECT_PAGE_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Node exact search taps (`project-selection-menu.ts`):
+/// `"projects:search"` opens the prompt, `"projects:search:again"`
+/// re-opens it, `"projects:search:cancel"` dismisses the results message.
+pub const PROJECT_SEARCH_CALLBACK: &str = "projects:search";
+pub const PROJECT_SEARCH_AGAIN_CALLBACK: &str = "projects:search:again";
+pub const PROJECT_SEARCH_CANCEL_CALLBACK: &str = "projects:search:cancel";
+
+/// Node `projects:search:page:<n>` pager-button prefix (search-results
+/// paging; the query itself travels in interaction memory Node-side).
+pub const PROJECT_SEARCH_PAGE_PREFIX: &str = "projects:search:page:";
+
+/// Node `projects:search:result:<index>` result-button prefix (the index
+/// is global within the filtered results and resolves via remembered ids).
+pub const PROJECT_SEARCH_RESULT_PREFIX: &str = "projects:search:result:";
+
+/// Parse a `projects:search:page:<n>` callback into the page number
+/// (pure; digits-only, empty yields `None`).
+pub fn parse_project_search_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(PROJECT_SEARCH_PAGE_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `projects:search:result:<n>` callback into the global result
+/// index (pure; digits-only, empty yields `None`).
+pub fn parse_project_search_result_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(PROJECT_SEARCH_RESULT_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `worktree:<n>` callback into the presented-list position (pure).
+/// Page callbacks are excluded and anything but a non-negative integer
+/// yields `None`.
+pub fn parse_worktree_index_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(WORKTREE_CALLBACK_PREFIX)?;
+    if data.starts_with(WORKTREE_PAGE_CALLBACK_PREFIX)
+        || raw.is_empty()
+        || !raw.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `worktree:page:<n>` callback into the page number (pure).
+pub fn parse_worktree_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(WORKTREE_PAGE_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `recent:<n>` callback into the presented-list position (pure).
+/// Page callbacks are excluded and anything but a non-negative integer
+/// yields `None`.
+pub fn parse_recent_index_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(RECENT_CALLBACK_PREFIX)?;
+    if data.starts_with(RECENT_PAGE_CALLBACK_PREFIX)
+        || raw.is_empty()
+        || !raw.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `recent:page:<n>` callback into the page number (pure).
+pub fn parse_recent_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(RECENT_PAGE_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Clamp a requested page into `0..total_pages` (pure; testable).
+/// A zero `total_pages` (empty list) reads as page `0`; anything past the
+/// last page pins to the last page.
+pub fn clamp_page_index(page: usize, total_pages: usize) -> usize {
+    if total_pages == 0 {
+        return 0;
+    }
+    page.min(total_pages - 1)
+}
+
+/// Cap for a typed search query (Node
+/// `SESSION_SEARCH_QUERY_MAX_LENGTH = 100` parity in
+/// `session-selection-menu.ts`: "a session title never approaches this;
+/// the cap keeps a typed query sendable").
+pub const SESSION_SEARCH_QUERY_MAX_LENGTH: usize = 100;
+
+/// Cap a typed search query to [`SESSION_SEARCH_QUERY_MAX_LENGTH`] chars
+/// (pure; testable). Char-boundary safe; short queries pass through.
+pub fn truncate_search_query(query: &str) -> String {
+    if query.chars().count() <= SESSION_SEARCH_QUERY_MAX_LENGTH {
+        return query.to_string();
+    }
+    query.chars().take(SESSION_SEARCH_QUERY_MAX_LENGTH).collect()
+}
+
+/// Whether a session row matches a typed query (pure; testable). Node
+/// `searchSessions` parity: case-insensitive title-or-id contains over the
+/// trimmed query; a blank query matches every row.
+pub fn matches_session_query(item: &crate::commands::SessionListItem, query: &str) -> bool {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return true;
+    }
+    item.title.to_lowercase().contains(&needle) || item.id.to_lowercase().contains(&needle)
+}
+
+/// Whether a project row matches a typed query (pure; testable). Node
+/// `filterProjectsForSearch` parity, minus the active-project display-name
+/// clause (stateless: the scaffold filters on the worktree folder name
+/// only): case-insensitive folder-name contains over the trimmed query; a
+/// blank query matches every row.
+pub fn matches_project_query(item: &crate::commands::ProjectListItem, query: &str) -> bool {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return true;
+    }
+    crate::commands::get_project_folder_name(&item.worktree)
+        .to_lowercase()
+        .contains(&needle)
+}
+
+/// Whether a model row matches a typed query (pure; testable). Node
+/// `searchModels` parity: case-insensitive `provider/model` contains over
+/// the trimmed query; a blank query matches nothing (Node returns `[]`).
+pub fn matches_model_query(item: &crate::commands::ModelListItem, query: &str) -> bool {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+    format!("{}/{}", item.provider_id, item.model_id)
+        .to_lowercase()
+        .contains(&needle)
+}
+
+/// Parse a `messages:select:<n>` callback into the presented-list position
+/// (pure).
+pub fn parse_message_select_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(MESSAGES_SELECT_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `messages:page:<n>` callback into the page number (pure).
+pub fn parse_message_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(MESSAGES_PAGE_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Truncate an inline-button label to the 64-char Telegram limit (pure).
+/// An active row keeps its `✅ ` prefix like the Node
+/// `formatProjectButtonLabel`/`formatWorktreeButtonLabel` helpers.
+pub fn truncate_button_label(label: &str, active: bool) -> String {
+    const LIMIT: usize = 64;
+    let prefix = if active { "✅ " } else { "" };
+    let available = LIMIT.saturating_sub(prefix.chars().count());
+    if label.chars().count() <= available {
+        return format!("{prefix}{label}");
+    }
+    let kept: String = label.chars().take(available.saturating_sub(3)).collect();
+    format!("{prefix}{kept}...")
+}
+
+/// One button row per session: `"{n}. [marker ]title"` with
+/// `callback_data = "session:<id>"` (pure; testable). Titles go through
+/// `format_session_title` so blank titles never produce empty buttons.
+/// When `total_pages > 1` a trailing pager row carries `⬅`/`➡` buttons
+/// with `callback_data = "session:page:<n>"` (Node
+/// `session-selection-menu.ts` parity); a single page keeps the rows only.
+pub fn build_sessions_keyboard(
+    items: &[crate::commands::SessionListItem],
+    current_id: Option<&str>,
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let marker = crate::locale::translate(locale, "sessions.current_marker");
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let title = crate::commands::format_session_title(&item.title, Some(locale));
+            let label = if current_id == Some(item.id.as_str()) && !marker.is_empty() {
+                format!("{}. {marker} {title}", index + 1)
+            } else {
+                format!("{}. {title}", index + 1)
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{SESSION_CALLBACK_PREFIX}{}", item.id),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "sessions.button.prev_page"),
+                format!("{SESSION_PAGE_CALLBACK_PREFIX}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "sessions.button.next_page"),
+                format!("{SESSION_PAGE_CALLBACK_PREFIX}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Loaded `/sessions` context shared by the list reply and the select
+/// callback (read-only except the remembered-settings read).
+struct SessionsContext {
+    worktree: String,
+    current_id: Option<String>,
+    items: Vec<crate::commands::SessionListItem>,
+}
+
+/// Load the current project's first session page, or the i18n key for the
+/// failure reply (`sessions.project_not_selected` on no project,
+/// `sessions.fetch_error` when the list cannot be fetched).
+async fn load_sessions_context() -> Result<SessionsContext, &'static str> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("sessions.project_not_selected");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let sessions = match client.list_sessions(Some(&worktree)).await {
+        Ok(sessions) => sessions,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: sessions list failed: {err}");
+            return Err("sessions.fetch_error");
+        }
+    };
+    let items: Vec<crate::commands::SessionListItem> = sessions
+        .iter()
+        .filter_map(crate::commands::session_list_item_from_value)
+        // Project scope, like the Node `directory` query: keep rows for this
+        // worktree (blank-directory rows are legacy; keep them visible).
+        // Paging slices per page in `sessions_view`; the full list is kept
+        // here so later pages resolve.
+        .filter(|item| item.directory.is_empty() || item.directory == worktree)
+        .collect();
+    Ok(SessionsContext {
+        worktree,
+        current_id: current.session_id,
+        items,
+    })
+}
+
+/// Comparison key for a worktree (Node `worktreeKey` parity: lowercase on
+/// Windows only).
+fn worktree_key(worktree: &str) -> String {
+    if cfg!(windows) {
+        worktree.to_lowercase()
+    } else {
+        worktree.to_string()
+    }
+}
+
+/// True when `worktree/.git` is a pointer file into another repo's
+/// `worktrees/` dir (Node `isLinkedGitWorktree` parity in
+/// `project-service.ts`). A `.git` directory (main checkout), a missing
+/// path, or an unreadable file all read as not-linked; only paths/error
+/// kinds are ever logged, never values.
+fn is_linked_worktree(worktree: &str) -> bool {
+    if worktree == "/" {
+        return false;
+    }
+    let content = match std::fs::read_to_string(std::path::Path::new(worktree).join(".git")) {
+        Ok(content) => content,
+        Err(_) => return false,
+    };
+    let Some(pointer) = content.lines().next().map(str::trim) else {
+        return false;
+    };
+    let Some((key, target)) = pointer.split_once(':') else {
+        return false;
+    };
+    if !key.trim().eq_ignore_ascii_case("gitdir") || target.trim().is_empty() {
+        return false;
+    }
+    let resolved = std::path::Path::new(worktree).join(target.trim());
+    let normalized = resolved.to_string_lossy().replace('\\', "/").to_lowercase();
+    normalized.contains("/.git/worktrees/")
+}
+
+/// One button row per project: `"N. [✅ ]folder [worktree]"` with
+/// `callback_data = "project:<id>"` (pure; testable). Labels are capped at
+/// 64 chars like the Node `formatProjectButtonLabel` helper. When
+/// `total_pages > 1` a trailing pager row carries `callback_data =
+/// "projects:page:<n>"` (Node `project-selection-menu.ts` parity).
+pub fn build_projects_keyboard(
+    items: &[crate::commands::ProjectListItem],
+    current_worktree: Option<&str>,
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .map(|item| {
+            let label = format!(
+                "{} [{}]",
+                crate::commands::get_project_folder_name(&item.worktree),
+                item.worktree
+            );
+            let active = current_worktree == Some(item.worktree.as_str());
+            vec![InlineKeyboardButton::callback(
+                truncate_button_label(&label, active),
+                format!("{PROJECT_CALLBACK_PREFIX}{}", item.id),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.prev_page"),
+                format!("{PROJECT_PAGE_CALLBACK_PREFIX}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.next_page"),
+                format!("{PROJECT_PAGE_CALLBACK_PREFIX}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per worktree: `"N. [✅ ]folder [path]"` with
+/// `callback_data = "worktree:<position>"` (pure; testable). When
+/// `total_pages > 1` a trailing pager row carries `callback_data =
+/// "worktree:page:<n>"` (Node `worktree-selection-menu.ts` parity, whose
+/// pager labels are the shared `projects.prev_page` / `projects.next_page`
+/// keys).
+pub fn build_worktree_keyboard(
+    items: &[crate::commands::WorktreeListItem],
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let label = format!(
+                "{} [{}]",
+                crate::commands::get_project_folder_name(&item.path),
+                item.path
+            );
+            vec![InlineKeyboardButton::callback(
+                truncate_button_label(&label, item.is_current),
+                format!("{WORKTREE_CALLBACK_PREFIX}{index}"),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.prev_page"),
+                format!("{WORKTREE_PAGE_CALLBACK_PREFIX}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.next_page"),
+                format!("{WORKTREE_PAGE_CALLBACK_PREFIX}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per recent session: `"{glyph} [project] title"` with
+/// `callback_data = "recent:<position>"` (pure; testable). Titles go
+/// through `format_session_title` so blank titles never produce empty
+/// buttons; over-long labels are capped at 64 chars like Node. When
+/// `total_pages > 1` a trailing pager row carries `callback_data =
+/// "recent:page:<n>"` (scaffold paging; the Node recent menu keeps a
+/// single page).
+pub fn build_recent_keyboard(
+    items: &[crate::commands::RecentListItem],
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let title = crate::commands::format_session_title(&item.title, Some(locale));
+            let label = format!(
+                "{} [{}] {title}",
+                crate::commands::recent_status_glyph(item.status),
+                crate::commands::get_project_folder_name(&item.directory),
+            );
+            vec![InlineKeyboardButton::callback(
+                truncate_button_label(&label, false),
+                format!("{RECENT_CALLBACK_PREFIX}{index}"),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.prev_page"),
+                format!("{RECENT_PAGE_CALLBACK_PREFIX}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.next_page"),
+                format!("{RECENT_PAGE_CALLBACK_PREFIX}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per user message: `"[HH:MM] text"` with `callback_data =
+/// "messages:select:<position>"` (pure; testable). When `total_pages > 1`
+/// a trailing pager row carries `callback_data = "messages:page:<n>"`
+/// (Node `message-history-menu.ts` parity).
+pub fn build_messages_keyboard(
+    items: &[crate::commands::UserMessageItem],
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            vec![InlineKeyboardButton::callback(
+                crate::commands::format_message_line(item),
+                format!("{MESSAGES_SELECT_CALLBACK_PREFIX}{index}"),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "messages.button.prev_page"),
+                format!("{MESSAGES_PAGE_CALLBACK_PREFIX}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "messages.button.next_page"),
+                format!("{MESSAGES_PAGE_CALLBACK_PREFIX}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Detail keyboard for one user message (Node `buildMessageDetailKeyboard`
+/// parity in `message-history-menu.ts`): `[revert]`, `[fork]`, then
+/// `[back, cancel]` on one row. Labels come from the
+/// `messages.button.*` i18n keys; callbacks are the exact
+/// `messages:revert` / `messages:fork` / `messages:back` /
+/// `messages:cancel` shapes (pure; testable).
+pub fn build_message_detail_keyboard(locale: &str) -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "messages.button.revert"),
+            MESSAGES_REVERT_CALLBACK.to_string(),
+        )],
+        vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "messages.button.fork"),
+            MESSAGES_FORK_CALLBACK.to_string(),
+        )],
+        vec![
+            InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "messages.button.back"),
+                MESSAGES_BACK_CALLBACK.to_string(),
+            ),
+            InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "messages.button.cancel"),
+                MESSAGES_CANCEL_CALLBACK.to_string(),
+            ),
+        ],
+    ])
+}
+
+/// Resolve which list item a detail tap refers to by re-rendering each
+/// candidate and comparing against the detail message text (pure;
+/// testable).
+///
+/// SCAFFOLD DEVIATION: Node remembers the `selectedIndex` in its
+/// interaction state (`MessagesDetailMetadata`), so its revert/fork taps
+/// carry no payload. The scaffold keeps no per-chat interaction memory,
+/// so the target is recovered from the detail message itself
+/// (`render_message_detail` is deterministic). A follow-up with a
+/// dispatcher should carry the remembered index instead. No match
+/// (edited/foreign text) yields `None` and the caller falls back to the
+/// `messages.inactive_callback` notice plus the list view.
+pub fn resolve_message_detail_index(
+    detail_text: &str,
+    items: &[crate::commands::UserMessageItem],
+) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| crate::commands::render_message_detail(item) == detail_text)
+}
+
+/// Loaded `/projects` context shared by the list reply and the select
+/// callback (read-only except the remembered-settings read).
+struct ProjectsContext {
+    items: Vec<crate::commands::ProjectListItem>,
+    current_worktree: Option<String>,
+    current_display: Option<String>,
+}
+
+/// Load the project list: API projects merged with the isolated session
+/// directory cache (JS `getResolvedProjects` parity, minus linked-worktree
+/// hiding details the scaffold keeps: linked checkouts *are* hidden, but
+/// `excludedProjectPaths` filtering is a dispatcher follow-up).
+/// Missing folders are dropped like `getListedProjects`. Failure key:
+/// `projects.fetch_error`.
+async fn load_projects_context() -> Result<ProjectsContext, &'static str> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let mut merged: std::collections::HashMap<String, crate::commands::ProjectListItem> =
+        std::collections::HashMap::new();
+    match client.list_projects().await {
+        Ok(projects) => {
+            for item in projects
+                .iter()
+                .filter_map(crate::commands::project_list_item_from_value)
+            {
+                merged.insert(worktree_key(&item.worktree), item);
+            }
+        }
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: projects list failed: {err}");
+            return Err("projects.fetch_error");
+        }
+    }
+    // Cached virtual projects fill gaps the API list does not cover (Node
+    // `getCachedSessionProjects` merge parity); the cache DB is the
+    // isolated one, never a live path.
+    let db_path = crate::store::resolve_db_path(&app_home);
+    if let Ok(store) = crate::store::SessionCacheStore::open(&db_path) {
+        if let Ok(cached) = store.get_projects() {
+            for project in cached {
+                let key = worktree_key(&project.worktree);
+                if let Some(existing) = merged.get_mut(&key) {
+                    if project.last_updated > existing.last_updated {
+                        existing.last_updated = project.last_updated;
+                    }
+                } else {
+                    merged.insert(
+                        key,
+                        crate::commands::ProjectListItem {
+                            id: project.id,
+                            worktree: project.worktree,
+                            name: project.name,
+                            last_updated: project.last_updated,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    let mut items: Vec<crate::commands::ProjectListItem> = merged
+        .into_values()
+        // `getListedProjects` parity: folders the server cannot confirm are
+        // left out; linked checkouts stay hidden like Node.
+        .filter(|item| {
+            !item.worktree.trim().is_empty()
+                && item.worktree != "/"
+                && std::path::Path::new(&item.worktree).exists()
+                && !is_linked_worktree(&item.worktree)
+        })
+        .collect();
+    items.sort_by(|left, right| right.last_updated.cmp(&left.last_updated));
+    // Paging slices per page in `projects_view`; the full sorted list is
+    // kept here so later pages resolve.
+    let current_display = current
+        .project_name
+        .clone()
+        .filter(|name| !name.is_empty())
+        .or_else(|| current.project_worktree.clone());
+    Ok(ProjectsContext {
+        items,
+        current_worktree: current.project_worktree,
+        current_display,
+    })
+}
+
+/// Live `/projects` view: the JS-parity text plus an inline keyboard with
+/// one `project:<id>` button per row (read-only except the
+/// remembered-settings read). Fetch failure → `projects.fetch_error`; no
+/// rows → `projects.empty`; otherwise the numbered `render_projects` list
+/// for the requested page plus `projects:page:<n>` pager buttons when more
+/// than one page exists (Node `project-selection-menu.ts` parity).
+async fn projects_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let context = match load_projects_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let total = context.items.len();
+    let limit = crate::config::PROJECTS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &context.items[start.min(total)..end];
+    let text = crate::commands::render_projects(
+        page_items,
+        context.current_worktree.as_deref(),
+        context.current_display.as_deref(),
+        page,
+        total_pages,
+        Some(locale),
+    );
+    // Leading search row (Node `buildProjectsKeyboard` parity): opens the
+    // stateless prompt-then-filter flow. `build_projects_keyboard` stays
+    // shared with the results view, which carries again/cancel instead.
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        let mut keyboard = build_projects_keyboard(
+            page_items,
+            context.current_worktree.as_deref(),
+            locale,
+            page,
+            total_pages,
+        );
+        keyboard.inline_keyboard.insert(
+            0,
+            vec![InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "projects.search.button"),
+                PROJECT_SEARCH_CALLBACK.to_string(),
+            )],
+        );
+        Some(keyboard)
+    };
+    (text, keyboard)
+}
+
+/// Filtered `/projects <query>` view (stateless Batch E1 search follow-up).
+///
+/// Same stateless assumption as [`sessions_search_view`]: no remembered
+/// `project-search` interaction state, so the query travels as the
+/// `/projects <query>` command argument and matching filters the live
+/// merged list in memory on every call (Node `filterProjectsForSearch`
+/// parity via [`matches_project_query`], folder-name clause only).
+/// Result rows carry direct `project:<id>` taps (no remembered `ids`
+/// vector, so `projects:search:result:<index>` cannot resolve); the list
+/// is capped to the first `PROJECTS_LIST_LIMIT` matches with a
+/// `[search again, cancel]` row. Stale `projects:search:page:<n>` /
+/// `projects:search:result:<n>` taps re-prompt instead.
+async fn projects_search_view(locale: &str, query: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let query = truncate_search_query(query);
+    let context = match load_projects_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let again_cancel = || {
+        search_again_cancel_row(
+            locale,
+            "projects.search.again",
+            "projects.search.cancel",
+            PROJECT_SEARCH_AGAIN_CALLBACK,
+            PROJECT_SEARCH_CANCEL_CALLBACK,
+        )
+    };
+    let matched: Vec<crate::commands::ProjectListItem> = context
+        .items
+        .iter()
+        .filter(|item| matches_project_query(item, &query))
+        .cloned()
+        .collect();
+    if matched.is_empty() {
+        let text =
+            crate::locale::translate(locale, "projects.search.no_results").replace("{query}", &query);
+        return (text, Some(InlineKeyboardMarkup::new(vec![again_cancel()])));
+    }
+    let limit = crate::config::PROJECTS_LIST_LIMIT.max(1);
+    let page_items: Vec<crate::commands::ProjectListItem> =
+        matched.into_iter().take(limit).collect();
+    let text =
+        crate::locale::translate(locale, "projects.search.results").replace("{query}", &query);
+    let mut keyboard = build_projects_keyboard(
+        &page_items,
+        context.current_worktree.as_deref(),
+        locale,
+        0,
+        1,
+    );
+    keyboard.inline_keyboard.push(again_cancel());
+    (text, Some(keyboard))
+}
+
+/// Parse `git worktree list --porcelain` output into `(path, branch)` rows
+/// (pure; testable). A `branch refs/heads/<name>` line yields `Some(name)`;
+/// `detached`/missing branch yields `None`. Blocks without a `worktree`
+/// line are skipped.
+pub fn parse_git_worktree_porcelain(output: &str) -> Vec<(String, Option<String>)> {
+    let mut rows: Vec<(String, Option<String>)> = Vec::new();
+    let mut path: Option<String> = None;
+    let mut branch: Option<String> = None;
+    for line in output.lines().chain(std::iter::once("")) {
+        let line = line.trim_end();
+        if line.is_empty() {
+            if let Some(path) = path.take() {
+                rows.push((path, branch.take()));
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("worktree ") {
+            if path.is_some() {
+                rows.push((path.take().expect("path set"), branch.take()));
+            }
+            if !rest.trim().is_empty() {
+                path = Some(rest.trim().to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("branch ") {
+            let name = rest.strip_prefix("refs/heads/").unwrap_or(rest);
+            if !name.is_empty() {
+                branch = Some(name.to_string());
+            }
+        }
+    }
+    rows
+}
+
+/// Run `git -C <worktree> worktree list --porcelain` off the async runtime
+/// (blocking). Non-zero exit means "not a git repository"
+/// (`worktree.not_git_repo`); a spawn failure or undecodable output means
+/// `worktree.fetch_error`. Only the exit status is ever logged.
+async fn git_worktree_list(worktree: &str) -> Result<String, &'static str> {
+    let worktree = worktree.to_string();
+    tokio::task::spawn_blocking(move || {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&worktree)
+            .arg("worktree")
+            .arg("list")
+            .arg("--porcelain")
+            .output()
+            .map_err(|_| "worktree.fetch_error")
+            .and_then(|output| {
+                if !output.status.success() {
+                    return Err("worktree.not_git_repo");
+                }
+                String::from_utf8(output.stdout).map_err(|_| "worktree.fetch_error")
+            })
+    })
+    .await
+    .map_err(|_| "worktree.fetch_error")?
+}
+
+/// Loaded `/worktree` context shared by the list reply and the select
+/// callback.
+struct WorktreeContext {
+    items: Vec<crate::commands::WorktreeListItem>,
+}
+
+/// Load the current project's worktree list (JS `listPresentWorktrees`
+/// parity: missing folders are left out). No project →
+/// `worktree.project_not_selected`; not a git repo → `worktree.not_git_repo`.
+async fn load_worktree_context() -> Result<WorktreeContext, &'static str> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("worktree.project_not_selected");
+    };
+    let output = git_worktree_list(&worktree).await?;
+    let items: Vec<crate::commands::WorktreeListItem> = parse_git_worktree_porcelain(&output)
+        .into_iter()
+        // `listPresentWorktrees` parity: gone folders are left out, while
+        // each row keeps its presented-list position for selection.
+        // Paging slices per page in `worktree_view`; the full list is kept
+        // here so later pages resolve.
+        .filter(|(path, _)| std::path::Path::new(path).exists())
+        .map(|(path, branch)| crate::commands::WorktreeListItem {
+            is_current: worktree_key(&path) == worktree_key(&worktree),
+            path,
+            branch,
+        })
+        .collect();
+    Ok(WorktreeContext { items })
+}
+
+/// Live `/worktree` view: the JS-parity text plus an inline keyboard with
+/// one `worktree:<position>` button per row. No rows →
+/// `worktree.empty`; otherwise the numbered `render_worktree` list for the
+/// requested page plus `worktree:page:<n>` pager buttons when more than one
+/// page exists (Node `worktree-selection-menu.ts` parity).
+async fn worktree_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let context = match load_worktree_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let total = context.items.len();
+    let limit = crate::config::PROJECTS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &context.items[start.min(total)..end];
+    let text = crate::commands::render_worktree(page_items, page, total_pages, Some(locale));
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        Some(build_worktree_keyboard(page_items, locale, page, total_pages))
+    };
+    (text, keyboard)
+}
+
+/// Load recent sessions across the known project directories, newest-first
+/// (JS `loadRecentSessions` shape, minus liveness: statuses all read
+/// `Idle` until the status/question/permission lookups land as a
+/// follow-up). One bad directory never fails the list. Empty when no
+/// project directory is known.
+async fn load_recent_context() -> Vec<crate::commands::RecentListItem> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let mut directories: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for worktree in current
+        .project_worktree
+        .iter()
+        .chain(
+            crate::store::SessionCacheStore::open(&crate::store::resolve_db_path(&app_home))
+                .ok()
+                .and_then(|store| store.get_directories().ok())
+                .unwrap_or_default()
+                .iter()
+                .map(|dir| &dir.worktree),
+        )
+    {
+        let worktree = worktree.trim();
+        if worktree.is_empty() || !seen.insert(worktree_key(worktree)) {
+            continue;
+        }
+        directories.push(worktree.to_string());
+        if directories.len() >= 10 {
+            break;
+        }
+    }
+    if directories.is_empty() {
+        return Vec::new();
+    }
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let mut items: Vec<crate::commands::RecentListItem> = Vec::new();
+    for directory in &directories {
+        match client.list_sessions(Some(directory)).await {
+            Ok(sessions) => {
+                items.extend(sessions.iter().filter_map(|value| {
+                    crate::commands::recent_item_from_value(
+                        value,
+                        crate::commands::RecentStatus::Idle,
+                    )
+                }));
+            }
+            Err(err) => {
+                tracing::warn!("[otb-bot] telegram: recent list failed: {err}");
+            }
+        }
+    }
+    // Paging slices per page in `recent_view`; the full sorted list is kept
+    // here so later pages resolve.
+    crate::commands::sort_recent_items(items)
+}
+
+/// Live `/recent` view: the JS-parity heading + legend plus an inline
+/// keyboard with one `recent:<position>` button per row. No rows →
+/// `recent.empty`; otherwise the requested page plus `recent:page:<n>`
+/// pager buttons when more than one page exists (scaffold paging; the Node
+/// recent menu keeps a single page).
+async fn recent_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let items = load_recent_context().await;
+    let total = items.len();
+    let limit = crate::config::SESSIONS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &items[start.min(total)..end];
+    let text = crate::commands::render_recent(page_items, Some(locale));
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        Some(build_recent_keyboard(page_items, locale, page, total_pages))
+    };
+    (text, keyboard)
+}
+
+/// Loaded `/messages` context shared by the list reply and the select
+/// callback.
+struct MessagesContext {
+    items: Vec<crate::commands::UserMessageItem>,
+    session_id: String,
+    directory: String,
+}
+
+/// Load the current session's user messages, newest-first (JS
+/// `loadUserMessages` parity, including the `revert.messageID` cutoff; a
+/// failed session fetch only drops the cutoff, never the list).
+async fn load_messages_context() -> Result<MessagesContext, &'static str> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(project) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("messages.project_not_selected");
+    };
+    let (Some(session_id), Some(session_dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) else {
+        return Err("messages.session_not_selected");
+    };
+    if session_dir != project {
+        return Err("messages.session_project_mismatch");
+    }
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.session_messages(&session_id, &session_dir).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: messages list failed: {err}");
+            return Err("messages.fetch_error");
+        }
+    };
+    let mut items: Vec<crate::commands::UserMessageItem> = raw
+        .iter()
+        .filter_map(crate::commands::user_message_item_from_value)
+        .collect();
+    items = crate::commands::sort_user_messages(items);
+    if let Ok(session) = client.get_session(&session_id, &session_dir).await {
+        if let Some(revert_id) = session
+            .get("revert")
+            .and_then(|revert| revert.get("messageID"))
+            .and_then(|id| id.as_str())
+        {
+            if let Some(index) = items.iter().position(|item| item.id == revert_id) {
+                items = items.into_iter().skip(index + 1).collect();
+            }
+        }
+    }
+    // Paging slices per page in `messages_view`; the full post-cutoff list
+    // is kept here so later pages resolve.
+    Ok(MessagesContext {
+        items,
+        session_id,
+        directory: session_dir,
+    })
+}
+
+/// Live `/messages` view: the JS-parity text plus an inline keyboard with
+/// one `messages:select:<position>` button per row (read-only). Renders the
+/// requested page plus `messages:page:<n>` pager buttons when more than one
+/// page exists (Node `message-history-menu.ts` parity).
+async fn messages_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let context = match load_messages_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let total = context.items.len();
+    let limit = crate::config::MESSAGES_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &context.items[start.min(total)..end];
+    let text = crate::commands::render_messages(page_items, page, Some(locale));
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        Some(build_messages_keyboard(page_items, locale, page, total_pages))
+    };
+    (text, keyboard)
+}
+
+/// Live `/sessions` view: the JS-parity text plus an inline keyboard with one
+/// `session:<id>` button per row (read-only except the remembered-settings
+/// read). Mirrors `sessions-command.ts`: no project → `project_not_selected`;
+/// fetch failure → `fetch_error`; no rows → `sessions.empty`; otherwise the
+/// numbered `render_sessions` list for the requested page plus
+/// `session:page:<n>` pager buttons when more than one page exists (Node
+/// `session-selection-menu.ts` parity).
+async fn sessions_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let context = match load_sessions_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let total = context.items.len();
+    let limit = crate::config::SESSIONS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &context.items[start.min(total)..end];
+    let text = crate::commands::render_sessions(
+        page_items,
+        context.current_id.as_deref(),
+        page,
+        Some(locale),
+    );
+    // Leading search row (Node `buildSessionsKeyboard` parity): opens the
+    // stateless prompt-then-filter flow. `build_sessions_keyboard` stays
+    // shared with the results view, which carries again/cancel instead.
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        let mut keyboard = build_sessions_keyboard(
+            page_items,
+            context.current_id.as_deref(),
+            locale,
+            page,
+            total_pages,
+        );
+        keyboard.inline_keyboard.insert(
+            0,
+            vec![InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "sessions.search.button"),
+                SESSION_SEARCH_CALLBACK.to_string(),
+            )],
+        );
+        Some(keyboard)
+    };
+    (text, keyboard)
+}
+
+/// One `[search again, cancel]` row carrying the Node-exact
+/// `...:search:again` / `...:search:cancel` callback shapes (pure).
+fn search_again_cancel_row(
+    locale: &str,
+    again_key: &str,
+    cancel_key: &str,
+    again_data: &str,
+    cancel_data: &str,
+) -> Vec<InlineKeyboardButton> {
+    vec![
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, again_key),
+            again_data.to_string(),
+        ),
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, cancel_key),
+            cancel_data.to_string(),
+        ),
+    ]
+}
+
+/// Filtered `/sessions <query>` view (stateless Batch E1 search follow-up).
+///
+/// ASSUMPTION (stateless deviation): the scaffold keeps no per-chat
+/// interaction memory, so the search mode Node holds in
+/// `interactionManager` (`session-search` flow with `stage`/`query`/`ids`)
+/// cannot be remembered. The typed query therefore travels as the
+/// `/sessions <query>` command argument (the search-button prompt asks for
+/// the query; the user's next text message carries it as command args),
+/// and matching filters the live list in memory on every call (Node
+/// `searchSessions` filter parity via [`matches_session_query`]).
+/// Result rows carry direct `session:<id>` taps (no remembered `ids`
+/// vector, so the Node `session:search:result:<index>` indirection cannot
+/// resolve); tapping selects immediately like the Node result tap's end
+/// effect. The list is capped to the first `SESSIONS_LIST_LIMIT` matches
+/// with a `[search again, cancel]` row (Node
+/// `buildSessionSearchView` parity minus paging: the query cannot
+/// round-trip through `session:search:page:<n>` taps statelessly, so stale
+/// page/result taps re-prompt instead). Fetch failure and no-project keep
+/// the `sessions_view` error keys.
+async fn sessions_search_view(locale: &str, query: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let query = truncate_search_query(query);
+    let context = match load_sessions_context().await {
+        Ok(context) => context,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let again_cancel = || {
+        search_again_cancel_row(
+            locale,
+            "sessions.search.again",
+            "sessions.search.cancel",
+            SESSION_SEARCH_AGAIN_CALLBACK,
+            SESSION_SEARCH_CANCEL_CALLBACK,
+        )
+    };
+    let matched: Vec<crate::commands::SessionListItem> = context
+        .items
+        .iter()
+        .filter(|item| matches_session_query(item, &query))
+        .cloned()
+        .collect();
+    if matched.is_empty() {
+        let text =
+            crate::locale::translate(locale, "sessions.search.no_results").replace("{query}", &query);
+        return (text, Some(InlineKeyboardMarkup::new(vec![again_cancel()])));
+    }
+    let limit = crate::config::SESSIONS_LIST_LIMIT.max(1);
+    let page_items: Vec<crate::commands::SessionListItem> =
+        matched.into_iter().take(limit).collect();
+    let text =
+        crate::locale::translate(locale, "sessions.search.results").replace("{query}", &query);
+    let mut keyboard =
+        build_sessions_keyboard(&page_items, context.current_id.as_deref(), locale, 0, 1);
+    keyboard.inline_keyboard.push(again_cancel());
+    (text, Some(keyboard))
+}
+
+/// Send a text message with an inline keyboard (thin `sendMessage` parity).
+async fn send_message_with_keyboard(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    text: &str,
+    keyboard: InlineKeyboardMarkup,
+) -> Result<(), teloxide_core::RequestError> {
+    let (chat, body) = build_send_payload(chat_id, text);
+    bot.send_message(chat, body)
+        .reply_markup(keyboard)
+        .await?;
+    Ok(())
+}
+
+/// Answer a callback query to clear the client spinner (Node
+/// `answerCallbackQuery` parity). `text` is only set for failures; only the
+/// error is ever logged.
+async fn answer_callback(
+    bot: &teloxide_core::Bot,
+    query: &CallbackQuery,
+    text: Option<String>,
+    show_alert: bool,
+) {
+    let mut request = bot.answer_callback_query(query.id.clone());
+    if let Some(text) = text {
+        request = request.text(text);
+    }
+    if show_alert {
+        request = request.show_alert(true);
+    }
+    if let Err(err) = request.await {
+        tracing::debug!("[otb-bot] telegram: answer callback failed: {err}");
+    }
+}
+
+/// Chat the callback's message belongs to, when it is still accessible.
+fn callback_chat_id(query: &CallbackQuery) -> Option<i64> {
+    match &query.message {
+        Some(MaybeInaccessibleMessage::Regular(message)) => Some(message.chat.id.0),
+        _ => None,
+    }
+}
+
+/// Chat plus message id the callback's message carries, when it is still
+/// accessible (needed for the cancel delete and the detail target match).
+fn callback_message_ids(query: &CallbackQuery) -> Option<(ChatId, MessageId)> {
+    match &query.message {
+        Some(MaybeInaccessibleMessage::Regular(message)) => Some((message.chat.id, message.id)),
+        _ => None,
+    }
+}
+
+/// Text of the callback's message, when it is still accessible (the detail
+/// target match reads the rendered detail body back).
+fn callback_message_text(query: &CallbackQuery) -> Option<&str> {
+    match &query.message {
+        Some(MaybeInaccessibleMessage::Regular(message)) => message.text(),
+        _ => None,
+    }
+}
+
+/// Handle a `session:<id>` tap: resolve the title from the project session
+/// list, persist it via `write_current_session` (JS `setCurrentSession`
+/// parity), ack the callback, and confirm with the `sessions.selected`
+/// template. Only the id prefix and length are ever logged — never values.
+async fn handle_session_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    // Page taps re-render the requested sessions page (Node
+    // `session-selection-menu.ts` pager parity); the ack clears the spinner.
+    if let Some(page) = parse_session_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = sessions_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let Some(session_id) = parse_session_id_callback(data) else {
+        return;
+    };
+    tracing::debug!(
+        "[otb-bot] telegram: session callback id_prefix={} id_len={}",
+        session_id.chars().take(8).collect::<String>(),
+        session_id.len()
+    );
+    let context = match load_sessions_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, key)),
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    let Some(item) = context.items.iter().find(|item| item.id == session_id) else {
+        tracing::warn!(
+            "[otb-bot] telegram: session callback for unknown id (id_len={})",
+            session_id.len()
+        );
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "sessions.select_error")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    if let Err(err) =
+        crate::settings_current::write_current_session(&app_home, &item.id, &item.title, &context.worktree)
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected session: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "sessions.select_error")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!(
+        "[otb-bot] telegram: session selected id_prefix={} id_len={}",
+        item.id.chars().take(8).collect::<String>(),
+        item.id.len()
+    );
+    answer_callback(bot, query, None, false).await;
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let confirmation = crate::commands::render_session_selected(&item.title, Some(locale));
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `session:search*` tap (JS
+/// `handleSessionSearchCallback` parity, stateless Batch E1 follow-up).
+/// `session:search` / `session:search:again` ack the spinner and send the
+/// `sessions.search.prompt` text (the typed query returns as
+/// `/sessions <query>` command args — see [`sessions_search_view`]);
+/// `session:search:cancel` deletes the prompt message (Node `cancelMenu`
+/// parity). Stale `session:search:page:<n>` /
+/// `session:search:result:<n>` taps cannot resolve without the remembered
+/// query/ids, so they ack and re-prompt instead of guessing.
+async fn handle_session_search_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if data == SESSION_SEARCH_CALLBACK || data == SESSION_SEARCH_AGAIN_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "sessions.search.prompt"),
+                None,
+            )
+            .await;
+        }
+        return;
+    }
+    if data == SESSION_SEARCH_CANCEL_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: session search cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    if parse_session_search_page_callback(data).is_some()
+        || parse_session_search_result_callback(data).is_some()
+    {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "sessions.search.prompt"),
+                None,
+            )
+            .await;
+        }
+    }
+}
+
+/// Handle a `project:<id>` tap: persist it as `currentProject` (dropping
+/// the session, JS `setCurrentProject` parity) and confirm with the
+/// `projects.selected` template. Only the id prefix and length are ever
+/// logged — never values.
+async fn handle_project_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    // Page taps re-render the requested projects page (Node
+    // `project-selection-menu.ts` pager parity); the ack clears the spinner.
+    if let Some(page) = parse_project_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = projects_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let Some(project_id) = parse_project_id_callback(data) else {
+        return;
+    };
+    tracing::debug!(
+        "[otb-bot] telegram: project callback id_prefix={} id_len={}",
+        project_id.chars().take(8).collect::<String>(),
+        project_id.len()
+    );
+    let context = match load_projects_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, key)),
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    let Some(item) = context.items.iter().find(|item| item.id == project_id) else {
+        tracing::warn!(
+            "[otb-bot] telegram: project callback for unknown id (id_len={})",
+            project_id.len()
+        );
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "projects.select_error")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    if let Err(err) = crate::settings_current::write_current_project(
+        &app_home,
+        &item.id,
+        &item.worktree,
+        &item.name,
+    ) {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected project: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "projects.select_error")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!(
+        "[otb-bot] telegram: project selected id_prefix={} id_len={}",
+        item.id.chars().take(8).collect::<String>(),
+        item.id.len()
+    );
+    answer_callback(bot, query, None, false).await;
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let confirmation = crate::locale::translate(locale, "projects.selected").replace(
+        "{project}",
+        if item.name.trim().is_empty() {
+            &item.worktree
+        } else {
+            &item.name
+        },
+    );
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `projects:search*` tap (JS `handleProjectSearchCallback`
+/// parity, stateless Batch E1 follow-up). `projects:search` /
+/// `projects:search:again` ack the spinner and send the
+/// `projects.search.prompt` text (the typed query returns as
+/// `/projects <query>` command args — see [`projects_search_view`]);
+/// `projects:search:cancel` deletes the prompt message (Node `cancelMenu`
+/// parity). Stale `projects:search:page:<n>` /
+/// `projects:search:result:<n>` taps cannot resolve without the remembered
+/// query/ids, so they ack and re-prompt instead of guessing.
+async fn handle_project_search_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if data == PROJECT_SEARCH_CALLBACK || data == PROJECT_SEARCH_AGAIN_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "projects.search.prompt"),
+                None,
+            )
+            .await;
+        }
+        return;
+    }
+    if data == PROJECT_SEARCH_CANCEL_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: project search cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    if parse_project_search_page_callback(data).is_some()
+        || parse_project_search_result_callback(data).is_some()
+    {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "projects.search.prompt"),
+                None,
+            )
+            .await;
+        }
+    }
+}
+
+/// Handle a `worktree:<position>` tap: switch `currentProject.worktree` to
+/// the tapped row (dropping the session, JS worktree-select parity) and
+/// confirm with the `worktree.selected` template.
+async fn handle_worktree_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    // Page taps re-render the requested worktree page (Node
+    // `worktree-selection-menu.ts` pager parity); the ack clears the spinner.
+    if let Some(page) = parse_worktree_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = worktree_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let Some(position) = parse_worktree_index_callback(data) else {
+        return;
+    };
+    let context = match load_worktree_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, key)),
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    let Some(item) = context.items.get(position) else {
+        tracing::warn!("[otb-bot] telegram: worktree callback for unknown position");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "worktree.selection_missing_callback")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    // Already on this worktree: ack like the Node `already_selected` path.
+    if current.project_worktree.as_deref() == Some(item.path.as_str()) {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "worktree.already_selected_callback",
+            )),
+            true,
+        )
+        .await;
+        return;
+    }
+    if let Err(err) = crate::settings_current::write_current_project(
+        &app_home,
+        current.project_id.as_deref().unwrap_or(""),
+        &item.path,
+        current.project_name.as_deref().unwrap_or(""),
+    ) {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected worktree: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "worktree.select_error")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: worktree selected");
+    answer_callback(bot, query, None, false).await;
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let confirmation =
+        crate::locale::translate(locale, "worktree.selected").replace("{worktree}", &item.path);
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `recent:<position>` tap: resolve the row from a fresh recent
+/// list, persist it as the current session (JS recent-select parity), and
+/// confirm with the `sessions.selected` template.
+async fn handle_recent_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    // Page taps re-render the requested recent page (scaffold paging); the
+    // ack clears the spinner.
+    if let Some(page) = parse_recent_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = recent_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let Some(position) = parse_recent_index_callback(data) else {
+        return;
+    };
+    let items = load_recent_context().await;
+    let Some(item) = items.get(position) else {
+        tracing::warn!("[otb-bot] telegram: recent callback for unknown position");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "sessions.select_error")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    if let Err(err) = crate::settings_current::write_current_session(
+        &app_home,
+        &item.id,
+        &item.title,
+        &item.directory,
+    ) {
+        tracing::warn!("[otb-bot] telegram: cannot remember recent session: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "sessions.select_error")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!(
+        "[otb-bot] telegram: recent session selected id_prefix={} id_len={}",
+        item.id.chars().take(8).collect::<String>(),
+        item.id.len()
+    );
+    answer_callback(bot, query, None, false).await;
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let confirmation = crate::commands::render_session_selected(&item.title, Some(locale));
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: select confirmation failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `messages:*` tap: page taps re-render the requested list page
+/// (Node `message-history-menu.ts` pager parity); select taps re-fetch the
+/// current session's user messages and show the tapped one with the detail
+/// keyboard (`messages:revert` / `messages:fork` / `messages:back` /
+/// `messages:cancel`); revert posts the versioned revert endpoint and
+/// confirms with `messages.revert_success` (a rejected call renders the
+/// local `messages.revert_error` notice plus the list view); fork creates a
+/// forked session, persists it like `setCurrentSession`, and confirms with
+/// `messages.fork_success` (failures render `messages.fork_error`); back
+/// re-renders the list's first page; cancel acks and deletes the prompt
+/// message (Node `cancelMenu` parity). The spinner is always acked first.
+async fn handle_messages_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    // Detail actions carry the exact Node `MESSAGES_CALLBACK_*` shapes; the
+    // ack clears the spinner before the live fetch.
+    if is_messages_revert(data) {
+        answer_callback(bot, query, None, false).await;
+        handle_messages_revert(bot, locale, query).await;
+        return;
+    }
+    if is_messages_fork(data) {
+        answer_callback(bot, query, None, false).await;
+        handle_messages_fork(bot, locale, query).await;
+        return;
+    }
+    if is_messages_back(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = messages_view(locale, 0).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if is_messages_cancel(data) {
+        answer_callback(bot, query, None, false).await;
+        // Node `cancelMenu` deletes the prompt message; a gone message is
+        // not an error worth surfacing. Only ids are ever logged.
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    // Page taps re-render the requested messages page (Node
+    // `message-history-menu.ts` pager parity); the ack clears the spinner.
+    if let Some(page) = parse_message_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = messages_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let Some(position) = parse_message_select_callback(data) else {
+        return;
+    };
+    let context = match load_messages_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, key)),
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    let Some(item) = context.items.get(position) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "messages.page_empty_callback")),
+            true,
+        )
+        .await;
+        return;
+    };
+    answer_callback(bot, query, None, false).await;
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let detail = crate::commands::render_message_detail(item);
+    let keyboard = build_message_detail_keyboard(locale);
+    if let Err(err) = send_message_with_keyboard(bot, chat_id, &detail, keyboard).await {
+        tracing::warn!("[otb-bot] telegram: message detail failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `messages:revert` tap: re-fetch the list, recover the detail
+/// target from the detail message text, and post the versioned revert
+/// endpoint (JS `session.revert` parity). Success confirms with
+/// `messages.revert_success`; a missing target answers
+/// `messages.inactive_callback` plus the list view; a rejected endpoint
+/// (missing route or server error) renders the local
+/// `messages.revert_error` notice plus the list view. Only the message id
+/// length is ever logged — never values.
+async fn handle_messages_revert(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let context = match load_messages_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+            return;
+        }
+    };
+    let target = callback_message_text(query)
+        .and_then(|text| resolve_message_detail_index(text, &context.items))
+        .and_then(|index| context.items.get(index));
+    let Some(target) = target else {
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "messages.inactive_callback"),
+            None,
+        )
+        .await;
+        let (text, keyboard) = messages_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    tracing::debug!(
+        "[otb-bot] telegram: messages revert tap (id_len={})",
+        target.id.len()
+    );
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    match client
+        .revert_session(&context.session_id, &context.directory, &target.id)
+        .await
+    {
+        Ok(true) => {
+            let confirmation = crate::locale::translate(locale, "messages.revert_success")
+                .replace("{text}", &target.text);
+            reply_list_view(bot, chat_id, &confirmation, None).await;
+        }
+        Ok(false) | Err(_) => {
+            tracing::warn!("[otb-bot] telegram: messages revert failed");
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "messages.revert_error"),
+                None,
+            )
+            .await;
+            let (text, keyboard) = messages_view(locale, 0).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+    }
+}
+
+/// Handle a `messages:fork` tap: re-fetch the list, recover the detail
+/// target from the detail message text, and create a forked session
+/// (JS `session.fork` parity). The forked session is persisted like
+/// `setCurrentSession` and confirmed with `messages.fork_success`; a
+/// missing target answers `messages.inactive_callback` plus the list view;
+/// failures render `messages.fork_error`. Only id prefixes and lengths are
+/// ever logged — never values.
+async fn handle_messages_fork(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let context = match load_messages_context().await {
+        Ok(context) => context,
+        Err(key) => {
+            reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+            return;
+        }
+    };
+    let target = callback_message_text(query)
+        .and_then(|text| resolve_message_detail_index(text, &context.items))
+        .and_then(|index| context.items.get(index));
+    let Some(target) = target else {
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "messages.inactive_callback"),
+            None,
+        )
+        .await;
+        let (text, keyboard) = messages_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let forked = match client
+        .fork_session(&context.session_id, &context.directory, &target.id)
+        .await
+    {
+        Ok(forked) => forked,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: messages fork failed: {err}");
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "messages.fork_error"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    let (id, title) = session_identity_from_value(&forked);
+    if id.is_empty() {
+        tracing::warn!("[otb-bot] telegram: messages fork returned no id");
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "messages.fork_error"),
+            None,
+        )
+        .await;
+        return;
+    }
+    let app_home = crate::config::resolve_app_home();
+    if let Err(err) =
+        crate::settings_current::write_current_session(&app_home, &id, &title, &context.directory)
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember forked session: {err}");
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "messages.fork_error"),
+            None,
+        )
+        .await;
+        return;
+    }
+    tracing::info!(
+        "[otb-bot] telegram: messages fork created id_prefix={} id_len={}",
+        id.chars().take(8).collect::<String>(),
+        id.len()
+    );
+    let confirmation =
+        crate::locale::translate(locale, "messages.fork_success").replace("{text}", &target.text);
+    reply_list_view(bot, chat_id, &confirmation, None).await;
+}
+
+/// Live `/new` reply: create a session in the current project directory and
+/// remember it as `currentSession` (JS `new-command.ts` parity, minus the
+/// attach/keyboard side effects that need the dispatcher).
+/// No project → `new.project_not_selected`; create failure (or a bad write
+/// of the remembered session) → `new.create_error`; otherwise `new.created`.
+async fn new_reply(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return crate::locale::translate(locale, "new.project_not_selected");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let session = match client.create_session(&worktree, None).await {
+        Ok(session) => session,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: session create failed: {err}");
+            return crate::locale::translate(locale, "new.create_error");
+        }
+    };
+    let (id, title) = session_identity_from_value(&session);
+    if id.is_empty() {
+        tracing::warn!("[otb-bot] telegram: session create returned no id");
+        return crate::locale::translate(locale, "new.create_error");
+    }
+    if let Err(err) = crate::settings_current::write_current_session(&app_home, &id, &title, &worktree)
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember new session: {err}");
+        return crate::locale::translate(locale, "new.create_error");
+    }
+    crate::commands::render_new_created(&title, Some(locale))
+}
+
+/// Live `/status` reply: fresh health probe rendered through the JS-parity
+/// template (read-only; the token value is never logged).
+async fn status_reply(locale: &str) -> String {
+    // Credentials travel with the probe: without them a password-protected
+    // server answers 401 and the snapshot below correctly reads unavailable.
+    // `AppConfig::load` also pulls in the App Home `.env` first so the probe
+    // sees the same credentials Node uses; only status codes are ever logged.
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let probe = match client.health().await {
+        Ok(probe) => probe,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: status probe failed: {err}");
+            crate::opencode::HealthProbe {
+                ok: false,
+                version: None,
+            }
+        }
+    };
+    crate::commands::render_status(&build_status_snapshot(&probe), Some(locale))
+}
+
+/// Live `/tasklist` reply: sorted local-store list rendered through the
+/// JS-parity template (read-only; a missing or invalid store reads empty).
+/// Keeps the scaffold text-only: the open/delete/toggle keyboard needs a
+/// dispatcher and stays a follow-up.
+fn tasklist_reply(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    crate::commands::render_tasklist(&load_scheduled_task_items(&app_home), Some(locale))
+}
+
+/// Load scheduled tasks from `<app_home>/settings.json` (`scheduledTasks`,
+/// settings-store parity), tolerantly: a missing, unreadable, or invalid
+/// file (or a non-array value) yields an empty list. Sorts with the JS
+/// `sortTasks` parity helper. Only paths/error kinds are ever logged —
+/// never task values.
+fn load_scheduled_task_items(app_home: &std::path::Path) -> Vec<crate::commands::ScheduledTaskItem> {
+    let path = crate::settings_current::settings_file_path(app_home);
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) => {
+            tracing::debug!(
+                "[otb-bot] telegram: no task store at {} ({})",
+                path.display(),
+                err.kind()
+            );
+            return Vec::new();
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::debug!(
+                "[otb-bot] telegram: ignoring unparseable task store ({} bytes): {err}",
+                content.len()
+            );
+            return Vec::new();
+        }
+    };
+    let tasks = match value
+        .get("scheduledTasks")
+        .and_then(|tasks| tasks.as_array())
+    {
+        Some(tasks) => tasks,
+        None => return Vec::new(),
+    };
+    let items: Vec<crate::commands::ScheduledTaskItem> = tasks
+        .iter()
+        .filter_map(crate::commands::scheduled_task_item_from_value)
+        .collect();
+    crate::commands::sort_scheduled_tasks(items)
+}
+
+/// Live `/commands` reply: the current project's custom-command catalog
+/// (JS `commands-command.ts` parity: no project → `bot.project_not_selected`;
+/// fetch failure → `commands.fetch_error`; empty → `commands.empty`;
+/// otherwise the numbered text list for the requested page plus a keyboard
+/// with one `commands:select:<index>` button per row, optional
+/// `commands:page:<n>` pager buttons, and a `commands:cancel` button (Node
+/// `command-catalog-menu.ts` parity). Read-only.
+async fn commands_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::session_pick_catalog_gates::filter_command_catalog_items;
+    let (worktree, items) = match load_commands_catalog().await {
+        Ok(loaded) => loaded,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let _ = worktree;
+    let total = items.len();
+    let limit = crate::config::CATALOG_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &items[start.min(total)..end];
+    let text = crate::commands::render_catalog("commands", page_items, page, Some(locale));
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        Some(build_catalog_list_keyboard(
+            page_items,
+            start,
+            CatalogKind::Commands,
+            locale,
+            page,
+            total_pages,
+        ))
+    };
+    (text, keyboard)
+}
+
+/// Live `/skills` reply: same shape as [`commands_view`] over the skill
+/// catalog (JS `skills-catalog-command.ts` parity).
+async fn skills_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::session_pick_catalog_gates::filter_skills_catalog_items;
+    let (worktree, items) = match load_skills_catalog().await {
+        Ok(loaded) => loaded,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let _ = worktree;
+    let total = items.len();
+    let limit = crate::config::CATALOG_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &items[start.min(total)..end];
+    let text = crate::commands::render_catalog("skills", page_items, page, Some(locale));
+    let keyboard = if page_items.is_empty() {
+        None
+    } else {
+        Some(build_catalog_list_keyboard(
+            page_items,
+            start,
+            CatalogKind::Skills,
+            locale,
+            page,
+            total_pages,
+        ))
+    };
+    (text, keyboard)
+}
+
+/// Convert a `serde_json::Value` into the no-serde
+/// [`otb_core::session_pick_catalog_gates::CatalogJson`] shape for
+/// `parseMcpCatalogServers` (pure; testable). Numbers and bools collapse to
+/// `Null` (only `Str` payloads are ever inspected).
+fn catalog_json_from_value(value: &serde_json::Value) -> otb_core::session_pick_catalog_gates::CatalogJson {
+    use otb_core::session_pick_catalog_gates::CatalogJson as Json;
+    match value {
+        serde_json::Value::Null => Json::Null,
+        serde_json::Value::String(text) => Json::Str(text.clone()),
+        serde_json::Value::Array(items) => {
+            Json::Arr(items.iter().map(catalog_json_from_value).collect())
+        }
+        serde_json::Value::Object(map) => Json::Obj(
+            map.iter()
+                .map(|(key, item)| (key.clone(), catalog_json_from_value(item)))
+                .collect(),
+        ),
+        _ => Json::Null,
+    }
+}
+
+/// Live `/mcps` reply: the current project's MCP server statuses
+/// (JS `mcp-catalog-command.ts` parity: no project → `bot.project_not_selected`;
+/// fetch failure or an invalid shape → `mcps.fetch_error`; empty →
+/// `mcps.empty`; otherwise the numbered text list plus a keyboard with one
+/// `mcps:select:<index>` button per server and a cancel button (Node
+/// `mcp-catalog-menu.ts` parity). Read-only.
+async fn mcps_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let servers = match load_mcps_catalog().await {
+        Ok((_, servers)) => servers,
+        Err(key) => return (crate::locale::translate(locale, key), None),
+    };
+    let text = crate::commands::render_mcps(&servers, Some(locale));
+    let keyboard = if servers.is_empty() {
+        None
+    } else {
+        Some(build_mcps_list_keyboard(&servers, locale))
+    };
+    (text, keyboard)
+}
+
+/// Node `COMMANDS_CALLBACK_*` parity (`command-catalog-menu.ts`):
+/// list rows carry `commands:select:<globalIndex>`, pager rows carry
+/// `commands:page:<n>`, and the confirm row carries the exact
+/// `commands:execute` / `commands:cancel` shapes.
+pub const COMMANDS_CALLBACK_PREFIX: &str = "commands:";
+pub const COMMANDS_CALLBACK_SELECT_PREFIX: &str = "commands:select:";
+pub const COMMANDS_CALLBACK_PAGE_PREFIX: &str = "commands:page:";
+pub const COMMANDS_CALLBACK_CANCEL: &str = "commands:cancel";
+pub const COMMANDS_CALLBACK_EXECUTE: &str = "commands:execute";
+
+/// Node `SKILLS_CALLBACK_*` parity (`skills-catalog-menu.ts`): same shapes
+/// under the `skills:` prefix.
+pub const SKILLS_CALLBACK_PREFIX: &str = "skills:";
+pub const SKILLS_CALLBACK_SELECT_PREFIX: &str = "skills:select:";
+pub const SKILLS_CALLBACK_PAGE_PREFIX: &str = "skills:page:";
+pub const SKILLS_CALLBACK_CANCEL: &str = "skills:cancel";
+pub const SKILLS_CALLBACK_EXECUTE: &str = "skills:execute";
+
+/// Node `MCPS_CALLBACK_*` parity (`mcp-catalog-menu.ts`): detail rows carry
+/// `mcps:select:<index>`; the detail keyboard carries the exact
+/// `mcps:toggle` / `mcps:back` / `mcps:cancel` shapes.
+pub const MCPS_CALLBACK_PREFIX: &str = "mcps:";
+pub const MCPS_CALLBACK_SELECT_PREFIX: &str = "mcps:select:";
+pub const MCPS_CALLBACK_TOGGLE: &str = "mcps:toggle";
+pub const MCPS_CALLBACK_BACK: &str = "mcps:back";
+pub const MCPS_CALLBACK_CANCEL: &str = "mcps:cancel";
+
+/// Model/agent/variant callback prefixes (Node parity: the `MODEL_*`
+/// constants in `model-selection-menu.ts`, `"agent:"` in
+/// `agent-selection-menu.ts`, `"variant:"` in
+/// `variant-selection-menu.ts`). Values reuse
+/// `otb_core::agent_model_variant_gates` so the shapes cannot drift.
+pub const MODEL_LIST_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::MODEL_LIST_CALLBACK_PREFIX;
+pub const MODEL_PROVIDERS_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::MODEL_PROVIDERS_CALLBACK_PREFIX;
+pub const MODEL_PROVIDER_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::MODEL_PROVIDER_CALLBACK_PREFIX;
+pub const MODEL_PROVIDER_MODEL_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::MODEL_PROVIDER_MODEL_CALLBACK_PREFIX;
+pub const MODEL_SEARCH_CALLBACK: &str =
+    otb_core::agent_model_variant_gates::MODEL_SEARCH_CALLBACK;
+pub const MODEL_SEARCH_AGAIN_CALLBACK: &str =
+    otb_core::agent_model_variant_gates::MODEL_SEARCH_AGAIN_CALLBACK;
+pub const MODEL_SEARCH_CANCEL_CALLBACK: &str =
+    otb_core::agent_model_variant_gates::MODEL_SEARCH_CANCEL_CALLBACK;
+pub const MODEL_ROOT_CALLBACK: &str =
+    otb_core::agent_model_variant_gates::MODEL_ROOT_CALLBACK;
+/// Node `MODEL_SEARCH_RESULT_CALLBACK_PREFIX` parity
+/// (`model-selection-callback-handler.ts`): search-result picks carry
+/// `callback_data = "model:result:<index>"` — note the prefix is *not*
+/// `model:search:result:` (unlike the session/project search shapes).
+pub const MODEL_SEARCH_RESULT_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::MODEL_SEARCH_RESULT_CALLBACK_PREFIX;
+pub const AGENT_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::AGENT_CALLBACK_PREFIX;
+pub const VARIANT_CALLBACK_PREFIX: &str =
+    otb_core::agent_model_variant_gates::VARIANT_CALLBACK_PREFIX;
+
+/// Node `settings:*` callback shapes (parity with
+/// `src/bot/menus/settings-menu.ts` + `settings-callback-handler.ts`).
+/// Values reuse `otb_core::settings_callback_gates` so the shapes cannot
+/// drift.
+pub const SETTINGS_CALLBACK_PREFIX: &str =
+    otb_core::settings_callback_gates::SETTINGS_CALLBACK_PREFIX;
+pub const SETTINGS_COMPACT_OUTPUT_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_COMPACT_OUTPUT_CALLBACK;
+pub const SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_DELETE_PROGRESS_ON_FINISH_CALLBACK;
+pub const SETTINGS_THINKING_CONTENT_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_THINKING_CONTENT_CALLBACK;
+pub const SETTINGS_RESPONSE_STREAMING_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_RESPONSE_STREAMING_CALLBACK;
+pub const SETTINGS_DIFF_FILES_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_DIFF_FILES_CALLBACK;
+pub const SETTINGS_ASSISTANT_FOOTER_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_ASSISTANT_FOOTER_CALLBACK;
+pub const SETTINGS_PIN_SESSION_DASHBOARD_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_PIN_SESSION_DASHBOARD_CALLBACK;
+pub const SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_BACKGROUND_NOTIFICATIONS_CALLBACK;
+pub const SETTINGS_TTS_CALLBACK: &str = otb_core::settings_callback_gates::SETTINGS_TTS_CALLBACK;
+pub const SETTINGS_PROMPT_QUEUE_CALLBACK: &str =
+    otb_core::settings_callback_gates::SETTINGS_PROMPT_QUEUE_CALLBACK;
+
+/// Node `task:*` / `tasklist:*` callback shapes (parity with
+/// `src/bot/menus/scheduled-task-menu.ts` +
+/// `scheduled-task-callback-handler.ts`). Values reuse
+/// `otb_core::recent_scheduled_gates` so the shapes cannot drift.
+pub const TASK_RETRY_SCHEDULE_CALLBACK: &str =
+    otb_core::recent_scheduled_gates::TASK_RETRY_SCHEDULE_CALLBACK;
+pub const TASK_CANCEL_CALLBACK: &str = otb_core::recent_scheduled_gates::TASK_CANCEL_CALLBACK;
+pub const TASKLIST_CALLBACK_PREFIX: &str =
+    otb_core::recent_scheduled_gates::TASKLIST_CALLBACK_PREFIX;
+pub const TASKLIST_OPEN_PREFIX: &str = otb_core::recent_scheduled_gates::TASKLIST_OPEN_PREFIX;
+pub const TASKLIST_DELETE_PREFIX: &str =
+    otb_core::recent_scheduled_gates::TASKLIST_DELETE_PREFIX;
+pub const TASKLIST_TOGGLE_PREFIX: &str =
+    otb_core::recent_scheduled_gates::TASKLIST_TOGGLE_PREFIX;
+pub const TASKLIST_CANCEL_CALLBACK: &str =
+    otb_core::recent_scheduled_gates::TASKLIST_CANCEL_CALLBACK;
+
+/// Node `compact:*` callback shapes (parity with
+/// `src/bot/menus/context-control-menu.ts` +
+/// `context-control-callback-handler.ts`). Values reuse
+/// `otb_core::context_inline_gates` so the shapes cannot drift.
+pub const COMPACT_DETAILS_CALLBACK: &str =
+    otb_core::context_inline_gates::COMPACT_DETAILS_CALLBACK;
+pub const COMPACT_CONFIRM_CALLBACK: &str =
+    otb_core::context_inline_gates::COMPACT_CONFIRM_CALLBACK;
+
+/// Node `inline:cancel:*` + legacy `compact:cancel` shapes (parity with
+/// `src/bot/menus/inline-menu.ts` +
+/// `inline-menu-cancel-callback-handler.ts`). Values reuse
+/// `otb_core::inline_menu_gates` so the shapes cannot drift.
+pub const INLINE_MENU_CANCEL_PREFIX: &str =
+    otb_core::inline_menu_gates::INLINE_MENU_CANCEL_PREFIX;
+pub const LEGACY_CONTEXT_CANCEL_CALLBACK: &str =
+    otb_core::inline_menu_gates::LEGACY_CONTEXT_CANCEL_CALLBACK;
+
+/// Node `rename:cancel` shape (parity with `src/bot/menus/rename-menu.ts`
+/// + `rename-callback-handler.ts`). Value reuses
+/// `otb_core::rename_callback_gates` so the shape cannot drift.
+pub const RENAME_CANCEL_CALLBACK: &str = otb_core::rename_callback_gates::RENAME_CANCEL_CALLBACK;
+
+/// `true` for any `settings:*` payload (Node `startsWith(SETTINGS_CALLBACK_PREFIX)`
+/// guard in `settings-callback-handler.ts`).
+pub fn is_settings_callback(data: &str) -> bool {
+    otb_core::settings_callback_gates::handles_settings_callback(Some(data))
+}
+
+/// `true` for the exact `task:retry-schedule` payload (Node
+/// `data === TASK_RETRY_SCHEDULE_CALLBACK` branch).
+pub fn is_task_retry_schedule_callback(data: &str) -> bool {
+    data == TASK_RETRY_SCHEDULE_CALLBACK
+}
+
+/// `true` for the exact `task:cancel` payload (Node
+/// `data === TASK_CANCEL_CALLBACK` branch).
+pub fn is_task_cancel_callback(data: &str) -> bool {
+    data == TASK_CANCEL_CALLBACK
+}
+
+/// `true` for any `tasklist:*` payload (Node
+/// `startsWith(TASKLIST_CALLBACK_PREFIX)` guard in
+/// `handleTaskListCallback`).
+pub fn is_tasklist_callback(data: &str) -> bool {
+    otb_core::task_callback_gates::handles_tasklist_callback(Some(data))
+}
+
+/// Id behind a `tasklist:open:<id>` callback; `None` for a wrong prefix
+/// (Node open-slice parity; the store lookup rejects unknown ids).
+pub fn parse_tasklist_open_callback(data: &str) -> Option<String> {
+    otb_core::recent_scheduled_gates::parse_tasklist_open_callback(data)
+}
+
+/// Id behind a `tasklist:delete:<id>` callback; `None` for a wrong prefix
+/// (Node delete-slice parity).
+pub fn parse_tasklist_delete_callback(data: &str) -> Option<String> {
+    otb_core::recent_scheduled_gates::parse_tasklist_delete_callback(data)
+}
+
+/// Action + id behind a `tasklist:toggle:<on|off>:<id>` callback; `None`
+/// for a wrong prefix, a non-`on`/`off` action, or an empty id (Node
+/// toggle-gate parity).
+pub fn parse_tasklist_toggle_callback(
+    data: &str,
+) -> Option<otb_core::recent_scheduled_gates::TasklistToggle> {
+    otb_core::recent_scheduled_gates::parse_tasklist_toggle_callback(data)
+}
+
+/// `true` for the exact `tasklist:cancel` payload (Node
+/// `data === TASKLIST_CANCEL_CALLBACK` branch).
+pub fn is_tasklist_cancel_callback(data: &str) -> bool {
+    otb_core::recent_scheduled_gates::is_tasklist_cancel_callback(data)
+}
+
+/// Exact `compact:details` match (Node `data !== "compact:details"`
+/// return-false guard in `handleCompactDetails`).
+pub fn is_compact_details_callback(data: &str) -> bool {
+    data == COMPACT_DETAILS_CALLBACK
+}
+
+/// Exact `compact:confirm` match (Node `data !== "compact:confirm"`
+/// return-false guard in `handleCompactConfirm`).
+pub fn is_compact_confirm_callback(data: &str) -> bool {
+    data == COMPACT_CONFIRM_CALLBACK
+}
+
+/// Resolved menu kind behind an inline-menu cancel payload: the legacy
+/// `compact:cancel` reads as `context`, `inline:cancel:<kind>` reads as
+/// that kind when known, anything else yields `None` (Node
+/// `handleInlineMenuCancel` parity).
+pub fn parse_inline_cancel_callback(data: &str) -> Option<&str> {
+    otb_core::inline_menu_gates::resolve_inline_cancel_kind(Some(data))
+}
+
+/// Exact `rename:cancel` match (Node `data !== RENAME_CANCEL_CALLBACK`
+/// return-false guard in `handleRenameCancel`).
+pub fn is_rename_cancel_callback(data: &str) -> bool {
+    otb_core::rename_callback_gates::handles_rename_cancel_callback(Some(data))
+}
+
+/// Node `question:*` / `permission:*` callback prefixes (parity with
+/// `src/bot/menus/question-menu.ts` builders and
+/// `src/bot/menus/permission-menu.ts` buttons). Values reuse
+/// `otb_core::question_permission_inline_gates` so the shapes cannot
+/// drift.
+pub const QUESTION_CALLBACK_PREFIX: &str =
+    otb_core::question_permission_inline_gates::QUESTION_CALLBACK_PREFIX;
+pub const PERMISSION_CALLBACK_PREFIX: &str =
+    otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_PREFIX;
+pub const PERMISSION_CALLBACK_ONCE: &str =
+    otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_ONCE;
+pub const PERMISSION_CALLBACK_ALWAYS: &str =
+    otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_ALWAYS;
+pub const PERMISSION_CALLBACK_REJECT: &str =
+    otb_core::question_permission_inline_gates::PERMISSION_CALLBACK_REJECT;
+
+/// File-browser callback prefixes (Node `file-browser-menu.ts` parity).
+/// Values reuse `otb_core::file_browser_menu_gates` so the shapes cannot
+/// drift.
+pub const OPEN_CALLBACK_PREFIX: &str =
+    otb_core::file_browser_menu_gates::OPEN_CALLBACK_PREFIX;
+pub const OPEN_CALLBACK_NAV_PREFIX: &str =
+    otb_core::file_browser_menu_gates::OPEN_CALLBACK_NAV_PREFIX;
+pub const OPEN_CALLBACK_SELECT_PREFIX: &str =
+    otb_core::file_browser_menu_gates::OPEN_CALLBACK_SELECT_PREFIX;
+pub const OPEN_CALLBACK_PAGE_PREFIX: &str =
+    otb_core::file_browser_menu_gates::OPEN_CALLBACK_PAGE_PREFIX;
+pub const OPEN_CALLBACK_ROOTS: &str = otb_core::file_browser_menu_gates::OPEN_CALLBACK_ROOTS;
+pub const LS_CALLBACK_PREFIX: &str = otb_core::file_browser_menu_gates::LS_CALLBACK_PREFIX;
+pub const LS_CALLBACK_NAV_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_NAV_PREFIX;
+pub const LS_CALLBACK_FILE_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_FILE_PREFIX;
+pub const LS_CALLBACK_DOWNLOAD_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_DOWNLOAD_PREFIX;
+pub const LS_CALLBACK_ATTACH_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_ATTACH_PREFIX;
+pub const LS_CALLBACK_BACK_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_BACK_PREFIX;
+pub const LS_CALLBACK_PAGE_PREFIX: &str =
+    otb_core::file_browser_menu_gates::LS_CALLBACK_PAGE_PREFIX;
+
+/// Exact `open:roots` match (Node `data === OPEN_CALLBACK_ROOTS`).
+pub fn is_open_roots(data: &str) -> bool {
+    data == OPEN_CALLBACK_ROOTS
+}
+
+/// Parse an `open:nav:<path>` callback (pure; Node
+/// `decodeOpenPathFromCallback(OPEN_CALLBACK_NAV_PREFIX, ...)` parity,
+/// stateless: the full path travels inline, empty yields `None`).
+pub fn parse_open_nav_callback(data: &str) -> Option<&str> {
+    let path = data.strip_prefix(OPEN_CALLBACK_NAV_PREFIX)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Parse an `open:sel:<path>` callback (pure; same shape as the nav
+/// parser over the select prefix).
+pub fn parse_open_select_callback(data: &str) -> Option<&str> {
+    let path = data.strip_prefix(OPEN_CALLBACK_SELECT_PREFIX)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Split a `<path>|<page>` payload at the last `|` (pure; Node
+/// `decodePathWithPageCallback` `lastIndexOf` parity). The page must be
+/// digits-only; an empty path or a missing separator yields `None`.
+fn split_path_page_payload(rest: &str) -> Option<(String, usize)> {
+    let (path, page_text) = rest.rsplit_once('|')?;
+    if path.is_empty() || page_text.is_empty() || !page_text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((path.to_string(), page_text.parse::<usize>().ok()?))
+}
+
+/// Parse an `open:pg:<path>|<page>` callback (pure; Node
+/// `decodeOpenPaginationCallback` parity, digits-only page).
+pub fn parse_open_page_callback(data: &str) -> Option<(String, usize)> {
+    let rest = data.strip_prefix(OPEN_CALLBACK_PAGE_PREFIX)?;
+    split_path_page_payload(rest)
+}
+
+/// Parse an `ls:nav:<path>` callback (pure; Node
+/// `decodeLsPathFromCallback(LS_CALLBACK_NAV_PREFIX, ...)` parity).
+pub fn parse_ls_nav_callback(data: &str) -> Option<&str> {
+    let path = data.strip_prefix(LS_CALLBACK_NAV_PREFIX)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Parse an `ls:attach:<path>` callback (pure; Node
+/// `decodeLsAttachCallback` parity).
+pub fn parse_ls_attach_callback(data: &str) -> Option<&str> {
+    let path = data.strip_prefix(LS_CALLBACK_ATTACH_PREFIX)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Parse an `ls:download:<path>` callback (pure; same non-page shape
+/// over the download prefix).
+pub fn parse_ls_download_callback(data: &str) -> Option<&str> {
+    let path = data.strip_prefix(LS_CALLBACK_DOWNLOAD_PREFIX)?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Parse an `ls:pg:<path>|<page>` callback (pure; Node
+/// `decodeLsPaginationCallback` parity).
+pub fn parse_ls_page_callback(data: &str) -> Option<(String, usize)> {
+    let rest = data.strip_prefix(LS_CALLBACK_PAGE_PREFIX)?;
+    split_path_page_payload(rest)
+}
+
+/// Parse an `ls:file:<path>|<page>` callback (pure; Node
+/// `decodeLsFileCallback` parity).
+pub fn parse_ls_file_callback(data: &str) -> Option<(String, usize)> {
+    let rest = data.strip_prefix(LS_CALLBACK_FILE_PREFIX)?;
+    split_path_page_payload(rest)
+}
+
+/// Parse an `ls:back:<path>|<page>` callback (pure; Node
+/// `decodeLsBackCallback` parity).
+pub fn parse_ls_back_callback(data: &str) -> Option<(String, usize)> {
+    let rest = data.strip_prefix(LS_CALLBACK_BACK_PREFIX)?;
+    split_path_page_payload(rest)
+}
+
+/// Truncate an inline-button label to the 64-char Telegram budget (pure;
+/// Node `truncateLabel` parity: keep head + `...`).
+fn truncate_browser_label(label: &str) -> String {
+    const LIMIT: usize = 64;
+    if label.chars().count() <= LIMIT {
+        return label.to_string();
+    }
+    let kept: String = label.chars().take(LIMIT - 3).collect();
+    format!("{kept}...")
+}
+
+/// One button row per browser root: `"📂 display"` with
+/// `callback_data = "open:nav:<root>"`, plus a lone
+/// `inline:cancel:open` row (pure; Node `buildOpenRootsKeyboard`
+/// parity).
+pub fn build_open_roots_keyboard(
+    roots: &[String],
+    home: &str,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    use otb_core::file_browser_service_gates::path_to_display_path;
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = roots
+        .iter()
+        .map(|root| {
+            let label = truncate_browser_label(&format!("📂 {}", path_to_display_path(root, home)));
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{OPEN_CALLBACK_NAV_PREFIX}{root}"),
+            )]
+        })
+        .collect();
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "inline.button.cancel"),
+        otb_core::inline_menu_gates::inline_cancel_callback_data("open"),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Browse keyboard for one `/open` page (pure; Node
+/// `buildOpenBrowseKeyboard` parity): one `open:nav:<full>` row per
+/// subdirectory, an up (`open:nav:<parent>`) / roots (`open:roots`) row
+/// when applicable, an `open:pg:<current>|<n>` pager row when more than
+/// one page exists, then the `open:sel:<current>` select row and the
+/// `inline:cancel:open` row.
+#[allow(clippy::too_many_arguments)]
+pub fn build_open_browse_keyboard(
+    entries: &[String],
+    current_path: &str,
+    page: usize,
+    total_pages: usize,
+    has_parent: bool,
+    is_allowed_root: bool,
+    show_roots: bool,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    use otb_core::file_browser_service_gates::{join_path, parent_path};
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = entries
+        .iter()
+        .map(|name| {
+            let full = join_path(current_path, name);
+            let label =
+                truncate_browser_label(&otb_core::file_browser_service_gates::build_entry_label(name));
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{OPEN_CALLBACK_NAV_PREFIX}{full}"),
+            )]
+        })
+        .collect();
+    let at_root = is_allowed_root;
+    let show_up = has_parent && !at_root;
+    if show_up || show_roots {
+        let mut nav: Vec<InlineKeyboardButton> = Vec::new();
+        if show_up {
+            nav.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.back"),
+                format!(
+                    "{OPEN_CALLBACK_NAV_PREFIX}{}",
+                    parent_path(current_path)
+                ),
+            ));
+        }
+        if show_roots {
+            nav.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.roots"),
+                OPEN_CALLBACK_ROOTS.to_string(),
+            ));
+        }
+        if !nav.is_empty() {
+            rows.push(nav);
+        }
+    }
+    if total_pages > 1 {
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.prev_page"),
+                format!("{OPEN_CALLBACK_PAGE_PREFIX}{current_path}|{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.next_page"),
+                format!("{OPEN_CALLBACK_PAGE_PREFIX}{current_path}|{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "open.select_current"),
+        format!("{OPEN_CALLBACK_SELECT_PREFIX}{current_path}"),
+    )]);
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "inline.button.cancel"),
+        otb_core::inline_menu_gates::inline_cancel_callback_data("open"),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Browse keyboard for one `/ls` page (pure; Node `buildLsBrowseKeyboard`
+/// parity): directories carry `ls:nav:<full>`, files carry
+/// `ls:file:<full>|<page>`; an up row (`ls:nav:<parent>`) appears for a
+/// non-root parent, then the `ls:pg:<current>|<n>` pager and the
+/// `inline:cancel:ls` row.
+pub fn build_ls_browse_keyboard(
+    entries: &[otb_core::file_browser_service_gates::LsEntry],
+    current_path: &str,
+    page: usize,
+    total_pages: usize,
+    has_parent: bool,
+    is_project_root: bool,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    use otb_core::file_browser_service_gates::parent_path;
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = entries
+        .iter()
+        .map(|entry| {
+            let glyph = if entry.is_dir { "📁" } else { "📄" };
+            let label = truncate_browser_label(&format!("{glyph} {}", entry.name));
+            let data = if entry.is_dir {
+                format!("{LS_CALLBACK_NAV_PREFIX}{}", entry.full_path)
+            } else {
+                format!("{LS_CALLBACK_FILE_PREFIX}{}|{page}", entry.full_path)
+            };
+            vec![InlineKeyboardButton::callback(label, data)]
+        })
+        .collect();
+    if has_parent && !is_project_root {
+        rows.push(vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "open.back"),
+            format!(
+                "{LS_CALLBACK_NAV_PREFIX}{}",
+                parent_path(current_path)
+            ),
+        )]);
+    }
+    if total_pages > 1 {
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.prev_page"),
+                format!("{LS_CALLBACK_PAGE_PREFIX}{current_path}|{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "open.next_page"),
+                format!("{LS_CALLBACK_PAGE_PREFIX}{current_path}|{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "inline.button.cancel"),
+        otb_core::inline_menu_gates::inline_cancel_callback_data("ls"),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Detail keyboard for one `/ls` file (pure; Node
+/// `buildLsFileDetailsKeyboard` parity): an attach row only when the
+/// file may be attached, then the download row, the
+/// `ls:back:<parent>|<page>` row, and the `inline:cancel:ls` row.
+pub fn build_ls_file_keyboard(
+    file_path: &str,
+    parent_path_value: &str,
+    page: usize,
+    can_attach: bool,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    if can_attach {
+        rows.push(vec![InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "ls.file.attach"),
+            format!("{LS_CALLBACK_ATTACH_PREFIX}{file_path}"),
+        )]);
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "ls.file.download"),
+        format!("{LS_CALLBACK_DOWNLOAD_PREFIX}{file_path}"),
+    )]);
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "ls.file.back"),
+        format!("{LS_CALLBACK_BACK_PREFIX}{parent_path_value}|{page}"),
+    )]);
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "inline.button.cancel"),
+        otb_core::inline_menu_gates::inline_cancel_callback_data("ls"),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Parse a `commands:select:<n>` callback into the global catalog position
+/// (pure; Node `parseCommandSelectCallback` parity: digits-only,
+/// non-negative; page callbacks never leak in through this prefix).
+pub fn parse_command_select_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(COMMANDS_CALLBACK_SELECT_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `commands:page:<n>` callback into the page number (pure; Node
+/// `parseCommandPageCallback` parity).
+pub fn parse_command_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(COMMANDS_CALLBACK_PAGE_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Exact `commands:cancel` match (Node `data === COMMANDS_CALLBACK_CANCEL`).
+pub fn is_commands_cancel(data: &str) -> bool {
+    data == COMMANDS_CALLBACK_CANCEL
+}
+
+/// Exact `commands:execute` match (Node `data === COMMANDS_CALLBACK_EXECUTE`).
+pub fn is_commands_execute(data: &str) -> bool {
+    data == COMMANDS_CALLBACK_EXECUTE
+}
+
+/// Parse a `skills:select:<n>` callback (pure; Node
+/// `parseSkillSelectCallback` parity).
+pub fn parse_skill_select_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(SKILLS_CALLBACK_SELECT_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Parse a `skills:page:<n>` callback (pure; Node `parseSkillPageCallback`
+/// parity).
+pub fn parse_skill_page_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(SKILLS_CALLBACK_PAGE_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Exact `skills:cancel` match.
+pub fn is_skills_cancel(data: &str) -> bool {
+    data == SKILLS_CALLBACK_CANCEL
+}
+
+/// Exact `skills:execute` match.
+pub fn is_skills_execute(data: &str) -> bool {
+    data == SKILLS_CALLBACK_EXECUTE
+}
+
+/// Parse a `mcps:select:<n>` callback (pure; Node `parseMcpSelectCallback`
+/// parity).
+pub fn parse_mcp_select_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(MCPS_CALLBACK_SELECT_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Exact `mcps:toggle` match.
+pub fn is_mcp_toggle(data: &str) -> bool {
+    data == MCPS_CALLBACK_TOGGLE
+}
+
+/// Exact `mcps:back` match.
+pub fn is_mcp_back(data: &str) -> bool {
+    data == MCPS_CALLBACK_BACK
+}
+
+/// Exact `mcps:cancel` match.
+pub fn is_mcp_cancel(data: &str) -> bool {
+    data == MCPS_CALLBACK_CANCEL
+}
+
+/// Parse an `agent:<name>` callback into the agent name (pure; Node
+/// `agent-selection-callback-handler.ts` `startsWith("agent:")` parity; an
+/// empty name yields `None`).
+pub fn parse_agent_callback(data: &str) -> Option<&str> {
+    let name = data.strip_prefix(AGENT_CALLBACK_PREFIX)?;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
+/// Parse a `variant:<id>` callback into the variant id (pure; Node
+/// `variant-selection-callback-handler.ts` parity; an empty id yields
+/// `None`).
+pub fn parse_variant_callback(data: &str) -> Option<&str> {
+    let id = data.strip_prefix(VARIANT_CALLBACK_PREFIX)?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(id)
+}
+
+/// `true` for any `question:*` payload (Node `startsWith("question:")`
+/// guard in `question-callback-handler.ts`).
+pub fn is_question_callback(data: &str) -> bool {
+    otb_core::question_permission_inline_gates::is_question_callback(data)
+}
+
+/// Parse a `question:*` callback into its action + indexes (pure; Node
+/// `handleQuestionCallback` dispatch parity:
+/// `select:<q>:<o>`, `submit:<q>`, `custom:<q>`, `toggle_custom:<q>`,
+/// `cancel:<q>`; anything else yields `None`).
+pub fn parse_question_callback(
+    data: &str,
+) -> Option<otb_core::question_permission_inline_gates::QuestionCallback> {
+    otb_core::question_permission_inline_gates::parse_question_callback(data)
+}
+
+/// `true` for any `permission:*` payload (Node `startsWith("permission:")`
+/// guard in `permission-callback-handler.ts`).
+pub fn is_permission_callback(data: &str) -> bool {
+    otb_core::question_permission_inline_gates::is_permission_callback(data)
+}
+
+/// Which reply a `permission:*` payload carries; `None` for anything but
+/// `once` / `always` / `reject` (Node `isPermissionReply` action gate).
+pub fn classify_permission_callback(
+    data: &str,
+) -> Option<otb_core::question_permission_inline_gates::PermissionReply> {
+    otb_core::question_permission_inline_gates::classify_permission_callback(data)
+}
+
+/// Parse a `model:list:<kind>:<n>` callback into `(kind, index)` (pure; Node
+/// `resolveModelListCallback` shape parity: `favorites` or `recent`,
+/// digits-only index).
+pub fn parse_model_list_callback(data: &str) -> Option<(&str, usize)> {
+    let rest = data.strip_prefix(MODEL_LIST_CALLBACK_PREFIX)?;
+    let mut parts = rest.split(':');
+    let kind = parts.next()?;
+    let index_text = parts.next()?;
+    if parts.next().is_some() || index_text.is_empty() {
+        return None;
+    }
+    if kind != "favorites" && kind != "recent" {
+        return None;
+    }
+    if !index_text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((kind, index_text.parse::<usize>().ok()?))
+}
+
+/// Parse a `model:providers:<n>` callback (pure; delegates to the core
+/// `parseProvidersPageCallback` gate).
+pub fn parse_model_providers_page_callback(data: &str) -> Option<usize> {
+    otb_core::agent_model_variant_gates::parse_providers_page_callback(data)
+        .and_then(|page| usize::try_from(page).ok())
+}
+
+/// Parse a `model:provider:<providerIndex>:<page>` callback (pure;
+/// delegates to the core `parseProviderCallback` gate).
+pub fn parse_model_provider_callback(data: &str) -> Option<(usize, usize)> {
+    let (provider_index, page) =
+        otb_core::agent_model_variant_gates::parse_provider_callback(data)?;
+    Some((
+        usize::try_from(provider_index).ok()?,
+        usize::try_from(page).ok()?,
+    ))
+}
+
+/// Parse a `model:pick:<n>` callback (pure; delegates to the core
+/// `parseProviderModelCallback` gate).
+pub fn parse_model_pick_callback(data: &str) -> Option<usize> {
+    otb_core::agent_model_variant_gates::parse_provider_model_callback(data)
+        .and_then(|index| usize::try_from(index).ok())
+}
+
+/// Parse a `model:result:<n>` search-result pick into the result index
+/// (pure; Node `parseCallbackIndex(data,
+/// MODEL_SEARCH_RESULT_CALLBACK_PREFIX)` parity: digits-only, empty
+/// yields `None`). `"model:search:result:<n>"` is *not* a Node shape and
+/// yields `None`.
+pub fn parse_model_search_result_callback(data: &str) -> Option<usize> {
+    let raw = data.strip_prefix(MODEL_SEARCH_RESULT_CALLBACK_PREFIX)?;
+    if raw.is_empty() || !raw.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    raw.parse::<usize>().ok()
+}
+
+/// Build a self-contained legacy model pick `model:<provider>:<model>`
+/// (pure; Node `parseLegacyModelCallback` shape parity: the provider is the
+/// segment after `model:`, the model is the `:`-joined tail so ids
+/// containing colons round-trip). Search-result buttons use this shape so
+/// taps resolve without remembered search state (see [`model_search_view`]).
+pub fn model_legacy_callback(provider_id: &str, model_id: &str) -> String {
+    format!("model:{provider_id}:{model_id}")
+}
+
+/// Which catalog a list keyboard belongs to (select/cancel/execute shapes
+/// differ only by prefix).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CatalogKind {
+    Commands,
+    Skills,
+}
+
+/// One button row per catalog entry: `"/{name} - {desc}"` capped at 64
+/// chars with `callback_data = "<prefix>:select:<globalIndex>"` (pure;
+/// Node `formatCommandButtonLabel` / `formatSkillButtonLabel` parity: the
+/// description falls back to the `no_description` template). A trailing
+/// pager row carries `<prefix>:page:<n>` buttons when more than one page
+/// exists, then a lone cancel row carries the exact `<prefix>cancel` shape.
+pub fn build_catalog_list_keyboard(
+    items: &[otb_core::session_pick_catalog_gates::CatalogEntry],
+    global_offset: usize,
+    kind: CatalogKind,
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let (select_prefix, page_prefix, cancel) = match kind {
+        CatalogKind::Commands => (
+            COMMANDS_CALLBACK_SELECT_PREFIX,
+            COMMANDS_CALLBACK_PAGE_PREFIX,
+            COMMANDS_CALLBACK_CANCEL,
+        ),
+        CatalogKind::Skills => (
+            SKILLS_CALLBACK_SELECT_PREFIX,
+            SKILLS_CALLBACK_PAGE_PREFIX,
+            SKILLS_CALLBACK_CANCEL,
+        ),
+    };
+    let no_description = match kind {
+        CatalogKind::Commands => crate::locale::translate(locale, "commands.no_description"),
+        CatalogKind::Skills => crate::locale::translate(locale, "skills.no_description"),
+    };
+    let button_text = match kind {
+        CatalogKind::Commands => crate::locale::translate(locale, "commands.button.cancel"),
+        CatalogKind::Skills => crate::locale::translate(locale, "skills.button.cancel"),
+    };
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let description = item
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|description| !description.is_empty())
+                .unwrap_or(&no_description);
+            let raw_label = format!("/{name} - {description}", name = item.name);
+            let label = if raw_label.chars().count() <= 64 {
+                raw_label
+            } else {
+                let kept: String = raw_label.chars().take(61).collect();
+                format!("{kept}...")
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{select_prefix}{}", global_offset + index),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        let (prev_label, next_label) = match kind {
+            CatalogKind::Commands => (
+                crate::locale::translate(locale, "commands.button.prev_page"),
+                crate::locale::translate(locale, "commands.button.next_page"),
+            ),
+            CatalogKind::Skills => (
+                crate::locale::translate(locale, "skills.button.prev_page"),
+                crate::locale::translate(locale, "skills.button.next_page"),
+            ),
+        };
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                prev_label,
+                format!("{page_prefix}{}", page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                next_label,
+                format!("{page_prefix}{}", page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        button_text,
+        cancel.to_string(),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Confirm keyboard for a selected command/skill (Node
+/// `buildCommandsConfirmKeyboard` / `buildSkillsConfirmKeyboard` parity):
+/// `[Execute, Cancel]` sharing one row with the exact
+/// `<prefix>execute` / `<prefix>cancel` shapes (pure).
+pub fn build_catalog_confirm_keyboard(kind: CatalogKind, locale: &str) -> InlineKeyboardMarkup {
+    let (execute_label, cancel_label, execute, cancel) = match kind {
+        CatalogKind::Commands => (
+            crate::locale::translate(locale, "commands.button.execute"),
+            crate::locale::translate(locale, "commands.button.cancel"),
+            COMMANDS_CALLBACK_EXECUTE,
+            COMMANDS_CALLBACK_CANCEL,
+        ),
+        CatalogKind::Skills => (
+            crate::locale::translate(locale, "skills.button.execute"),
+            crate::locale::translate(locale, "skills.button.cancel"),
+            SKILLS_CALLBACK_EXECUTE,
+            SKILLS_CALLBACK_CANCEL,
+        ),
+    };
+    InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback(execute_label, execute.to_string()),
+        InlineKeyboardButton::callback(cancel_label, cancel.to_string()),
+    ]])
+}
+
+/// One button row per MCP server: `"{emoji} {name}"` capped at 64 chars
+/// with `callback_data = "mcps:select:<index>"`, plus a lone cancel row
+/// (pure; Node `buildMcpsListKeyboard` parity).
+pub fn build_mcps_list_keyboard(
+    servers: &[otb_core::session_pick_catalog_gates::McpCatalogServerItem],
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = servers
+        .iter()
+        .enumerate()
+        .map(|(index, server)| {
+            let raw_label = format!("{} {}", crate::commands::mcp_status_glyph(server.status.name), server.name);
+            let label = if raw_label.chars().count() <= 64 {
+                raw_label
+            } else {
+                let kept: String = raw_label.chars().take(61).collect();
+                format!("{kept}...")
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{MCPS_CALLBACK_SELECT_PREFIX}{index}"),
+            )]
+        })
+        .collect();
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "inline.button.cancel"),
+        MCPS_CALLBACK_CANCEL.to_string(),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Detail keyboard for one MCP server (Node `buildMcpsDetailKeyboard`
+/// parity): an enable/disable toggle row only for `connected` / `disabled` /
+/// `failed` states, then a `[back, cancel]` row sharing one line (pure).
+pub fn build_mcp_detail_keyboard(
+    server: &otb_core::session_pick_catalog_gates::McpCatalogServerItem,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    use otb_core::session_pick_catalog_gates::McpStatusName as Name;
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    let toggle = match server.status.name {
+        Name::Connected => Some(crate::locale::translate(locale, "mcps.button.disable")),
+        Name::Disabled | Name::Failed => {
+            Some(crate::locale::translate(locale, "mcps.button.enable"))
+        }
+        Name::NeedsAuth | Name::NeedsClientRegistration => None,
+    };
+    if let Some(label) = toggle {
+        rows.push(vec![InlineKeyboardButton::callback(
+            label,
+            MCPS_CALLBACK_TOGGLE.to_string(),
+        )]);
+    }
+    rows.push(vec![
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "mcps.button.back"),
+            MCPS_CALLBACK_BACK.to_string(),
+        ),
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "inline.button.cancel"),
+            MCPS_CALLBACK_CANCEL.to_string(),
+        ),
+    ]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per agent: `"[✅ ]display"` with
+/// `callback_data = "agent:<name>"` (pure; the display name reuses
+/// `getAgentDisplayName` parity).
+pub fn build_agents_keyboard(
+    items: &[crate::commands::AgentListItem],
+    current: Option<&str>,
+) -> InlineKeyboardMarkup {
+    let rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .map(|item| {
+            let display = otb_core::types_config::get_agent_display_name(&item.name);
+            let label = if current == Some(item.name.as_str()) {
+                format!("✅ {display}")
+            } else {
+                display
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{AGENT_CALLBACK_PREFIX}{}", item.name),
+            )]
+        })
+        .collect();
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per model: `"[✅ ]model"` with
+/// `callback_data = "model:pick:<globalIndex>"` (pure; Node
+/// `buildProviderModelsMenuView` label parity).
+pub fn build_models_keyboard(
+    items: &[crate::commands::ModelListItem],
+    global_offset: usize,
+    current: Option<(&str, &str)>,
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+    providers_page: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let active = current == Some((item.provider_id.as_str(), item.model_id.as_str()));
+            let label = if active {
+                format!("✅ {}", item.model_id)
+            } else {
+                item.model_id.clone()
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                format!("{MODEL_PROVIDER_MODEL_CALLBACK_PREFIX}{}", global_offset + index),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let pager: Vec<InlineKeyboardButton> = Vec::new();
+        // Pager callbacks keep the provider context (Node
+        // `buildProviderModelsMenuView` parity:
+        // `model:provider:<providerIndex>:<page>`); the provider index is
+        // recovered from the message at tap time, so the scaffold re-uses
+        // page 0's provider row here and the handler re-resolves it.
+        // To stay stateless the pager is omitted when the provider index
+        // is unknown; callers pass it through `providers_page` only for the
+        // back button below.
+        let _ = pager;
+        let _ = page;
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "model.button.back"),
+        format!("{MODEL_PROVIDERS_CALLBACK_PREFIX}{providers_page}"),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per provider: `"{name} ({count})"` with
+/// `callback_data = "model:provider:<globalIndex>:0"` (pure; Node
+/// `buildProvidersMenuView` parity), plus pager rows and a back button to
+/// `model:root`.
+pub fn build_providers_keyboard(
+    items: &[crate::commands::ProviderListItem],
+    global_offset: usize,
+    locale: &str,
+    page: usize,
+    total_pages: usize,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            vec![InlineKeyboardButton::callback(
+                otb_core::agent_model_variant_gates::provider_row_label(
+                    &item.name,
+                    item.model_count as u32,
+                ),
+                otb_core::agent_model_variant_gates::provider_callback(global_offset + index),
+            )]
+        })
+        .collect();
+    if total_pages > 1 {
+        let page = clamp_page_index(page, total_pages);
+        let mut pager: Vec<InlineKeyboardButton> = Vec::new();
+        if page > 0 {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "model.providers.prev_page"),
+                otb_core::agent_model_variant_gates::providers_page_callback(page - 1),
+            ));
+        }
+        if page + 1 < total_pages {
+            pager.push(InlineKeyboardButton::callback(
+                crate::locale::translate(locale, "model.providers.next_page"),
+                otb_core::agent_model_variant_gates::providers_page_callback(page + 1),
+            ));
+        }
+        if !pager.is_empty() {
+            rows.push(pager);
+        }
+    }
+    rows.push(vec![InlineKeyboardButton::callback(
+        crate::locale::translate(locale, "model.button.back"),
+        MODEL_ROOT_CALLBACK.to_string(),
+    )]);
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// One button row per variant with `callback_data = "variant:<id>"` (pure;
+/// Node `buildVariantSelectionMenu` parity: the active variant keeps a `✅`
+/// mark and the display name is capitalized).
+pub fn build_variants_keyboard(
+    variants: &[String],
+    current: &str,
+) -> InlineKeyboardMarkup {
+    let rows: Vec<Vec<InlineKeyboardButton>> = variants
+        .iter()
+        .map(|variant| {
+            let display =
+                otb_core::agent_model_variant_gates::format_variant_for_display(variant);
+            let label = if variant == current {
+                format!("✅ {display}")
+            } else {
+                display
+            };
+            vec![InlineKeyboardButton::callback(
+                label,
+                otb_core::agent_model_variant_gates::build_variant_callback(variant),
+            )]
+        })
+        .collect();
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Root model keyboard: `[Search, Providers]` on the first row plus one
+/// `model:list:favorites:<globalIndex>` button per model row (pure; Node
+/// `buildModelSelectionMenu` parity minus the recent section, which the
+/// scaffold folds into the same flat list).
+pub fn build_model_root_keyboard(
+    items: &[crate::commands::ModelListItem],
+    current: Option<(&str, &str)>,
+    locale: &str,
+) -> InlineKeyboardMarkup {
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = vec![vec![
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "model.search.button"),
+            MODEL_SEARCH_CALLBACK.to_string(),
+        ),
+        InlineKeyboardButton::callback(
+            crate::locale::translate(locale, "model.providers.button"),
+            format!("{MODEL_PROVIDERS_CALLBACK_PREFIX}0"),
+        ),
+    ]];
+    rows.extend(items.iter().enumerate().map(|(index, item)| {
+        let active = current == Some((item.provider_id.as_str(), item.model_id.as_str()));
+        vec![InlineKeyboardButton::callback(
+            otb_core::agent_model_variant_gates::model_list_button_label(
+                &item.provider_id,
+                &item.model_id,
+                "⭐",
+                active,
+            ),
+            otb_core::agent_model_variant_gates::build_model_list_callback(
+                otb_core::agent_model_variant_gates::ModelListKind::Favorites,
+                index,
+            ),
+        )]
+    }));
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Loaded command catalog: the project worktree plus the filtered entries
+/// in catalog order (the full list is kept so later pages and select taps
+/// resolve; paging slices per page in [`commands_view`]).
+async fn load_commands_catalog() -> Result<
+    (
+        String,
+        Vec<otb_core::session_pick_catalog_gates::CatalogEntry>,
+    ),
+    &'static str,
+> {
+    use otb_core::session_pick_catalog_gates::filter_command_catalog_items;
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("bot.project_not_selected");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_commands(&worktree).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: commands list failed: {err}");
+            return Err("commands.fetch_error");
+        }
+    };
+    let raws: Vec<_> = raw
+        .iter()
+        .filter_map(crate::commands::raw_catalog_item_from_value)
+        .collect();
+    Ok((worktree, filter_command_catalog_items(&raws)))
+}
+
+/// Loaded skill catalog (same shape as [`load_commands_catalog`]).
+async fn load_skills_catalog() -> Result<
+    (
+        String,
+        Vec<otb_core::session_pick_catalog_gates::CatalogEntry>,
+    ),
+    &'static str,
+> {
+    use otb_core::session_pick_catalog_gates::filter_skills_catalog_items;
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("bot.project_not_selected");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_skills(&worktree).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: skills list failed: {err}");
+            return Err("skills.fetch_error");
+        }
+    };
+    let raws: Vec<_> = raw
+        .iter()
+        .filter_map(crate::commands::raw_catalog_item_from_value)
+        .collect();
+    Ok((worktree, filter_skills_catalog_items(&raws)))
+}
+
+/// Loaded MCP catalog: the project worktree plus the parsed servers in
+/// catalog order. Fetch failure or an invalid shape yields the
+/// `mcps.fetch_error` key.
+async fn load_mcps_catalog() -> Result<
+    (
+        String,
+        Vec<otb_core::session_pick_catalog_gates::McpCatalogServerItem>,
+    ),
+    &'static str,
+> {
+    use otb_core::session_pick_catalog_gates::parse_mcp_catalog_servers;
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return Err("bot.project_not_selected");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.mcp_status(&worktree).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: mcp status failed: {err}");
+            return Err("mcps.fetch_error");
+        }
+    };
+    let Some(servers) = parse_mcp_catalog_servers(&catalog_json_from_value(&raw)) else {
+        tracing::warn!("[otb-bot] telegram: mcp status returned an invalid shape");
+        return Err("mcps.fetch_error");
+    };
+    Ok((worktree, servers))
+}
+
+/// Resolve which catalog server a toggle tap targets by re-rendering each
+/// candidate detail and comparing against the detail message text (pure;
+/// mirrors [`resolve_message_detail_index`]).
+///
+/// SCAFFOLD DEVIATION: Node remembers the `serverName` in its interaction
+/// state (`McpsDetailMetadata`), so its toggle tap carries no payload. The
+/// scaffold keeps no per-chat interaction memory, so the target is
+/// recovered from the detail message itself
+/// (`render_mcp_detail` is deterministic). A follow-up with a dispatcher
+/// should carry the remembered name instead. No match (edited/foreign
+/// text) yields `None`.
+pub fn resolve_mcp_detail_name(
+    detail_text: &str,
+    servers: &[otb_core::session_pick_catalog_gates::McpCatalogServerItem],
+    locale: &str,
+) -> Option<String> {
+    servers
+        .iter()
+        .find(|server| crate::commands::render_mcp_detail(server, Some(locale)) == detail_text)
+        .map(|server| server.name.clone())
+}
+
+/// Recover a command/skill name from its confirm message text (pure).
+/// The confirm templates embed the pick as `/name` (`commands.confirm` /
+/// `skills.confirm` parity); the first `/token` (letters, digits, `_`, `-`)
+/// wins. Anything else yields `None` and the caller falls back to the
+/// inactive notice plus the list view.
+pub fn parse_confirm_pick_name(text: &str) -> Option<String> {
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if ch != '/' {
+            continue;
+        }
+        let rest = &text[index + 1..];
+        let len = rest
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '-')
+            .map(|(offset, ch)| offset + ch.len_utf8())
+            .last()
+            .unwrap_or(0);
+        if len > 0 {
+            return Some(rest[..len].to_string());
+        }
+    }
+    None
+}
+
+/// Ensure a session exists in the project worktree for a catalog execute:
+/// the remembered session wins when it still belongs to the worktree,
+/// otherwise a fresh session is created and remembered (JS
+/// `ensureSessionForProject` parity in `command-callback-handler.ts`).
+/// Returns `(id, directory)` or the i18n key for the failure reply.
+async fn ensure_execute_session(worktree: &str) -> Result<(String, String), &'static str> {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    if let (Some(id), Some(dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) {
+        if dir == worktree {
+            return Ok((id, dir));
+        }
+    }
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let session = match client.create_session(worktree, None).await {
+        Ok(session) => session,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: execute session create failed: {err}");
+            return Err("bot.create_session_error");
+        }
+    };
+    let (id, title) = session_identity_from_value(&session);
+    if id.is_empty() {
+        return Err("bot.create_session_error");
+    }
+    if let Err(err) = crate::settings_current::write_current_session(&app_home, &id, &title, worktree)
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember execute session: {err}");
+        return Err("bot.create_session_error");
+    }
+    Ok((id, worktree.to_string()))
+}
+
+/// Live agents view: the available agents with one `agent:<name>` button
+/// per row (JS `agent-selection-menu.ts` parity: current agent marked,
+/// hidden/subagents filtered). No project → `bot.project_not_selected`;
+/// fetch failure/empty → `agent.menu.empty`.
+async fn agents_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+    };
+    let stored = current.agent.clone().unwrap_or_default();
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_agents(&worktree).await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: agents list failed: {err}");
+            return (crate::locale::translate(locale, "agent.menu.empty"), None);
+        }
+    };
+    let items = crate::commands::agent_list_from_values(&raw);
+    if items.is_empty() {
+        return (crate::locale::translate(locale, "agent.menu.empty"), None);
+    }
+    let current_name = if stored.trim().is_empty() {
+        None
+    } else {
+        Some(stored.trim())
+    };
+    let text = match current_name {
+        Some(name) => crate::locale::translate(locale, "agent.menu.current").replace(
+            "{name}",
+            &otb_core::types_config::get_agent_display_name(name),
+        ),
+        None => crate::locale::translate(locale, "agent.menu.select"),
+    };
+    let keyboard = build_agents_keyboard(&items, current_name);
+    (text, Some(keyboard))
+}
+
+/// Filtered model search view (stateless Batch E1 search follow-up).
+///
+/// Node `searchModels` + `buildModelSearchResultsView` parity via
+/// [`matches_model_query`]: the flat provider catalog is sorted by
+/// `provider/model`, filtered on the trimmed query, and capped to the first
+/// `SEARCH_RESULTS_LIMIT` matches. Result rows carry the self-contained
+/// legacy `model:<provider>:<model>` shape ([`model_legacy_callback`]) so
+/// taps resolve without remembered search state; a trailing
+/// `[search again, cancel]` row carries the Node-exact
+/// `model:search:again` / `model:search:cancel` shapes. Empty matches render
+/// `model.search.no_results`, otherwise `model.search.results_title`.
+/// Fetch failure keeps the `model.providers.error` key.
+///
+/// SCAFFOLD DEVIATION: no caller yet — the typed query needs a dispatcher
+/// (plain-text input is ignored and no `/model` command exists), so stale
+/// `model:result:<n>` taps re-prompt instead. The future text-input flow
+/// calls this view and the legacy result branch applies the pick.
+#[allow(dead_code)]
+async fn model_search_view(locale: &str, query: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return (crate::locale::translate(locale, "model.providers.error"), None);
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    let mut flat: Vec<crate::commands::ModelListItem> = Vec::new();
+    for provider in &providers {
+        flat.extend(crate::commands::model_list_for_provider(&raw, &provider.id));
+    }
+    flat.sort_by(|left, right| {
+        format!("{}/{}", left.provider_id, left.model_id)
+            .cmp(&format!("{}/{}", right.provider_id, right.model_id))
+    });
+    let matched: Vec<crate::commands::ModelListItem> = flat
+        .into_iter()
+        .filter(|item| matches_model_query(item, query))
+        .take(otb_core::agent_model_variant_gates::SEARCH_RESULTS_LIMIT)
+        .collect();
+    let again_cancel = || {
+        search_again_cancel_row(
+            locale,
+            "model.search.search_again",
+            "inline.button.cancel",
+            MODEL_SEARCH_AGAIN_CALLBACK,
+            MODEL_SEARCH_CANCEL_CALLBACK,
+        )
+    };
+    if matched.is_empty() {
+        let text =
+            crate::locale::translate(locale, "model.search.no_results").replace("{query}", query);
+        return (text, Some(InlineKeyboardMarkup::new(vec![again_cancel()])));
+    }
+    let text =
+        crate::locale::translate(locale, "model.search.results_title").replace("{query}", query);
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = matched
+        .iter()
+        .map(|item| {
+            vec![InlineKeyboardButton::callback(
+                format!("{}/{}", item.provider_id, item.model_id),
+                model_legacy_callback(&item.provider_id, &item.model_id),
+            )]
+        })
+        .collect();
+    rows.push(again_cancel());
+    (text, Some(InlineKeyboardMarkup::new(rows)))
+}
+
+/// Live model root view: `[Search, Providers]` plus one
+/// `model:list:favorites:<index>` button per model of the first catalog
+/// page (the scaffold folds favorites + recent into one flat list; the
+/// provider browser covers the rest). Empty → `model.menu.empty`;
+/// probe failure → `model.providers.error`.
+async fn model_root_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return (crate::locale::translate(locale, "model.providers.error"), None);
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    if providers.is_empty() {
+        return (crate::locale::translate(locale, "model.menu.empty"), None);
+    }
+    let mut flat: Vec<crate::commands::ModelListItem> = Vec::new();
+    for provider in &providers {
+        flat.extend(crate::commands::model_list_for_provider(&raw, &provider.id));
+    }
+    flat.sort_by(|left, right| {
+        format!("{}/{}", left.provider_id, left.model_id)
+            .cmp(&format!("{}/{}", right.provider_id, right.model_id))
+    });
+    let limit = crate::config::MODELS_LIST_LIMIT.max(1);
+    let page_items: Vec<crate::commands::ModelListItem> =
+        flat.into_iter().take(limit).collect();
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let current_ref = match (current.model_provider.as_deref(), current.model_id.as_deref()) {
+        (Some(provider), Some(model)) => Some((provider, model)),
+        _ => None,
+    };
+    let text = crate::locale::translate(locale, "model.menu.select");
+    let keyboard = build_model_root_keyboard(&page_items, current_ref, locale);
+    (text, Some(keyboard))
+}
+
+/// Providers browser page: one `model:provider:<index>:0` button per
+/// provider plus pager and back (Node `buildProvidersMenuView` parity).
+async fn model_providers_view(locale: &str, page: usize) -> (String, Option<InlineKeyboardMarkup>) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return (crate::locale::translate(locale, "model.providers.error"), None);
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    if providers.is_empty() {
+        return (crate::locale::translate(locale, "model.providers.empty"), None);
+    }
+    let total = providers.len();
+    let limit = crate::config::MODELS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    let page = clamp_page_index(page, total_pages);
+    let start = page * limit;
+    let end = (start + limit).min(total);
+    let page_items = &providers[start.min(total)..end];
+    let mut text = crate::locale::translate(locale, "model.providers.title");
+    if total_pages > 1 {
+        let indicator = crate::locale::translate(locale, "model.providers.page_indicator");
+        let indicator = indicator.replace("{current}", &(page + 1).to_string());
+        text.push_str(&format!("\n\n{}", indicator.replace("{total}", &total_pages.to_string())));
+    }
+    let keyboard = build_providers_keyboard(page_items, start, locale, page, total_pages);
+    (text, Some(keyboard))
+}
+
+/// One provider's models page: one `model:pick:<globalIndex>` button per
+/// model plus a back button (Node `buildProviderModelsMenuView` parity;
+/// the pick index is global within the provider so the stateless handler
+/// resolves it without page context).
+async fn model_provider_models_view(
+    locale: &str,
+    provider_index: usize,
+    providers_page: usize,
+) -> (String, Option<InlineKeyboardMarkup>) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return (crate::locale::translate(locale, "model.providers.error"), None);
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    let Some(provider) = providers.get(provider_index) else {
+        return (
+            crate::locale::translate(locale, "model.providers.error"),
+            None,
+        );
+    };
+    let models = crate::commands::model_list_for_provider(&raw, &provider.id);
+    if models.is_empty() {
+        let text = crate::locale::translate(locale, "model.provider_models.empty")
+            .replace("{provider}", &provider.name);
+        return (text, None);
+    }
+    let total = models.len();
+    let limit = crate::config::MODELS_LIST_LIMIT.max(1);
+    let total_pages = total.max(1).div_ceil(limit).max(1);
+    // Stateless: always the first page (the pick index is global, so every
+    // model stays reachable; paging the models browser needs a dispatcher).
+    let end = limit.min(total);
+    let page_items = &models[..end];
+    let mut text = crate::locale::translate(locale, "model.provider_models.title")
+        .replace("{provider}", &provider.name);
+    if total_pages > 1 {
+        let indicator = crate::locale::translate(locale, "model.provider_models.page_indicator");
+        let indicator = indicator.replace("{current}", "1");
+        text.push_str(&format!("\n\n{}", indicator.replace("{total}", &total_pages.to_string())));
+    }
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let current_ref = match (current.model_provider.as_deref(), current.model_id.as_deref()) {
+        (Some(provider), Some(model)) => Some((provider, model)),
+        _ => None,
+    };
+    let keyboard = build_models_keyboard(
+        page_items,
+        0,
+        current_ref,
+        locale,
+        0,
+        total_pages,
+        providers_page,
+    );
+    (text, Some(keyboard))
+}
+
+/// Live variant view: one `variant:<id>` button per variant of the current
+/// model (JS `variant-selection-menu.ts` parity: `default` first, active
+/// marked). No model → `variant.select_model_first`.
+async fn variants_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let (Some(provider), Some(model)) = (current.model_provider.clone(), current.model_id.clone())
+    else {
+        return (crate::locale::translate(locale, "variant.select_model_first"), None);
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            return (crate::locale::translate(locale, "variant.menu.error"), None);
+        }
+    };
+    let variants = crate::commands::variant_list_for_model(&raw, &provider, &model);
+    if variants.is_empty() {
+        return (crate::locale::translate(locale, "variant.menu.empty"), None);
+    }
+    let current_variant = current
+        .model_variant
+        .clone()
+        .filter(|variant| !variant.is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    let display =
+        otb_core::agent_model_variant_gates::format_variant_for_display(&current_variant);
+    let text =
+        crate::locale::translate(locale, "variant.menu.current").replace("{name}", &display);
+    let keyboard = build_variants_keyboard(&variants, &current_variant);
+    (text, Some(keyboard))
+}
+
+/// Home directory for display folding and browser-root defaults
+/// (Node `os.homedir()` parity): `HOME`, else `USERPROFILE` (Windows),
+/// else `~` (folding becomes the identity).
+fn home_directory() -> String {
+    std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "~".to_string())
+}
+
+/// Browser roots for `/open` (Node `getBrowserRoots` parity):
+/// `OPEN_BROWSER_ROOTS` comma list with `~` expansion, else the home
+/// directory. Relative entries resolve against the current directory.
+fn browser_roots() -> Vec<String> {
+    use otb_core::file_browser_service_gates::{expand_tilde, split_browser_roots};
+    let home = home_directory();
+    let raw = std::env::var("OPEN_BROWSER_ROOTS").unwrap_or_default();
+    let mut roots: Vec<String> = split_browser_roots(&raw)
+        .into_iter()
+        .map(|entry| expand_tilde(&entry, &home))
+        .map(|entry| {
+            let path = std::path::Path::new(&entry);
+            if path.is_absolute() {
+                entry
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&entry).to_string_lossy().into_owned())
+                    .unwrap_or(entry)
+            }
+        })
+        .collect();
+    if roots.is_empty() {
+        roots.push(home);
+    }
+    roots
+}
+
+/// Scan one directory for visible subdirectories, sorted base-sensitively
+/// (JS `scanDirectory` parity: hidden names skipped).
+/// Blocking; callers run it inside `spawn_blocking`.
+fn scan_open_subdirs(
+    dir: &str,
+) -> Result<Vec<String>, otb_core::file_browser_service_gates::ScanErrorCode> {
+    use otb_core::file_browser_service_gates::{ScanErrorCode, is_visible_dir, sorted_dir_names};
+    let entries = std::fs::read_dir(dir).map_err(|err| match err.kind() {
+        std::io::ErrorKind::NotFound => ScanErrorCode::NotFound,
+        std::io::ErrorKind::PermissionDenied => ScanErrorCode::AccessDenied,
+        std::io::ErrorKind::NotADirectory => ScanErrorCode::NotDirectory,
+        _ => ScanErrorCode::Unknown,
+    })?;
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+        if is_visible_dir(&name, is_dir) {
+            names.push(name);
+        }
+    }
+    Ok(sorted_dir_names(&names))
+}
+
+/// Scan one project directory for `ls` entries, dirs-first sorted
+/// (JS `scanLsDirectory` parity, minus the in-service project-root check
+/// the caller performs). Blocking; callers run it inside `spawn_blocking`.
+fn scan_ls_entries(
+    dir: &str,
+) -> Result<Vec<otb_core::file_browser_service_gates::LsEntry>, otb_core::file_browser_service_gates::ScanErrorCode> {
+    use otb_core::file_browser_service_gates::{LsEntry, ScanErrorCode, join_path, sort_ls_entries};
+    let entries = std::fs::read_dir(dir).map_err(|err| match err.kind() {
+        std::io::ErrorKind::NotFound => ScanErrorCode::NotFound,
+        std::io::ErrorKind::PermissionDenied => ScanErrorCode::AccessDenied,
+        std::io::ErrorKind::NotADirectory => ScanErrorCode::NotDirectory,
+        _ => ScanErrorCode::Unknown,
+    })?;
+    let mut items: Vec<LsEntry> = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+        items.push(LsEntry {
+            full_path: join_path(dir, &name),
+            name,
+            is_dir,
+        });
+    }
+    Ok(sort_ls_entries(items))
+}
+
+/// Live `/open` reply: browse directories to add a project
+/// (JS `open-command.ts` parity: one root browses it directly, several
+/// list the roots). Scan failure → `open.scan_error`. The reply carries
+/// the browse keyboard (`open:nav:` / `open:pg:` / `open:sel:` /
+/// `open:roots` plus `inline:cancel:open`); taps are handled by
+/// [`handle_open_callback`].
+async fn open_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::browse_command_gates::should_show_single_open_root;
+    let home = home_directory();
+    let roots = browser_roots();
+    if !should_show_single_open_root(roots.len()) {
+        let text = crate::commands::render_open_roots(&roots, &home, Some(locale));
+        let keyboard = build_open_roots_keyboard(&roots, &home, locale);
+        return (text, Some(keyboard));
+    }
+    let root = roots.first().cloned().unwrap_or(home.clone());
+    open_browse_page(&root, 0, locale).await
+}
+
+/// Render one `/open` browse page with its keyboard (JS
+/// `renderOpenBrowseView` + `buildOpenBrowseKeyboard` parity).
+/// Scan failure renders `open.scan_error` with no keyboard.
+async fn open_browse_page(
+    dir: &str,
+    page: usize,
+    locale: &str,
+) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::file_browser_service_gates::{
+        ScanErrorCode, clamp_page, is_allowed_root, is_within_allowed_root, page_slice_range,
+        parent_path, path_to_display_path, total_pages,
+    };
+    let home = home_directory();
+    let roots = browser_roots();
+    let probe = dir.to_string();
+    let scanned = match tokio::task::spawn_blocking(move || scan_open_subdirs(&probe)).await {
+        Ok(Ok(names)) => names,
+        Ok(Err(code)) => {
+            let detail = match code {
+                ScanErrorCode::NotFound => format!("Directory not found: {dir}"),
+                ScanErrorCode::AccessDenied => format!("Permission denied: {dir}"),
+                ScanErrorCode::NotDirectory => format!("Not a directory: {dir}"),
+                ScanErrorCode::Unknown => "Unknown error".to_string(),
+            };
+            let text = crate::locale::translate(locale, "open.scan_error")
+                .replace("{error}", &detail);
+            return (text, None);
+        }
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: open scan task failed: {err}");
+            let text = crate::locale::translate(locale, "open.scan_error")
+                .replace("{error}", "Unknown error");
+            return (text, None);
+        }
+    };
+    let total = scanned.len();
+    let pages = total_pages(total);
+    let page = clamp_page(page as i64, pages);
+    let (start, end) = page_slice_range(page);
+    let display = path_to_display_path(dir, &home);
+    let text = crate::commands::render_open_browse(
+        &display,
+        &scanned[start.min(total)..end.min(total)].to_vec(),
+        page,
+        pages,
+        total,
+        Some(locale),
+    );
+    let has_parent = parent_path(dir) != dir;
+    let allowed = is_allowed_root(dir, &roots, cfg!(windows));
+    let _within = is_within_allowed_root(dir, &roots, cfg!(windows));
+    let keyboard = build_open_browse_keyboard(
+        &scanned[start.min(total)..end.min(total)].to_vec(),
+        dir,
+        page,
+        pages,
+        has_parent,
+        allowed,
+        roots.len() > 1,
+        locale,
+    );
+    (text, Some(keyboard))
+}
+
+/// Render the `/open` roots list with its keyboard (JS
+/// `buildOpenRootsKeyboard` parity).
+fn open_roots_view(locale: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    let home = home_directory();
+    let roots = browser_roots();
+    let text = crate::commands::render_open_roots(&roots, &home, Some(locale));
+    let keyboard = build_open_roots_keyboard(&roots, &home, locale);
+    (text, Some(keyboard))
+}
+
+/// Live `/ls` reply: list the current project directory (JS `ls-command.ts`
+/// parity: no project or no target → `bot.project_not_selected`; outside
+/// the root → `❌ {ls.access_denied}`; scan failure → `❌ {error}`;
+/// otherwise the numbered text list plus the browse keyboard, first page
+/// only). Taps are handled by [`handle_ls_callback`].
+async fn ls_view(locale: &str, args: &str) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::browse_command_gates::{
+        resolve_ls_target, should_report_ls_access_denied,
+    };
+    use otb_core::file_browser_service_gates::{is_path_within_directory, join_path};
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(project_root) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+    };
+    let explicit = if args.trim().is_empty() {
+        None
+    } else {
+        Some(args.trim())
+    };
+    // Scaffold memory: no per-user remembered directory yet, so an empty
+    // argument lists the project root itself.
+    let Some(target) = resolve_ls_target(explicit, Some(&project_root)) else {
+        return (crate::locale::translate(locale, "bot.project_not_selected"), None);
+    };
+    // Relative arguments resolve against the project root (Node takes the
+    // argument as-is; the scaffold keeps browsing inside the project).
+    let target = if std::path::Path::new(target).is_absolute() {
+        target.to_string()
+    } else {
+        join_path(&project_root, target)
+    };
+    if should_report_ls_access_denied(is_path_within_directory(&target, &project_root)) {
+        return (
+            format!("❌ {}", crate::locale::translate(locale, "ls.access_denied")),
+            None,
+        );
+    }
+    ls_browse_page(&project_root, &target, 0, locale).await
+}
+
+/// Render one `/ls` browse page with its keyboard (JS `renderLsBrowseView`
+/// + `buildLsBrowseKeyboard` parity). Scan failure renders `ls.scan_error`
+/// with no keyboard.
+async fn ls_browse_page(
+    project_root: &str,
+    target: &str,
+    page: usize,
+    locale: &str,
+) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::file_browser_service_gates::{
+        clamp_page, has_parent, page_slice_range, path_to_display_path, total_pages,
+    };
+    let scanned = target.to_string();
+    let entries = match tokio::task::spawn_blocking(move || scan_ls_entries(&scanned)).await {
+        Ok(Ok(entries)) => entries,
+        Ok(Err(_)) | Err(_) => {
+            return (
+                format!("❌ {}", crate::locale::translate(locale, "ls.scan_error")),
+                None,
+            );
+        }
+    };
+    let total = entries.len();
+    let pages = total_pages(total);
+    let page = clamp_page(page as i64, pages);
+    let (start, end) = page_slice_range(page);
+    let home = home_directory();
+    let display = path_to_display_path(target, &home);
+    let text = crate::commands::render_ls_browse(
+        &display,
+        &entries[start.min(total)..end.min(total)].to_vec(),
+        page,
+        pages,
+        total,
+        Some(locale),
+    );
+    let keyboard = build_ls_browse_keyboard(
+        &entries[start.min(total)..end.min(total)].to_vec(),
+        target,
+        page,
+        pages,
+        has_parent(target, project_root),
+        target == project_root,
+        locale,
+    );
+    (text, Some(keyboard))
+}
+
+/// Render one `/ls` file-details view with its keyboard (JS
+/// `renderLsFileDetailsView` + `buildLsFileDetailsKeyboard` parity).
+/// Missing files render `commands.download.not_found`, directories render
+/// `commands.download.not_file`, both without a keyboard.
+async fn ls_file_view(
+    file_path: &str,
+    page: usize,
+    locale: &str,
+) -> (String, Option<InlineKeyboardMarkup>) {
+    use otb_core::file_browser_service_gates::{base_name, parent_path};
+    let probed = file_path.to_string();
+    let meta = match tokio::task::spawn_blocking(move || std::fs::metadata(&probed)).await {
+        Ok(Ok(meta)) => meta,
+        Ok(Err(_)) | Err(_) => {
+            return (
+                crate::locale::translate(locale, "commands.download.not_found"),
+                None,
+            );
+        }
+    };
+    if meta.is_dir() {
+        return (
+            crate::locale::translate(locale, "commands.download.not_file"),
+            None,
+        );
+    }
+    let name = base_name(file_path);
+    let size = meta.len();
+    let size_text = otb_core::media_prompt::format_file_size(size);
+    let header = crate::locale::translate(locale, "ls.file.header");
+    let size_label = crate::locale::translate(locale, "commands.download.size");
+    let text = format!(
+        "📄 {header}\n<code>{}</code>\n{size_label}: {size_text}",
+        crate::commands::escape_html(&name),
+    );
+    let is_text = otb_core::media_prompt::is_text_file_name(&name);
+    let size_ok = otb_core::media_prompt::is_file_size_allowed(Some(size), 20 * 1024);
+    let keyboard = build_ls_file_keyboard(
+        file_path,
+        &parent_path(file_path),
+        page,
+        otb_core::file_browser_menu_gates::can_attach_file(is_text, size_ok),
+        locale,
+    );
+    (text, Some(keyboard))
+}
+
+/// Live `/rename` prompt reply (JS `rename-command.ts` parity, text-only:
+/// no session → `rename.no_session`; otherwise the prompt with the live
+/// title, falling back to the remembered one when the fetch fails).
+/// The interactive waiting state needs a dispatcher and stays a follow-up;
+/// use `/rename <new title>` to rename directly.
+async fn rename_prompt_view(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let (Some(session_id), Some(session_dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) else {
+        return crate::locale::translate(locale, "rename.no_session");
+    };
+    let remembered = current.session_title.clone().unwrap_or_default();
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let title = match client.get_session(&session_id, &session_dir).await {
+        Ok(session) => session
+            .get("title")
+            .and_then(|title| title.as_str())
+            .map(str::to_string)
+            .unwrap_or(remembered),
+        Err(err) => {
+            tracing::debug!("[otb-bot] telegram: rename title fetch failed: {err}");
+            remembered
+        }
+    };
+    crate::commands::render_rename_prompt(&title, Some(locale))
+}
+
+/// Live `/rename <new title>` reply (JS `handleRenameTextAnswer` parity:
+/// blank title → `rename.empty_title`; no session → `rename.no_session`;
+/// update failure → `rename.error`; otherwise the API rename is persisted
+/// like `setCurrentSession` and confirmed with `rename.success`).
+async fn rename_apply_view(locale: &str, raw_title: &str) -> String {
+    let Some(title) = crate::commands::validate_rename_title(raw_title) else {
+        return crate::locale::translate(locale, "rename.empty_title");
+    };
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let (Some(session_id), Some(session_dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) else {
+        return crate::locale::translate(locale, "rename.no_session");
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    if let Err(err) = client.update_session_title(&session_id, &session_dir, &title).await {
+        tracing::warn!("[otb-bot] telegram: rename failed: {err}");
+        return crate::locale::translate(locale, "rename.error");
+    }
+    if let Err(err) =
+        crate::settings_current::write_current_session(&app_home, &session_id, &title, &session_dir)
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember renamed session: {err}");
+        return crate::locale::translate(locale, "rename.error");
+    }
+    crate::commands::render_rename_success(&title, Some(locale))
+}
+
+/// Live `/abort` reply: no current session → `stop.no_active_session`;
+/// otherwise POST the versioned abort (`session.abort` V1 /
+/// `session.interrupt` V2) and confirm with `stop.success`, or
+/// `stop.warn_local_only` when the server-side abort failed. Plain text; the
+/// prompt-queue/goal side effects need a dispatcher and stay a follow-up.
+async fn abort_view(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let (Some(session_id), Some(session_dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) else {
+        return crate::commands::render_abort_no_session(Some(locale));
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    match client.abort_session(&session_id, &session_dir).await {
+        Ok(aborted) => crate::commands::render_abort_result(aborted, Some(locale)),
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: abort failed: {err}");
+            crate::commands::render_abort_result(false, Some(locale))
+        }
+    }
+}
+
+/// Live `/detach` reply: local-only, the OpenCode session itself is never
+/// stopped (JS `detach-command.ts` parity minus the attach/keyboard side
+/// effects). Guard order matches Node: no project →
+/// `detach.project_not_selected`; no session → `detach.no_active_session`;
+/// otherwise the live title (remembered fallback) is resolved, the remembered
+/// session is cleared, and `detach.success` confirms. A failed clear renders
+/// `detach.error`.
+async fn detach_view(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    if current
+        .project_worktree
+        .as_deref()
+        .filter(|worktree| !worktree.is_empty())
+        .is_none()
+    {
+        return crate::locale::translate(locale, "detach.project_not_selected");
+    }
+    let (Some(session_id), Some(session_dir)) = (
+        current.session_id.clone().filter(|id| !id.is_empty()),
+        current.session_directory.clone().filter(|dir| !dir.is_empty()),
+    ) else {
+        return crate::locale::translate(locale, "detach.no_active_session");
+    };
+    let remembered = current.session_title.clone().unwrap_or_default();
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let title = match client.get_session(&session_id, &session_dir).await {
+        Ok(session) => session
+            .get("title")
+            .and_then(|title| title.as_str())
+            .map(str::to_string)
+            .unwrap_or(remembered),
+        Err(err) => {
+            tracing::debug!("[otb-bot] telegram: detach title fetch failed: {err}");
+            remembered
+        }
+    };
+    if let Err(err) = crate::settings_current::clear_current_session(&app_home) {
+        tracing::warn!("[otb-bot] telegram: cannot clear detached session: {err}");
+        return crate::locale::translate(locale, "detach.error");
+    }
+    tracing::info!(
+        "[otb-bot] telegram: detached from session id_prefix={} id_len={}",
+        session_id.chars().take(8).collect::<String>(),
+        session_id.len()
+    );
+    crate::commands::render_detach_success(&title, Some(locale))
+}
+
+/// Live `/task` reply (minimal scaffold): no project →
+/// `bot.project_not_selected`; otherwise the `render_task_ack` text (the
+/// interactive schedule→prompt flow needs a dispatcher and stays a
+/// follow-up). Read-only.
+fn task_view(locale: &str, args: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    if current
+        .project_worktree
+        .as_deref()
+        .filter(|worktree| !worktree.is_empty())
+        .is_none()
+    {
+        return crate::locale::translate(locale, "bot.project_not_selected");
+    }
+    crate::commands::render_task_ack(args, Some(locale))
+}
+
+/// Live `/opencode_start` reply (safety scaffold): health probe only, the bot
+/// never spawns the server process. Read-only.
+async fn opencode_start_view(locale: &str) -> String {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let probe = match client.health().await {
+        Ok(probe) => probe,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: opencode_start probe failed: {err}");
+            crate::opencode::HealthProbe {
+                ok: false,
+                version: None,
+            }
+        }
+    };
+    crate::commands::render_opencode_start_status(probe.ok, probe.version.as_deref(), Some(locale))
+}
+
+/// Live `/opencode_stop` reply (safety scaffold): health probe only, the bot
+/// never kills the server process. Read-only.
+async fn opencode_stop_view(locale: &str) -> String {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let probe = match client.health().await {
+        Ok(probe) => probe,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: opencode_stop probe failed: {err}");
+            crate::opencode::HealthProbe {
+                ok: false,
+                version: None,
+            }
+        }
+    };
+    crate::commands::render_opencode_stop_status(probe.ok, probe.version.as_deref(), Some(locale))
+}
+
+/// Live `/reload` reply (minimal scaffold): re-read the local
+/// `settings.json`. A missing file reads as defaults (success); an
+/// unparseable file renders `reload.failed`. The OpenCode server config
+/// rebuild needs a dispatcher and stays a follow-up. Only paths, error
+/// kinds, and byte lengths are ever logged — never values.
+fn reload_view(locale: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let path = crate::settings_current::settings_file_path(&app_home);
+    let ok = match std::fs::read_to_string(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+        Err(err) => {
+            tracing::warn!(
+                "[otb-bot] telegram: reload cannot read settings at {} ({})",
+                path.display(),
+                err.kind()
+            );
+            false
+        }
+        Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(_) => true,
+            Err(err) => {
+                tracing::warn!(
+                    "[otb-bot] telegram: reload ignoring unparseable settings ({} bytes): {err}",
+                    content.len()
+                );
+                false
+            }
+        },
+    };
+    crate::commands::render_reload_result(ok, Some(locale))
+}
+
+/// Live `/goal` reply (minimal scaffold): the JS guard order
+/// (`goal-command.ts` entry parity) rendered through `goal_entry_key`; the
+/// happy path shows `goal.input.prompt` since the interactive objective flow
+/// (and the server-side goal itself) needs a dispatcher and stays a
+/// follow-up. Read-only.
+fn goal_view(locale: &str, args: &str) -> String {
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let has_project = current
+        .project_worktree
+        .as_deref()
+        .is_some_and(|worktree| !worktree.is_empty());
+    let has_session = current
+        .session_id
+        .as_deref()
+        .is_some_and(|id| !id.is_empty())
+        && current
+            .session_directory
+            .as_deref()
+            .is_some_and(|dir| !dir.is_empty());
+    let session_matches_project = match (
+        &current.session_directory,
+        &current.project_worktree,
+    ) {
+        (Some(dir), Some(worktree)) => dir == worktree,
+        _ => false,
+    };
+    let key = crate::commands::goal_entry_key(
+        has_project,
+        has_session,
+        session_matches_project,
+        !args.trim().is_empty(),
+    );
+    crate::locale::translate(locale, key)
+}
+
+/// Parse `/command[@bot] [args]` text into the bare lowercase command name.
+/// Returns `None` for non-command text or a bare `/` (pure; testable).
+pub fn parse_command_text(text: &str) -> Option<String> {
+    split_command_args(text).map(|(name, _)| name)
+}
+
+/// Split `/command[@bot] [args]` text into the bare lowercase command name
+/// plus the trimmed trailing arguments (`""` when absent).
+/// Returns `None` for non-command text or a bare `/` (pure; testable).
+pub fn split_command_args(text: &str) -> Option<(String, String)> {
+    let token = text.trim().split_whitespace().next()?;
+    let bare = token.strip_prefix('/')?;
+    let name = bare.split('@').next().unwrap_or("");
+    if name.is_empty() {
+        return None;
+    }
+    let args = text
+        .trim()
+        .splitn(2, char::is_whitespace)
+        .nth(1)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    Some((name.to_lowercase(), args))
+}
+
+/// `start` wiring: only constructs the bot when `OTB_ENABLE_POLLING=1`;
+/// otherwise logs the scaffold notice. Never polls by default.
+pub fn maybe_start_telegram() {
+    if !polling_enabled() {
+        tracing::info!("[otb-bot] telegram: scaffold only (set OTB_ENABLE_POLLING=1 to opt in)");
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: polling enabled (client starts in the async task)");
+}
+
+/// Send a list reply with an optional inline keyboard (thin parity for the
+/// `replyWithInlineMenu` list views: text-only when no rows are selectable).
+async fn reply_list_view(
+    bot: &teloxide_core::Bot,
+    chat_id: i64,
+    text: &str,
+    keyboard: Option<InlineKeyboardMarkup>,
+) {
+    let result = match keyboard {
+        Some(markup) => send_message_with_keyboard(bot, chat_id, text, markup).await,
+        None => send_message(bot, chat_id, text).await,
+    };
+    if let Err(err) = result {
+        tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `commands:*` / `skills:*` tap (stateless scaffold of
+/// `command-catalog-callback-handler.ts` / `skills-catalog-callback-handler.ts`):
+/// page taps re-render the requested list page; select taps show the
+/// `[Execute, Cancel]` confirm keyboard (`buildCommandsConfirmKeyboard` /
+/// `buildSkillsConfirmKeyboard` parity); execute taps ensure a session for the
+/// project and send `/name` as a prompt (the Node `session.command` endpoint
+/// has no scaffold client yet; the prompt text is equivalent on the wire);
+/// cancel taps delete the prompt message (Node `cancelMenu` parity). The
+/// spinner is always acked first; unknown indexes answer the
+/// `inactive_callback` notice plus the list view.
+async fn handle_catalog_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+    kind: CatalogKind,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    let (is_cancel, is_execute, prefix) = match kind {
+        CatalogKind::Commands => (is_commands_cancel(data), is_commands_execute(data), "commands"),
+        CatalogKind::Skills => (is_skills_cancel(data), is_skills_execute(data), "skills"),
+    };
+    if is_cancel {
+        answer_callback(bot, query, None, false).await;
+        // Node `cancelMenu` deletes the prompt message; a gone message is
+        // not an error worth surfacing. Only ids are ever logged.
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: catalog cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    if is_execute {
+        answer_callback(bot, query, None, false).await;
+        handle_catalog_execute(bot, locale, query, kind, prefix).await;
+        return;
+    }
+    // Page taps re-render the requested list page (Node pager parity).
+    let page = match kind {
+        CatalogKind::Commands => parse_command_page_callback(data),
+        CatalogKind::Skills => parse_skill_page_callback(data),
+    };
+    if let Some(page) = page {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = match kind {
+                CatalogKind::Commands => commands_view(locale, page).await,
+                CatalogKind::Skills => skills_view(locale, page).await,
+            };
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    let index = match kind {
+        CatalogKind::Commands => parse_command_select_callback(data),
+        CatalogKind::Skills => parse_skill_select_callback(data),
+    };
+    let Some(index) = index else {
+        return;
+    };
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let (worktree, items) = match kind {
+        CatalogKind::Commands => match load_commands_catalog().await {
+            Ok(loaded) => loaded,
+            Err(key) => {
+                reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+                return;
+            }
+        },
+        CatalogKind::Skills => match load_skills_catalog().await {
+            Ok(loaded) => loaded,
+            Err(key) => {
+                reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+                return;
+            }
+        },
+    };
+    let _ = worktree;
+    let Some(item) = items.get(index) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                &format!("{prefix}.inactive_callback"),
+            )),
+            true,
+        )
+        .await;
+        let (text, keyboard) = match kind {
+            CatalogKind::Commands => commands_view(locale, 0).await,
+            CatalogKind::Skills => skills_view(locale, 0).await,
+        };
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    let confirm = match kind {
+        CatalogKind::Commands => crate::commands::render_command_confirm(&item.name, Some(locale)),
+        CatalogKind::Skills => crate::commands::render_skill_confirm(&item.name, Some(locale)),
+    };
+    answer_callback(bot, query, None, false).await;
+    let keyboard = build_catalog_confirm_keyboard(kind, locale);
+    if let Err(err) = send_message_with_keyboard(bot, chat_id, &confirm, keyboard).await {
+        tracing::warn!("[otb-bot] telegram: catalog confirm failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `commands:execute` / `skills:execute` tap: recover the picked
+/// name from the confirm message text, ensure a session for the project
+/// worktree, and send `/name` as a prompt. Failures render the local
+/// `execute_error` / `create_session_error` notices.
+async fn handle_catalog_execute(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    query: &CallbackQuery,
+    kind: CatalogKind,
+    prefix: &str,
+) {
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let name = callback_message_text(query).and_then(parse_confirm_pick_name);
+    let Some(name) = name else {
+        let (text, keyboard) = match kind {
+            CatalogKind::Commands => commands_view(locale, 0).await,
+            CatalogKind::Skills => skills_view(locale, 0).await,
+        };
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, &format!("{prefix}.inactive_callback")),
+            None,
+        )
+        .await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    let loaded = match kind {
+        CatalogKind::Commands => load_commands_catalog().await.map(|(worktree, _)| worktree),
+        CatalogKind::Skills => load_skills_catalog().await.map(|(worktree, _)| worktree),
+    };
+    let Ok(worktree) = loaded else {
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, &format!("{prefix}.fetch_error")),
+            None,
+        )
+        .await;
+        return;
+    };
+    let (session_id, _) = match ensure_execute_session(&worktree).await {
+        Ok(session) => session,
+        Err(key) => {
+            reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+            return;
+        }
+    };
+    let executing = crate::commands::render_executing_notice(
+        &format!("{prefix}.executing_prefix"),
+        &name,
+        "",
+    );
+    reply_list_view(bot, chat_id, &executing, None).await;
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    if let Err(err) = client.prompt_session(&session_id, &format!("/{name}")).await {
+        tracing::warn!("[otb-bot] telegram: catalog execute prompt failed: {err}");
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, &format!("{prefix}.execute_error")),
+            None,
+        )
+        .await;
+    }
+}
+
+/// Handle an `mcps:*` tap (stateless scaffold of
+/// `mcp-catalog-callback-handler.ts`): select taps show the server detail
+/// with the toggle/back/cancel keyboard (`buildMcpsDetailKeyboard` parity);
+/// toggle taps flip the server via `mcp_set_enabled` (`enable =
+/// status !== "connected"` parity) and re-render the detail; back taps return
+/// to the list; cancel taps delete the prompt message. The toggle target is
+/// recovered from the detail message text (no interaction memory; see
+/// [`resolve_mcp_detail_name`]).
+async fn handle_mcps_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if is_mcp_cancel(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: mcps cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    if is_mcp_back(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = mcps_view(locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if is_mcp_toggle(data) {
+        handle_mcp_toggle(bot, locale, query).await;
+        return;
+    }
+    let Some(index) = parse_mcp_select_callback(data) else {
+        return;
+    };
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let servers = match load_mcps_catalog().await {
+        Ok((_, servers)) => servers,
+        Err(key) => {
+            reply_list_view(bot, chat_id, &crate::locale::translate(locale, key), None).await;
+            return;
+        }
+    };
+    let Some(server) = servers.get(index) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "inline.inactive_callback")),
+            true,
+        )
+        .await;
+        let (text, keyboard) = mcps_view(locale).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    let detail = crate::commands::render_mcp_detail(server, Some(locale));
+    answer_callback(bot, query, None, false).await;
+    let keyboard = build_mcp_detail_keyboard(server, locale);
+    if let Err(err) = send_message_with_keyboard(bot, chat_id, &detail, keyboard).await {
+        tracing::warn!("[otb-bot] telegram: mcp detail failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle an `mcps:toggle` tap: recover the server name from the detail
+/// message text, flip it (`enable = status !== "connected"`), and re-render
+/// the detail with the `enabling` / `disabling` toast. A missing target
+/// answers `inline.inactive_callback` plus the list view; a rejected toggle
+/// answers `mcps.toggle_error`.
+async fn handle_mcp_toggle(bot: &teloxide_core::Bot, locale: &str, query: &CallbackQuery) {
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let (worktree, servers) = match load_mcps_catalog().await {
+        Ok(loaded) => loaded,
+        Err(key) => {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, key)),
+                true,
+            )
+            .await;
+            return;
+        }
+    };
+    let name = callback_message_text(query).and_then(|text| {
+        resolve_mcp_detail_name(text, &servers, locale)
+    });
+    let Some(name) = name else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "inline.inactive_callback")),
+            true,
+        )
+        .await;
+        let (text, keyboard) = mcps_view(locale).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    };
+    let Some(server) = servers.iter().find(|server| server.name == name) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "inline.inactive_callback")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let enable = !matches!(
+        server.status.name,
+        otb_core::session_pick_catalog_gates::McpStatusName::Connected
+    );
+    let toast = crate::locale::translate(locale, if enable { "mcps.enabling" } else { "mcps.disabling" });
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    match client.mcp_set_enabled(&worktree, &name, enable).await {
+        Ok(true) => {
+            answer_callback(bot, query, Some(toast), false).await;
+            // Re-read the catalog so the detail reflects the flipped state;
+            // a gone server falls back to the list (Node parity).
+            let servers = load_mcps_catalog()
+                .await
+                .map(|(_, servers)| servers)
+                .unwrap_or(servers);
+            match servers.iter().find(|server| server.name == name) {
+                Some(updated) => {
+                    let detail = crate::commands::render_mcp_detail(updated, Some(locale));
+                    let keyboard = build_mcp_detail_keyboard(updated, locale);
+                    if let Err(err) =
+                        send_message_with_keyboard(bot, chat_id, &detail, keyboard).await
+                    {
+                        tracing::warn!(
+                            "[otb-bot] telegram: mcp detail refresh failed for chat {chat_id}: {err}"
+                        );
+                    }
+                }
+                None => {
+                    let (text, keyboard) = mcps_view(locale).await;
+                    reply_list_view(bot, chat_id, &text, keyboard).await;
+                }
+            }
+        }
+        Ok(false) | Err(_) => {
+            tracing::warn!("[otb-bot] telegram: mcp toggle failed");
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, "mcps.toggle_error")),
+                true,
+            )
+            .await;
+        }
+    }
+}
+
+/// Handle an `agent:<name>` tap (JS `agent-selection-callback-handler.ts`
+/// parity): persist the tapped agent (`setCurrentAgent` parity) and confirm
+/// with `agent.changed_message`. Unknown names and write failures answer
+/// `agent.change_error_callback`; no project replies
+/// `bot.project_not_selected`.
+async fn handle_agent_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    let Some(name) = parse_agent_callback(data) else {
+        return;
+    };
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(worktree) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        answer_callback(bot, query, None, false).await;
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "bot.project_not_selected"),
+            None,
+        )
+        .await;
+        return;
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let items = match client.list_agents(&worktree).await {
+        Ok(raw) => crate::commands::agent_list_from_values(&raw),
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: agents list failed: {err}");
+            answer_callback(bot, query, None, false).await;
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "agent.menu.empty"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    if !items.iter().any(|item| item.name == name) {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "agent.change_error_callback")),
+            true,
+        )
+        .await;
+        return;
+    }
+    if let Err(err) = crate::settings_current::write_current_agent(&app_home, name) {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected agent: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "agent.change_error_callback")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: agent selected");
+    answer_callback(bot, query, None, false).await;
+    let confirmation = crate::commands::render_agent_changed(name, Some(locale));
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: agent confirm failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `variant:<id>` tap (JS `variant-selection-callback-handler.ts`
+/// parity): persist the tapped variant for the current model
+/// (`setCurrentModel` parity, provider/model preserved) and confirm with
+/// `variant.changed_message`. No model replies `variant.select_model_first`;
+/// unknown variants and write failures answer
+/// `variant.change_error_callback`.
+async fn handle_variant_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    let Some(id) = parse_variant_callback(data) else {
+        return;
+    };
+    let Some(chat_id) = callback_chat_id(query) else {
+        return;
+    };
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let (Some(provider), Some(model)) = (
+        current.model_provider.clone().filter(|p| !p.is_empty()),
+        current.model_id.clone().filter(|m| !m.is_empty()),
+    ) else {
+        answer_callback(bot, query, None, false).await;
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "variant.select_model_first"),
+            None,
+        )
+        .await;
+        return;
+    };
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let variants = match client.list_providers().await {
+        Ok(raw) => crate::commands::variant_list_for_model(&raw, &provider, &model),
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            answer_callback(bot, query, None, false).await;
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "variant.menu.error"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    if !variants.iter().any(|variant| variant == id) {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "variant.change_error_callback")),
+            true,
+        )
+        .await;
+        return;
+    }
+    if let Err(err) = crate::settings_current::write_current_model(&app_home, &provider, &model, Some(id))
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected variant: {err}");
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "variant.change_error_callback")),
+            true,
+        )
+        .await;
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: variant selected");
+    answer_callback(bot, query, None, false).await;
+    let confirmation = crate::commands::render_variant_changed(id, Some(locale));
+    if let Err(err) = send_message(bot, chat_id, &confirmation).await {
+        tracing::warn!("[otb-bot] telegram: variant confirm failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Handle a `question:*` tap (minimal JS
+/// `question-callback-handler.ts` parity): auth-gate, prefix guard, then
+/// the spinner is always acked. An unparsable action answers the
+/// `question.processing_error_callback` toast; a parsed tap only acks —
+/// the select/submit/custom/toggle/cancel state machine
+/// (`questionManager`, `interactionManager`, `question.reply` /
+/// `question.reject`) needs a dispatcher and stays a follow-up.
+async fn handle_question_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_question_callback(data) {
+        return;
+    }
+    let Some(parsed) = parse_question_callback(data) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "question.processing_error_callback",
+            )),
+            true,
+        )
+        .await;
+        return;
+    };
+    tracing::debug!(
+        "[otb-bot] telegram: question callback q={} action={:?}",
+        parsed.question_index,
+        parsed.action
+    );
+    // Ack the spinner so the tap never hangs; full handling (active-poll
+    // gates, message updates, OpenCode reply) lands with the dispatcher.
+    answer_callback(bot, query, None, false).await;
+}
+
+/// Handle a `permission:*` tap (minimal JS
+/// `permission-callback-handler.ts` parity): auth-gate, prefix guard, then
+/// the spinner is always acked. An unknown action answers the
+/// `permission.processing_error_callback` toast; a known `once` / `always`
+/// / `reject` tap only acks — the `permissionManager.markSending` +
+/// `permission.reply` round-trip needs a dispatcher and stays a follow-up.
+async fn handle_permission_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_permission_callback(data) {
+        return;
+    }
+    let Some(reply) = classify_permission_callback(data) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "permission.processing_error_callback",
+            )),
+            true,
+        )
+        .await;
+        return;
+    };
+    tracing::debug!("[otb-bot] telegram: permission callback reply={:?}", reply);
+    // Ack the spinner so the tap never hangs; full handling (request-ID
+    // lookup, markSending, OpenCode reply) lands with the dispatcher.
+    answer_callback(bot, query, None, false).await;
+}
+
+/// Handle a `model:*` tap (JS `model-selection-callback-handler.ts` parity):
+/// `model:root` re-renders the root menu; `model:search` / `model:search:again`
+/// prompt for a search query (the text-input search flow needs a dispatcher
+/// and stays a follow-up); `model:search:cancel` deletes the prompt message;
+/// `model:providers:<n>` re-renders the providers page;
+/// `model:provider:<i>:<p>` shows that provider's models (always the first
+/// page; the back button returns to providers page 0 — stateless deviation,
+/// see [`model_provider_models_view`]); `model:pick:<n>` and
+/// `model:list:<kind>:<n>` apply the tapped model (variant resets to
+/// `"default"`, Node `resolveModelListCallback` parity) and confirm, with the
+/// variant follow-up when the new model offers more than one variant; a
+/// self-contained legacy `model:<provider>:<model>` tap (the shape
+/// [`model_search_view`] result buttons carry) resolves against the live
+/// catalog and applies the same way (Node `parseLegacyModelCallback`
+/// parity). Stale `model:result:<n>` taps without remembered search state
+/// re-prompt instead.
+async fn handle_model_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if data == MODEL_ROOT_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = model_root_view(locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if data == MODEL_SEARCH_CALLBACK || data == MODEL_SEARCH_AGAIN_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "model.search.prompt"),
+                None,
+            )
+            .await;
+        }
+        return;
+    }
+    if data == MODEL_SEARCH_CANCEL_CALLBACK {
+        answer_callback(bot, query, None, false).await;
+        if let Some((chat, message)) = callback_message_ids(query) {
+            if let Err(err) = bot.delete_message(chat, message).await {
+                tracing::debug!("[otb-bot] telegram: model search cancel delete failed: {err}");
+            }
+        }
+        return;
+    }
+    if let Some(page) = parse_model_providers_page_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = model_providers_view(locale, page).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some((provider_index, _)) = parse_model_provider_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) =
+                model_provider_models_view(locale, provider_index, 0).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    // A search-result tap without remembered search state (stateless
+    // scaffold: no `results` stage memory) re-prompts for a query instead of
+    // guessing the target.
+    if parse_model_search_result_callback(data).is_some() {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "model.search.prompt"),
+                None,
+            )
+            .await;
+        }
+        return;
+    }
+    // `model:list:<kind>:<n>` resolves against the same flat first-page list
+    // the root keyboard shows (favorites + recent are folded together, see
+    // [`model_root_view`]).
+    if let Some((_, index)) = parse_model_list_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            apply_model_root_pick(bot, locale, chat_id, index).await;
+        }
+        return;
+    }
+    if let Some(index) = parse_model_pick_callback(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            apply_model_provider_pick(bot, locale, chat_id, index).await;
+        }
+        return;
+    }
+    // Self-contained legacy pick `model:<provider>:<model>` (Node
+    // `parseLegacyModelCallback` parity): search-result buttons carry the
+    // full identity inline, so they resolve against the live catalog without
+    // remembered search state. Every known shape returned above, so anything
+    // reaching here is either legacy or garbage (a catalog miss answers
+    // `model.change_error_callback`, like Node's invalid path).
+    if let Some(resolved) = otb_core::agent_model_variant_gates::parse_legacy_model_callback(data)
+    {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            apply_model_legacy_pick(
+                bot,
+                locale,
+                chat_id,
+                &resolved.provider_id,
+                &resolved.model_id,
+            )
+            .await;
+        }
+    }
+}
+
+/// Apply a `model:list:<kind>:<n>` tap against the root menu's flat first-page
+/// list. Unknown indexes answer `model.change_error_callback`.
+async fn apply_model_root_pick(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    chat_id: i64,
+    index: usize,
+) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "model.providers.error"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    let mut flat: Vec<crate::commands::ModelListItem> = Vec::new();
+    for provider in &providers {
+        flat.extend(crate::commands::model_list_for_provider(&raw, &provider.id));
+    }
+    flat.sort_by(|left, right| {
+        format!("{}/{}", left.provider_id, left.model_id)
+            .cmp(&format!("{}/{}", right.provider_id, right.model_id))
+    });
+    let limit = crate::config::MODELS_LIST_LIMIT.max(1);
+    let Some(pick) = flat.into_iter().take(limit).nth(index) else {
+        answer_no_query_model_error(bot, chat_id, locale).await;
+        return;
+    };
+    apply_model_pick(bot, locale, chat_id, &pick.provider_id, &pick.model_id).await;
+}
+
+/// Apply a `model:pick:<n>` tap: the index is global within its provider page
+/// (see [`build_models_keyboard`]). Stateless, the provider is unknown, so
+/// the first provider offering that position wins; an index no provider
+/// offers answers `model.change_error_callback`.
+async fn apply_model_provider_pick(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    chat_id: i64,
+    index: usize,
+) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "model.providers.error"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    let providers = crate::commands::provider_list_from_value(&raw);
+    let mut pick: Option<crate::commands::ModelListItem> = None;
+    for provider in &providers {
+        let models = crate::commands::model_list_for_provider(&raw, &provider.id);
+        if let Some(model) = models.get(index) {
+            pick = Some(model.clone());
+            break;
+        }
+    }
+    let Some(pick) = pick else {
+        answer_no_query_model_error(bot, chat_id, locale).await;
+        return;
+    };
+    apply_model_pick(bot, locale, chat_id, &pick.provider_id, &pick.model_id).await;
+}
+
+/// Apply a legacy `model:<provider>:<model>` tap: the pair resolves against
+/// the live catalog (exact match; a gone pair answers
+/// `model.change_error_callback`), then applies like any other pick.
+async fn apply_model_legacy_pick(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    chat_id: i64,
+    provider_id: &str,
+    model_id: &str,
+) {
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    let raw = match client.list_providers().await {
+        Ok(raw) => raw,
+        Err(err) => {
+            tracing::warn!("[otb-bot] telegram: providers list failed: {err}");
+            reply_list_view(
+                bot,
+                chat_id,
+                &crate::locale::translate(locale, "model.providers.error"),
+                None,
+            )
+            .await;
+            return;
+        }
+    };
+    let offered = crate::commands::model_list_for_provider(&raw, provider_id)
+        .iter()
+        .any(|item| item.model_id == model_id);
+    if !offered {
+        tracing::warn!("[otb-bot] telegram: model legacy pick not offered");
+        answer_no_query_model_error(bot, chat_id, locale).await;
+        return;
+    }
+    apply_model_pick(bot, locale, chat_id, provider_id, model_id).await;
+}
+
+/// Persist a model pick (variant resets to `"default"`) and confirm with
+/// `model.changed_message`. When the new model offers more than one variant,
+/// the variant menu follows (Node
+/// `showVariantSelectionMenuAfterModelChange` parity). A failed write answers
+/// `model.change_error_callback`.
+async fn apply_model_pick(
+    bot: &teloxide_core::Bot,
+    locale: &str,
+    chat_id: i64,
+    provider_id: &str,
+    model_id: &str,
+) {
+    let app_home = crate::config::resolve_app_home();
+    if let Err(err) =
+        crate::settings_current::write_current_model(&app_home, provider_id, model_id, Some("default"))
+    {
+        tracing::warn!("[otb-bot] telegram: cannot remember selected model: {err}");
+        answer_no_query_model_error(bot, chat_id, locale).await;
+        return;
+    }
+    tracing::info!("[otb-bot] telegram: model selected");
+    let confirmation = crate::commands::render_model_changed(provider_id, model_id, None, Some(locale));
+    reply_list_view(bot, chat_id, &confirmation, None).await;
+    // Variant follow-up (Node parity): only when the model offers a real
+    // choice; failures stay silent so the model confirmation stands.
+    let client = crate::config::AppConfig::load()
+        .map(|config| config.opencode_client())
+        .unwrap_or_else(|_| crate::opencode::OpencodeClient::from_env());
+    if let Ok(raw) = client.list_providers().await {
+        let variants = crate::commands::variant_list_for_model(&raw, provider_id, model_id);
+        if variants.len() > 1 {
+            let (text, keyboard) = variants_view(locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+    }
+}
+
+/// Stateless error reply for model-apply failures without a live callback
+/// query (the spinner was already acked): the `model.change_error_callback`
+/// text as a plain message.
+async fn answer_no_query_model_error(bot: &teloxide_core::Bot, chat_id: i64, locale: &str) {
+    reply_list_view(
+        bot,
+        chat_id,
+        &crate::locale::translate(locale, "model.change_error_callback"),
+        None,
+    )
+    .await;
+}
+
+/// Handle an `open:*` tap (JS `file-browser-callback-handler.ts`
+/// `handleOpenCallback` parity): `open:roots` re-renders the roots list;
+/// `open:nav:<path>` / `open:pg:<path>|<page>` re-render the requested
+/// browse page; `open:sel:<path>` persists the directory as the current
+/// project (folder name as display, path as id/worktree) and confirms
+/// with `open.selected`. Outside the allowed roots answers
+/// `open.access_denied`; scan failures render `open.scan_error`. The
+/// spinner is always acked first.
+async fn handle_open_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if is_open_roots(data) {
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = open_roots_view(locale);
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some(path) = parse_open_nav_callback(data) {
+        let roots = browser_roots();
+        if !otb_core::file_browser_service_gates::is_within_allowed_root(
+            path,
+            &roots,
+            cfg!(windows),
+        ) {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, "open.access_denied")),
+                true,
+            )
+            .await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = open_browse_page(path, 0, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some((path, page)) = parse_open_page_callback(data) {
+        let roots = browser_roots();
+        if !otb_core::file_browser_service_gates::is_within_allowed_root(
+            &path,
+            &roots,
+            cfg!(windows),
+        ) {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, "open.access_denied")),
+                true,
+            )
+            .await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = open_browse_page(&path, page, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some(path) = parse_open_select_callback(data) {
+        let roots = browser_roots();
+        if !otb_core::file_browser_service_gates::is_within_allowed_root(
+            path,
+            &roots,
+            cfg!(windows),
+        ) {
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, "open.access_denied")),
+                true,
+            )
+            .await;
+            return;
+        }
+        let Some(chat_id) = callback_chat_id(query) else {
+            return;
+        };
+        let home = home_directory();
+        let display =
+            otb_core::file_browser_service_gates::path_to_display_path(path, &home);
+        let folder = crate::commands::get_project_folder_name(path);
+        let app_home = crate::config::resolve_app_home();
+        if let Err(err) = crate::settings_current::write_current_project(
+            &app_home, path, path, &folder,
+        ) {
+            tracing::warn!("[otb-bot] telegram: cannot remember selected open directory: {err}");
+            answer_callback(
+                bot,
+                query,
+                Some(crate::locale::translate(locale, "open.select_error")),
+                true,
+            )
+            .await;
+            return;
+        }
+        tracing::info!("[otb-bot] telegram: open directory selected");
+        answer_callback(bot, query, None, false).await;
+        let confirmation = crate::locale::translate(locale, "open.selected")
+            .replace("{project}", &display);
+        reply_list_view(bot, chat_id, &confirmation, None).await;
+    }
+}
+
+/// Handle an `ls:*` tap (JS `handleLsCallback` parity):
+/// `ls:nav:<path>` / `ls:pg:<path>|<page>` / `ls:back:<path>|<page>`
+/// re-render the requested browse page; `ls:file:<path>|<page>` shows the
+/// file details; `ls:attach:<path>` confirms the attach (stateless: the
+/// prompt-attachment interaction needs a dispatcher and stays a
+/// follow-up); `ls:download:<path>` answers the downloading toast and
+/// re-sends the file-details view (direct document sending needs a
+/// dispatcher follow-up). Outside the project root answers
+/// `ls.access_denied`. The spinner is always acked first.
+async fn handle_ls_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    let app_home = crate::config::resolve_app_home();
+    let current = crate::settings_current::read_settings_current(&app_home);
+    let Some(project_root) = current.project_worktree.clone().filter(|w| !w.is_empty()) else {
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(locale, "bot.project_not_selected")),
+            true,
+        )
+        .await;
+        return;
+    };
+    let denied = || crate::locale::translate(locale, "ls.access_denied");
+    if let Some(path) = parse_ls_nav_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = ls_browse_page(&project_root, path, 0, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some((path, page)) = parse_ls_page_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(&path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = ls_browse_page(&project_root, &path, page, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some((path, page)) = parse_ls_file_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(&path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = ls_file_view(&path, page, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+        return;
+    }
+    if let Some(path) = parse_ls_attach_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let relative = path
+                .strip_prefix(&format!(
+                    "{}/",
+                    project_root.trim_end_matches(['/', '\\'])
+                ))
+                .unwrap_or(path);
+            let confirmation = crate::locale::translate(locale, "attachment.added")
+                .replace("{path}", relative);
+            reply_list_view(bot, chat_id, &confirmation, None).await;
+        }
+        return;
+    }
+    if let Some(path) = parse_ls_download_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        // Download toast first (Node `sendDownloadedFile` parity: the toast
+        // clears the spinner, then the file follows; the scaffold keeps no
+        // document-sending path, so the details view follows instead).
+        answer_callback(
+            bot,
+            query,
+            Some(crate::locale::translate(
+                locale,
+                "commands.download.downloading",
+            )),
+            false,
+        )
+        .await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let probed = path.to_string();
+            let meta =
+                match tokio::task::spawn_blocking(move || std::fs::metadata(&probed)).await {
+                    Ok(Ok(meta)) => Some(meta),
+                    _ => None,
+                };
+            match meta {
+                Some(meta) if meta.is_file() => {
+                    let name = otb_core::file_browser_service_gates::base_name(path);
+                    let size_text = otb_core::media_prompt::format_file_size(meta.len());
+                    let size_label =
+                        crate::locale::translate(locale, "commands.download.size");
+                    let header = crate::locale::translate(locale, "ls.file.header");
+                    let text = format!(
+                        "📄 {header}\n<code>{}</code>\n{size_label}: {size_text}",
+                        crate::commands::escape_html(&name),
+                    );
+                    reply_list_view(bot, chat_id, &text, None).await;
+                }
+                Some(_) => {
+                    reply_list_view(
+                        bot,
+                        chat_id,
+                        &crate::locale::translate(locale, "commands.download.not_file"),
+                        None,
+                    )
+                    .await;
+                }
+                None => {
+                    reply_list_view(
+                        bot,
+                        chat_id,
+                        &crate::locale::translate(locale, "commands.download.not_found"),
+                        None,
+                    )
+                    .await;
+                }
+            }
+        }
+        return;
+    }
+    if let Some((path, page)) = parse_ls_back_callback(data) {
+        if !otb_core::file_browser_service_gates::is_path_within_directory(&path, &project_root) {
+            answer_callback(bot, query, Some(denied()), true).await;
+            return;
+        }
+        answer_callback(bot, query, None, false).await;
+        if let Some(chat_id) = callback_chat_id(query) {
+            let (text, keyboard) = ls_browse_page(&project_root, &path, page, locale).await;
+            reply_list_view(bot, chat_id, &text, keyboard).await;
+        }
+    }
+}
+
+/// Handle a `settings:*` tap (minimal JS `settings-callback-handler.ts`
+/// parity): auth-gate, prefix guard, then the spinner is always answered
+/// with the Node toast key (`settings.saved` for every handled toggle,
+/// `callback.processing_error` for the unknown fallback; the TTS branch
+/// answers its `tts.*` saved key). The toggle store writes, the settings
+/// menu re-render, and the pinned-dashboard apply stay a dispatcher
+/// follow-up, so the tap only acks here and never hangs.
+async fn handle_settings_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_settings_callback(data) {
+        return;
+    }
+    let action = otb_core::settings_callback_gates::classify_settings_callback_action(data);
+    // TTS mode is unknown statelessly; the saved-key helper needs a mode,
+    // so answer the generic saved toast for the TTS branch here (the
+    // `tts.*` key selection lands with the dispatcher).
+    let key = match action {
+        otb_core::settings_callback_gates::SettingsCallbackAction::Unknown => {
+            "callback.processing_error"
+        }
+        _ => "settings.saved",
+    };
+    tracing::debug!("[otb-bot] telegram: settings callback action={:?}", action);
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(locale, key)),
+        matches!(
+            action,
+            otb_core::settings_callback_gates::SettingsCallbackAction::Unknown
+        ),
+    )
+    .await;
+}
+
+/// Handle a `task:retry-schedule` / `task:cancel` tap (minimal JS
+/// `scheduled-task-callback-handler.ts` `handleTaskCallback` parity):
+/// auth-gate, exact-shape guard, then the spinner is always acked. The
+/// flow-state / interaction / message-id gates, the schedule reset, and
+/// the message deletes need a dispatcher and stay a follow-up.
+async fn handle_task_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    _locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_task_retry_schedule_callback(data) && !is_task_cancel_callback(data) {
+        return;
+    }
+    tracing::debug!("[otb-bot] telegram: task callback data={data}");
+    // Ack the spinner so the tap never hangs; full handling (active-flow
+    // gates, schedule reset, message deletes) lands with the dispatcher.
+    answer_callback(bot, query, None, false).await;
+}
+
+/// Handle a `tasklist:*` tap (minimal JS `handleTaskListCallback`
+/// parity): auth-gate, prefix guard, then the spinner is always acked. An
+/// unknown shape answers the `callback.processing_error` toast; a known
+/// open/delete/toggle/cancel tap only acks — the metadata / store /
+/// runtime round-trips need a dispatcher and stay a follow-up.
+async fn handle_tasklist_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_tasklist_callback(data) {
+        return;
+    }
+    if is_tasklist_cancel_callback(data)
+        || parse_tasklist_open_callback(data).is_some()
+        || parse_tasklist_delete_callback(data).is_some()
+        || parse_tasklist_toggle_callback(data).is_some()
+    {
+        tracing::debug!("[otb-bot] telegram: tasklist callback data={data}");
+        // Ack the spinner so the tap never hangs; full handling (metadata
+        // gates, store toggle/delete, detail re-render) lands with the
+        // dispatcher.
+        answer_callback(bot, query, None, false).await;
+        return;
+    }
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(
+            locale,
+            "callback.processing_error",
+        )),
+        false,
+    )
+    .await;
+}
+
+/// Handle a `compact:details` / `compact:confirm` tap (minimal JS
+/// `context-control-callback-handler.ts` parity): auth-gate, exact-shape
+/// guard, then the spinner is always acked. The active-menu / stage gates,
+/// the confirm-menu edit, and the summarize call need a dispatcher and
+/// stay a follow-up.
+async fn handle_compact_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    _locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_compact_details_callback(data) && !is_compact_confirm_callback(data) {
+        return;
+    }
+    tracing::debug!("[otb-bot] telegram: compact callback data={data}");
+    // Ack the spinner so the tap never hangs; full handling (stage gates,
+    // confirm edit, summarize) lands with the dispatcher.
+    answer_callback(bot, query, None, false).await;
+}
+
+/// Handle an `inline:cancel:*` tap plus the legacy `compact:cancel` tap
+/// (JS `handleInlineMenuCancel` parity, stateless): auth-gate, kind guard,
+/// then toast `common.cancelled` and delete the menu message (Node
+/// `cancelMenu` parity). Unknown kinds are ignored so the router can fall
+/// through to `callback.unknown_command`.
+async fn handle_inline_cancel_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    let Some(kind) = parse_inline_cancel_callback(data) else {
+        return;
+    };
+    tracing::debug!("[otb-bot] telegram: inline cancel kind={kind}");
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(locale, "common.cancelled")),
+        false,
+    )
+    .await;
+    if let Some((chat, message)) = callback_message_ids(query) {
+        if let Err(err) = bot.delete_message(chat, message).await {
+            tracing::debug!("[otb-bot] telegram: inline cancel delete failed: {err}");
+        }
+    }
+}
+
+/// Handle a `rename:cancel` tap (minimal JS `handleRenameCancel` parity,
+/// stateless): auth-gate, exact-shape guard, then toast
+/// `common.cancelled` and confirm with the `rename.cancelled` text. The
+/// waiting-for-name / interaction / active-message gates and the prompt
+/// edit need a dispatcher and stay a follow-up.
+async fn handle_rename_cancel_callback(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    query: &CallbackQuery,
+) {
+    if !is_authorized(Some(query.from.id.0), allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring callback from unauthorized user");
+        return;
+    }
+    let data = query.data.as_deref().unwrap_or("");
+    if !is_rename_cancel_callback(data) {
+        return;
+    }
+    tracing::debug!("[otb-bot] telegram: rename cancel callback");
+    answer_callback(
+        bot,
+        query,
+        Some(crate::locale::translate(locale, "common.cancelled")),
+        false,
+    )
+    .await;
+    if let Some(chat_id) = callback_chat_id(query) {
+        reply_list_view(
+            bot,
+            chat_id,
+            &crate::locale::translate(locale, "rename.cancelled"),
+            None,
+        )
+        .await;
+    }
+}
+
+/// Handle one update: auth-gate, parse command, dispatch, reply (T13 + live
+/// `/status`, `/sessions`, `/projects`, `/worktree`, `/recent`,
+/// `/messages`, `/new`, `/help`, `/settings`, `/tasklist`, `/commands`,
+/// `/skills`, `/mcps`, `/open`, `/ls`, `/rename`, `/abort`, `/detach`,
+/// `/task`, `/opencode_start`, `/opencode_stop`, `/reload`, `/goal`).
+/// Callback queries carrying `session:<id>`, `project:<id>`,
+/// `worktree:<position>`, `recent:<position>`, or `messages:*` resolve
+/// against a fresh live fetch and persist the selection (JS select
+/// parity); `session:page:<n>`, `projects:page:<n>`, `worktree:page:<n>`,
+/// `recent:page:<n>`, and `messages:page:<n>` re-render the requested list
+/// page (JS pager parity); `messages:revert` reverts to the tapped message,
+/// `messages:fork` forks a session from it, `messages:back` returns to the
+/// list, and `messages:cancel` deletes the prompt message;
+/// `commands:*` / `skills:*` page, select, execute, and cancel taps drive the
+/// catalog confirm flow; `mcps:*` select, toggle, back, and cancel taps drive
+/// the server detail flow; `agent:<name>` and `variant:<id>` taps persist the
+/// pick and confirm; `question:*` select/submit/custom/toggle/cancel taps
+/// and `permission:once` / `permission:always` / `permission:reject` taps
+/// ack the spinner (minimal parity; the stateful reply/reject round-trips
+/// need a dispatcher and stay a follow-up); `model:*` root, providers, provider, list, pick,
+/// legacy (`model:<provider>:<model>`), and search taps drive the model
+/// browser (stale `model:result:<n>` taps without remembered search state
+/// re-prompt); `session:search*` / `projects:search*` taps
+/// drive the stateless prompt-then-filter flow (the list views carry the
+/// search button row; search/again send the prompt, cancel deletes the
+/// message, stale page/result taps re-prompt; the query itself travels as
+/// `/sessions <query>` / `/projects <query>` command args); `open:*` nav/page/roots/select taps drive the
+/// `/open` directory browser and `ls:*` nav/page/file/attach/download/back
+/// taps drive the `/ls` project browser; `settings:*` toggle taps answer the
+/// saved toast (store writes + menu re-render stay a dispatcher follow-up);
+/// `compact:details` / `compact:confirm` taps ack the spinner (active-menu /
+/// stage gates + summarize stay a follow-up); `task:retry-schedule` /
+/// `task:cancel` and `tasklist:*` open/delete/toggle/cancel taps ack the
+/// spinner (flow-state / store / runtime round-trips stay a follow-up);
+/// `inline:cancel:*` taps (plus legacy `compact:cancel`) toast
+/// `common.cancelled` and delete the menu message; `rename:cancel` toasts
+/// `common.cancelled` and confirms with `rename.cancelled` (waiting /
+/// interaction / message gates stay a follow-up); other callback
+/// data and non-message updates are ignored. Non-command text and
+/// unauthorized users are ignored.
+/// Unknown `/commands` get a minimal English notice. `/status`
+/// renders the live JS-parity template from a fresh health probe plus the
+/// `settings.json` `current*` view (agent/project/session fall back to
+/// not-set until their live fetches land); `/sessions` lists the current
+/// project's sessions with one tap-to-select button per row (or the
+/// in-memory matches for `/sessions <query>`) and `/new`
+/// creates one (both through the configured OpenCode client); `/projects`
+/// merges the API project list with the isolated directory cache (or the
+/// in-memory matches for `/projects <query>`);
+/// `/worktree` lists `git worktree list --porcelain` rows for the current
+/// project; `/recent` lists sessions across the known project directories
+/// (all `Idle` until liveness lookups land); `/messages` lists the current
+/// session's user messages with tap-to-show detail plus the revert/fork/
+/// back/cancel detail actions; `/commands` and
+/// `/skills` list the current project's catalog entries through the
+/// configured OpenCode client; `/mcps` lists its MCP server statuses;
+/// `/open` browses filesystem roots for adding a project; `/ls` lists the
+/// current project directory; `/rename` shows the prompt with the live
+/// title, or renames directly with `/rename <new title>`; `/abort` signals
+/// the current session's running turn via the versioned abort endpoint
+/// (plain text); `/detach` clears the remembered session without stopping
+/// the server session; `/task` acks the schedule text (the interactive flow
+/// stays a follow-up); `/opencode_start` and `/opencode_stop` report the
+/// probed server status without starting or stopping anything (safety);
+/// `/reload` re-reads the local settings file; `/goal` renders the entry
+/// gate (the interactive objective flow stays a follow-up); `/help` and
+/// `/settings` render their JS-parity texts with no I/O; `/tasklist`
+/// renders the sorted `scheduledTasks` store from `settings.json`
+/// (missing/invalid reads empty); every other command keeps its scaffold
+/// ack.
+async fn handle_update(
+    bot: &teloxide_core::Bot,
+    allowed_user_id: u64,
+    locale: &str,
+    update: &Update,
+) {
+    if let UpdateKind::CallbackQuery(query) = &update.kind {
+        let data = query.data.as_deref().unwrap_or("");
+        // Inline-cancel pre-hook first (Node `callback-router.ts` parity:
+        // `handleInlineMenuCancel` runs before prefix dispatch, and the
+        // legacy `compact:cancel` reads as the `context` menu).
+        if parse_inline_cancel_callback(data).is_some() {
+            handle_inline_cancel_callback(bot, allowed_user_id, locale, query).await;
+        } else if data == SESSION_SEARCH_CALLBACK
+            || data == SESSION_SEARCH_AGAIN_CALLBACK
+            || data == SESSION_SEARCH_CANCEL_CALLBACK
+            || data.starts_with(SESSION_SEARCH_PAGE_PREFIX)
+            || data.starts_with(SESSION_SEARCH_RESULT_PREFIX)
+        {
+            handle_session_search_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(SESSION_CALLBACK_PREFIX)
+            || data.starts_with(SESSION_PAGE_CALLBACK_PREFIX)
+        {
+            handle_session_callback(bot, allowed_user_id, locale, query).await;
+        } else if data == PROJECT_SEARCH_CALLBACK
+            || data == PROJECT_SEARCH_AGAIN_CALLBACK
+            || data == PROJECT_SEARCH_CANCEL_CALLBACK
+            || data.starts_with(PROJECT_SEARCH_PAGE_PREFIX)
+            || data.starts_with(PROJECT_SEARCH_RESULT_PREFIX)
+        {
+            handle_project_search_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(PROJECT_CALLBACK_PREFIX)
+            || data.starts_with(PROJECT_PAGE_CALLBACK_PREFIX)
+        {
+            handle_project_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(WORKTREE_CALLBACK_PREFIX)
+            || data.starts_with(WORKTREE_PAGE_CALLBACK_PREFIX)
+        {
+            handle_worktree_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(RECENT_CALLBACK_PREFIX)
+            || data.starts_with(RECENT_PAGE_CALLBACK_PREFIX)
+        {
+            handle_recent_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(MESSAGES_CALLBACK_PREFIX) {
+            handle_messages_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(COMMANDS_CALLBACK_PREFIX) {
+            handle_catalog_callback(bot, allowed_user_id, locale, query, CatalogKind::Commands)
+                .await;
+        } else if data.starts_with(SKILLS_CALLBACK_PREFIX) {
+            handle_catalog_callback(bot, allowed_user_id, locale, query, CatalogKind::Skills).await;
+        } else if data.starts_with(MCPS_CALLBACK_PREFIX) {
+            handle_mcps_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(AGENT_CALLBACK_PREFIX) {
+            handle_agent_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(VARIANT_CALLBACK_PREFIX) {
+            handle_variant_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(QUESTION_CALLBACK_PREFIX) {
+            handle_question_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(PERMISSION_CALLBACK_PREFIX) {
+            handle_permission_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with("model:") {
+            handle_model_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(OPEN_CALLBACK_PREFIX) {
+            handle_open_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(LS_CALLBACK_PREFIX) {
+            handle_ls_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(SETTINGS_CALLBACK_PREFIX) {
+            handle_settings_callback(bot, allowed_user_id, locale, query).await;
+        } else if is_compact_details_callback(data) || is_compact_confirm_callback(data) {
+            handle_compact_callback(bot, allowed_user_id, locale, query).await;
+        } else if is_task_retry_schedule_callback(data) || is_task_cancel_callback(data) {
+            handle_task_callback(bot, allowed_user_id, locale, query).await;
+        } else if data.starts_with(TASKLIST_CALLBACK_PREFIX) {
+            handle_tasklist_callback(bot, allowed_user_id, locale, query).await;
+        } else if is_rename_cancel_callback(data) {
+            handle_rename_cancel_callback(bot, allowed_user_id, locale, query).await;
+        }
+        return;
+    }
+    let message = match &update.kind {
+        UpdateKind::Message(message) => message,
+        _ => return,
+    };
+    let Some(text) = message.text() else {
+        return;
+    };
+    let Some((command, args)) = split_command_args(text) else {
+        return;
+    };
+    let user_id = message.from.as_ref().map(|user| user.id.0);
+    if !is_authorized(user_id, allowed_user_id) {
+        tracing::debug!("[otb-bot] telegram: ignoring update from unauthorized user");
+        return;
+    }
+    let chat_id = message.chat.id.0;
+    if command == "sessions" {
+        // A trailing query filters in memory (stateless search follow-up:
+        // the search-button prompt asks for the query, which returns as
+        // `/sessions <query>` args); bare lists the first page.
+        let (text, keyboard) = if args.trim().is_empty() {
+            sessions_view(locale, 0).await
+        } else {
+            sessions_search_view(locale, &args).await
+        };
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "projects" {
+        // Same stateless search transport as `/sessions <query>`.
+        let (text, keyboard) = if args.trim().is_empty() {
+            projects_view(locale, 0).await
+        } else {
+            projects_search_view(locale, &args).await
+        };
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "worktree" {
+        let (text, keyboard) = worktree_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "recent" {
+        let (text, keyboard) = recent_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "messages" {
+        let (text, keyboard) = messages_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "commands" {
+        let (text, keyboard) = commands_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "skills" {
+        let (text, keyboard) = skills_view(locale, 0).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "mcps" {
+        let (text, keyboard) = mcps_view(locale).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "open" {
+        let (text, keyboard) = open_view(locale).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "ls" {
+        let (text, keyboard) = ls_view(locale, &args).await;
+        reply_list_view(bot, chat_id, &text, keyboard).await;
+        return;
+    }
+    if command == "rename" {
+        let reply = if args.trim().is_empty() {
+            rename_prompt_view(locale).await
+        } else {
+            rename_apply_view(locale, &args).await
+        };
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "abort" {
+        let reply = abort_view(locale).await;
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "detach" {
+        let reply = detach_view(locale).await;
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "task" {
+        let reply = task_view(locale, &args);
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "opencode_start" {
+        let reply = opencode_start_view(locale).await;
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "opencode_stop" {
+        let reply = opencode_stop_view(locale).await;
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "reload" {
+        let reply = reload_view(locale);
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    if command == "goal" {
+        let reply = goal_view(locale, &args);
+        if let Err(err) = send_message(bot, chat_id, &reply).await {
+            tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+        }
+        return;
+    }
+    let reply = if command == "status" {
+        status_reply(locale).await
+    } else if command == "new" {
+        new_reply(locale).await
+    } else if command == "help" {
+        crate::commands::render_help(Some(locale))
+    } else if command == "settings" {
+        crate::commands::render_settings_view(Some(locale))
+    } else if command == "tasklist" {
+        tasklist_reply(locale)
+    } else {
+        crate::commands::dispatch(&command)
+            .unwrap_or_else(|| format!("unknown command: {command} (scaffold-wired)"))
+    };
+    if let Err(err) = send_message(bot, chat_id, &reply).await {
+        tracing::warn!("[otb-bot] telegram: reply failed for chat {chat_id}: {err}");
+    }
+}
+
+/// Long-poll forever with `get_updates` (offset ack + 30s timeout).
+/// Only called when [`polling_enabled`]; never called from tests.
+pub async fn run_polling(bot: teloxide_core::Bot, allowed_user_id: u64, locale: &str) {
+    let mut offset: i32 = 0;
+    loop {
+        match bot.get_updates().offset(offset).timeout(30).await {
+            Ok(batch) => {
+                for update in &batch {
+                    offset = update.id.0.wrapping_add(1) as i32;
+                    handle_update(&bot, allowed_user_id, locale, update).await;
+                }
+            }
+            Err(err) => {
+                tracing::warn!("[otb-bot] telegram: getUpdates failed: {err}; retrying in 1s");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
+/// Build the client from the env token + allowed id, then poll forever.
+/// Call only when [`polling_enabled`]; performs network I/O. The token
+/// value is never logged (only its length); `start` awaits this so the
+/// process stays alive instead of exiting 0.
+pub async fn run_telegram_from_env() {
+    let token = token_from_env();
+    let allowed = allowed_user_id_from_env();
+    // App Home `.env` may carry `BOT_LOCALE`; fall back to `en` on error.
+    let locale = crate::config::AppConfig::load()
+        .map(|config| config.bot_locale)
+        .unwrap_or_else(|_| crate::locale::FALLBACK_LOCALE.to_string());
+    let bot = create_bot(&token);
+    tracing::info!(
+        "[otb-bot] telegram: polling started (token_len={} allowed_user_id={allowed})",
+        token.len()
+    );
+    run_polling(bot, allowed, &locale).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn polling_is_opt_in_only() {
+        assert!(polling_enabled_from(Some("1")));
+        assert!(!polling_enabled_from(None));
+        assert!(!polling_enabled_from(Some("")));
+        assert!(!polling_enabled_from(Some("true")));
+        // Default process env must keep polling off.
+        assert!(!polling_enabled_from(std::env::var(POLLING_ENV).ok().as_deref()));
+    }
+
+    #[test]
+    fn token_never_requires_live_env() {
+        assert_eq!(resolve_token(Some("test-token")), "test-token");
+        assert_eq!(resolve_token(Some("  padded  ")), "padded");
+        assert_eq!(resolve_token(Some("")), DUMMY_TOKEN);
+        assert_eq!(resolve_token(None), DUMMY_TOKEN);
+    }
+
+    #[test]
+    fn token_resolution_prefers_live_over_test() {
+        assert_eq!(
+            resolve_token_ordered(Some("live-token"), Some("test-token")),
+            "live-token"
+        );
+        assert_eq!(
+            resolve_token_ordered(None, Some("test-token")),
+            "test-token"
+        );
+        assert_eq!(resolve_token_ordered(None, None), DUMMY_TOKEN);
+        assert_eq!(resolve_token_ordered(Some("  "), Some("test-token")), "test-token");
+        // Env-backed check with dummy values only (no network, no live paths).
+        let prev_live = std::env::var(LIVE_TOKEN_ENV).ok();
+        let prev_test = std::env::var(TEST_TOKEN_ENV).ok();
+        std::env::set_var(TEST_TOKEN_ENV, "dummy-test-token");
+        std::env::set_var(LIVE_TOKEN_ENV, "dummy-live-token");
+        assert_eq!(token_from_env(), "dummy-live-token");
+        match prev_live {
+            Some(value) => std::env::set_var(LIVE_TOKEN_ENV, value),
+            None => std::env::remove_var(LIVE_TOKEN_ENV),
+        }
+        match prev_test {
+            Some(value) => std::env::set_var(TEST_TOKEN_ENV, value),
+            None => std::env::remove_var(TEST_TOKEN_ENV),
+        }
+    }
+
+    #[test]
+    fn auth_allows_only_the_configured_user() {
+        assert!(is_authorized(Some(42), 42));
+        assert!(!is_authorized(Some(43), 42));
+        assert!(!is_authorized(None, 42));
+    }
+
+    #[test]
+    fn send_payload_truncates_on_char_boundary() {
+        let (chat, body) = build_send_payload(7, "hi");
+        assert_eq!(chat, ChatId(7));
+        assert_eq!(body, "hi");
+
+        let long = "é".repeat(TELEGRAM_TEXT_LIMIT + 10);
+        let (_, body) = build_send_payload(7, &long);
+        assert!(body.chars().count() <= TELEGRAM_TEXT_LIMIT);
+        assert!(body.len() <= TELEGRAM_TEXT_LIMIT);
+    }
+
+    #[test]
+    fn bot_construction_with_dummy_performs_no_io() {
+        let bot = create_bot(DUMMY_TOKEN);
+        assert_eq!(bot.token(), DUMMY_TOKEN);
+    }
+
+    #[test]
+    fn parse_command_text_extracts_bare_lowercase_name() {
+        assert_eq!(parse_command_text("/status"), Some("status".to_string()));
+        assert_eq!(
+            parse_command_text("/opencode_start@mybot extra args"),
+            Some("opencode_start".to_string())
+        );
+        assert_eq!(parse_command_text("  /Help  "), Some("help".to_string()));
+        assert_eq!(parse_command_text("hello"), None);
+        assert_eq!(parse_command_text("/"), None);
+        assert_eq!(parse_command_text(""), None);
+    }
+
+    #[test]
+    fn split_command_args_separates_name_and_trailing_text() {
+        assert_eq!(
+            split_command_args("/status"),
+            Some(("status".to_string(), String::new()))
+        );
+        assert_eq!(
+            split_command_args("/ls  /work/proj "),
+            Some(("ls".to_string(), "/work/proj".to_string()))
+        );
+        assert_eq!(
+            split_command_args("/rename@mybot New title here"),
+            Some(("rename".to_string(), "New title here".to_string()))
+        );
+        assert_eq!(split_command_args("hello"), None);
+        assert_eq!(split_command_args("/"), None);
+    }
+
+    #[test]
+    fn catalog_json_conversion_feeds_mcp_parser() {
+        use otb_core::session_pick_catalog_gates::{
+            McpStatusName as Name, parse_mcp_catalog_servers,
+        };
+        let value = serde_json::json!({
+            "gh": { "status": "connected" },
+            "db": { "status": "failed", "error": "boom" },
+        });
+        let servers =
+            parse_mcp_catalog_servers(&catalog_json_from_value(&value)).expect("parses");
+        assert_eq!(servers.len(), 2);
+        // `serde_json::Map` sorts keys (JS `Object.entries` preserves
+        // insertion order), so look servers up by name.
+        let gh = servers.iter().find(|s| s.name == "gh").expect("gh server");
+        let db = servers.iter().find(|s| s.name == "db").expect("db server");
+        assert_eq!(gh.status.name, Name::Connected);
+        assert_eq!(db.status.error.as_deref(), Some("boom"));
+        // Numbers/bools collapse (never inspected by the parser).
+        let junk = serde_json::json!({ "x": { "status": 42 } });
+        assert!(parse_mcp_catalog_servers(&catalog_json_from_value(&junk)).is_none());
+    }
+
+    #[test]
+    fn filesystem_scans_match_js_shapes() {
+        // Temp dirs only; removed afterwards (never a live path).
+        let base = std::env::temp_dir().join(format!("otb-scan-test-{}", std::process::id()));
+        let proj = base.join("proj");
+        std::fs::create_dir_all(proj.join("src")).expect("temp dir");
+        std::fs::create_dir_all(proj.join(".hidden")).expect("temp dir");
+        std::fs::write(proj.join("note.txt"), "hi").expect("temp file");
+        let proj_str = proj.to_string_lossy().into_owned();
+        let subdirs = scan_open_subdirs(&proj_str).expect("scans");
+        // Hidden directories are skipped, files are not listed.
+        assert_eq!(subdirs, vec!["src".to_string()]);
+        let entries = scan_ls_entries(&proj_str).expect("scans");
+        // Dirs sort before files (JS `scanLsDirectory` keeps hidden names).
+        assert_eq!(entries.len(), 3);
+        assert!(entries[0].is_dir);
+        assert!(entries[1].is_dir);
+        assert!(!entries[2].is_dir);
+        assert!(scan_open_subdirs(base.join("missing").to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn browser_roots_default_to_home_and_split_env() {
+        // Dummy values only; live env is restored afterwards.
+        let prev = std::env::var("OPEN_BROWSER_ROOTS").ok();
+        let prev_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", "/tmp/fake-home");
+        std::env::remove_var("OPEN_BROWSER_ROOTS");
+        assert_eq!(browser_roots(), vec!["/tmp/fake-home".to_string()]);
+        std::env::set_var("OPEN_BROWSER_ROOTS", " ~/a ,, ~/b ");
+        assert_eq!(browser_roots(), vec!["/tmp/fake-home/a".to_string(), "/tmp/fake-home/b".to_string()]);
+        match prev {
+            Some(value) => std::env::set_var("OPEN_BROWSER_ROOTS", value),
+            None => std::env::remove_var("OPEN_BROWSER_ROOTS"),
+        }
+        match prev_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn parse_session_id_callback_supports_node_shapes() {
+        assert_eq!(parse_session_id_callback("session:ses_1"), Some("ses_1"));
+        // Page callbacks are excluded (Node `parseSessionIdCallback` parity).
+        assert_eq!(parse_session_id_callback("session:page:2"), None);
+        assert_eq!(parse_session_id_callback("session:"), None);
+        assert_eq!(parse_session_id_callback("bogus"), None);
+        assert_eq!(parse_session_id_callback(""), None);
+    }
+
+    #[test]
+    fn parse_session_page_callback_reads_non_negative_pages() {
+        assert_eq!(parse_session_page_callback("session:page:0"), Some(0));
+        assert_eq!(parse_session_page_callback("session:page:2"), Some(2));
+        assert_eq!(parse_session_page_callback("session:ses_1"), None);
+        assert_eq!(parse_session_page_callback("session:page:"), None);
+        assert_eq!(parse_session_page_callback("session:page:-1"), None);
+        assert_eq!(parse_session_page_callback("session:page:2x"), None);
+        assert_eq!(parse_session_page_callback("bogus"), None);
+    }
+
+    #[test]
+    fn sessions_keyboard_has_one_callback_row_per_session() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        let items = vec![
+            crate::commands::SessionListItem {
+                id: "ses_1".to_string(),
+                title: "Fix bug".to_string(),
+                directory: "/work/proj".to_string(),
+            },
+            crate::commands::SessionListItem {
+                id: "ses_2".to_string(),
+                title: "".to_string(),
+                directory: "/work/proj".to_string(),
+            },
+        ];
+        let markup = build_sessions_keyboard(&items, Some("ses_1"), "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 2);
+        for row in &markup.inline_keyboard {
+            assert_eq!(row.len(), 1);
+        }
+        let first = &markup.inline_keyboard[0][0];
+        assert!(first.text.contains("(current)"));
+        assert!(first.text.contains("Fix bug"));
+        match &first.kind {
+            InlineKeyboardButtonKind::CallbackData(data) => {
+                assert_eq!(data, "session:ses_1");
+            }
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        // A blank title falls back instead of producing an empty button.
+        let second = &markup.inline_keyboard[1][0];
+        assert!(second.text.contains("new session"));
+        match &second.kind {
+            InlineKeyboardButtonKind::CallbackData(data) => {
+                assert_eq!(data, "session:ses_2");
+            }
+            other => panic!("expected callback data, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn button_label_truncation_keeps_active_prefix() {
+        assert_eq!(truncate_button_label("short", false), "short");
+        assert_eq!(truncate_button_label("short", true), "✅ short");
+        let long = "x".repeat(100);
+        let truncated = truncate_button_label(&long, false);
+        assert_eq!(truncated.chars().count(), 64);
+        assert!(truncated.ends_with("..."));
+        let truncated = truncate_button_label(&long, true);
+        assert_eq!(truncated.chars().count(), 64);
+        assert!(truncated.starts_with("✅ "));
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn project_and_worktree_callbacks_parse_node_shapes() {
+        assert_eq!(parse_project_id_callback("project:dir_abc"), Some("dir_abc"));
+        assert_eq!(parse_project_id_callback("projects:page:2"), None);
+        assert_eq!(parse_project_id_callback("project:"), None);
+        assert_eq!(parse_project_page_callback("projects:page:2"), Some(2));
+        assert_eq!(parse_project_page_callback("project:dir_abc"), None);
+        assert_eq!(parse_worktree_index_callback("worktree:3"), Some(3));
+        assert_eq!(parse_worktree_index_callback("worktree:page:1"), None);
+        assert_eq!(parse_worktree_page_callback("worktree:page:1"), Some(1));
+        assert_eq!(parse_recent_index_callback("recent:0"), Some(0));
+        assert_eq!(parse_recent_index_callback("recent:"), None);
+        // Recent page taps round-trip through their own parser and never
+        // leak into the index parser (Node `parseSessionIdCallback`-style
+        // page exclusion parity).
+        assert_eq!(parse_recent_page_callback("recent:page:0"), Some(0));
+        assert_eq!(parse_recent_page_callback("recent:page:3"), Some(3));
+        assert_eq!(parse_recent_page_callback("recent:0"), None);
+        assert_eq!(parse_recent_page_callback("recent:page:"), None);
+        assert_eq!(parse_recent_page_callback("recent:page:-1"), None);
+        assert_eq!(parse_recent_index_callback("recent:page:1"), None);
+        assert_eq!(
+            parse_message_select_callback("messages:select:4"),
+            Some(4)
+        );
+        assert_eq!(parse_message_select_callback("messages:page:1"), None);
+        assert_eq!(parse_message_page_callback("messages:page:1"), Some(1));
+    }
+
+    #[test]
+    fn worktree_keyboard_marks_current_and_carries_positions() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        let items = vec![
+            crate::commands::WorktreeListItem {
+                path: "/work/main".to_string(),
+                branch: Some("main".to_string()),
+                is_current: true,
+            },
+            crate::commands::WorktreeListItem {
+                path: "/work/feat".to_string(),
+                branch: None,
+                is_current: false,
+            },
+        ];
+        let markup = build_worktree_keyboard(&items, "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 2);
+        let first = &markup.inline_keyboard[0][0];
+        assert!(first.text.starts_with("✅ "));
+        match &first.kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "worktree:0"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        let second = &markup.inline_keyboard[1][0];
+        assert!(!second.text.starts_with("✅ "));
+        match &second.kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "worktree:1"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_keyboard_marks_active_and_carries_ids() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        let items = vec![crate::commands::ProjectListItem {
+            id: "dir_abc".to_string(),
+            worktree: "/work/proj".to_string(),
+            name: "proj".to_string(),
+            last_updated: 0,
+        }];
+        let markup = build_projects_keyboard(&items, Some("/work/proj"), "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 1);
+        let button = &markup.inline_keyboard[0][0];
+        assert!(button.text.starts_with("✅ "));
+        match &button.kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "project:dir_abc"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recent_and_messages_keyboards_carry_positions() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        let recent = vec![crate::commands::RecentListItem {
+            id: "ses_1".to_string(),
+            title: "Fix".to_string(),
+            directory: "/work/proj".to_string(),
+            updated: 1,
+            status: crate::commands::RecentStatus::Idle,
+        }];
+        let markup = build_recent_keyboard(&recent, "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 1);
+        match &markup.inline_keyboard[0][0].kind {
+            InlineKeyboardButtonKind::CallbackData(data) => assert_eq!(data, "recent:0"),
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        assert!(markup.inline_keyboard[0][0].text.contains("○"));
+
+        let messages = vec![crate::commands::UserMessageItem {
+            id: "msg_1".to_string(),
+            text: "hello".to_string(),
+            created: 3_600_000,
+        }];
+        let markup = build_messages_keyboard(&messages, "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 1);
+        match &markup.inline_keyboard[0][0].kind {
+            InlineKeyboardButtonKind::CallbackData(data) => {
+                assert_eq!(data, "messages:select:0")
+            }
+            other => panic!("expected callback data, got {other:?}"),
+        }
+        assert!(markup.inline_keyboard[0][0].text.contains("[01:00]"));
+    }
+
+    #[test]
+    fn clamp_page_index_pins_to_valid_range() {
+        assert_eq!(clamp_page_index(0, 0), 0);
+        assert_eq!(clamp_page_index(5, 0), 0);
+        assert_eq!(clamp_page_index(0, 3), 0);
+        assert_eq!(clamp_page_index(2, 3), 2);
+        assert_eq!(clamp_page_index(9, 3), 2);
+    }
+
+    #[test]
+    fn pager_row_appears_only_across_pages() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        fn pager_data(markup: &InlineKeyboardMarkup) -> Vec<String> {
+            markup
+                .inline_keyboard
+                .last()
+                .map(|row| {
+                    row.iter()
+                        .filter_map(|button| match &button.kind {
+                            InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        let sessions = vec![crate::commands::SessionListItem {
+            id: "ses_1".to_string(),
+            title: "Fix".to_string(),
+            directory: "/work/proj".to_string(),
+        }];
+        // Single page: rows only, no pager.
+        let single = build_sessions_keyboard(&sessions, None, "en", 0, 1);
+        assert_eq!(single.inline_keyboard.len(), 1);
+        // First of two pages: next only.
+        let first = build_sessions_keyboard(&sessions, None, "en", 0, 2);
+        assert_eq!(first.inline_keyboard.len(), 2);
+        assert_eq!(pager_data(&first), vec!["session:page:1".to_string()]);
+        // Last of two pages: prev only.
+        let last = build_sessions_keyboard(&sessions, None, "en", 1, 2);
+        assert_eq!(pager_data(&last), vec!["session:page:0".to_string()]);
+        // Middle of three pages: prev + next share one row.
+        let mid = build_sessions_keyboard(&sessions, None, "en", 1, 3);
+        assert_eq!(
+            pager_data(&mid),
+            vec![
+                "session:page:0".to_string(),
+                "session:page:2".to_string()
+            ]
+        );
+
+        let projects = vec![crate::commands::ProjectListItem {
+            id: "dir_abc".to_string(),
+            worktree: "/work/proj".to_string(),
+            name: "proj".to_string(),
+            last_updated: 0,
+        }];
+        let single = build_projects_keyboard(&projects, None, "en", 0, 1);
+        assert_eq!(single.inline_keyboard.len(), 1);
+        let first = build_projects_keyboard(&projects, None, "en", 0, 2);
+        assert_eq!(pager_data(&first), vec!["projects:page:1".to_string()]);
+        let last = build_projects_keyboard(&projects, None, "en", 1, 2);
+        assert_eq!(pager_data(&last), vec!["projects:page:0".to_string()]);
+
+        let worktrees = vec![crate::commands::WorktreeListItem {
+            path: "/work/main".to_string(),
+            branch: None,
+            is_current: false,
+        }];
+        let single = build_worktree_keyboard(&worktrees, "en", 0, 1);
+        assert_eq!(single.inline_keyboard.len(), 1);
+        let first = build_worktree_keyboard(&worktrees, "en", 0, 2);
+        assert_eq!(pager_data(&first), vec!["worktree:page:1".to_string()]);
+        let last = build_worktree_keyboard(&worktrees, "en", 1, 2);
+        assert_eq!(pager_data(&last), vec!["worktree:page:0".to_string()]);
+
+        let recent = vec![crate::commands::RecentListItem {
+            id: "ses_1".to_string(),
+            title: "Fix".to_string(),
+            directory: "/work/proj".to_string(),
+            updated: 1,
+            status: crate::commands::RecentStatus::Idle,
+        }];
+        let single = build_recent_keyboard(&recent, "en", 0, 1);
+        assert_eq!(single.inline_keyboard.len(), 1);
+        let first = build_recent_keyboard(&recent, "en", 0, 2);
+        assert_eq!(pager_data(&first), vec!["recent:page:1".to_string()]);
+        let last = build_recent_keyboard(&recent, "en", 1, 2);
+        assert_eq!(pager_data(&last), vec!["recent:page:0".to_string()]);
+
+        let messages = vec![crate::commands::UserMessageItem {
+            id: "msg_1".to_string(),
+            text: "hello".to_string(),
+            created: 3_600_000,
+        }];
+        let single = build_messages_keyboard(&messages, "en", 0, 1);
+        assert_eq!(single.inline_keyboard.len(), 1);
+        let first = build_messages_keyboard(&messages, "en", 0, 2);
+        assert_eq!(pager_data(&first), vec!["messages:page:1".to_string()]);
+        let last = build_messages_keyboard(&messages, "en", 1, 2);
+        assert_eq!(pager_data(&last), vec!["messages:page:0".to_string()]);
+    }
+
+    #[test]
+    fn messages_detail_actions_match_node_exact_shapes() {
+        // Node `MESSAGES_CALLBACK_*` are exact matches with no payload.
+        assert!(is_messages_revert("messages:revert"));
+        assert!(is_messages_fork("messages:fork"));
+        assert!(is_messages_back("messages:back"));
+        assert!(is_messages_cancel("messages:cancel"));
+        // No cross-talk between actions, and prefixed callbacks never
+        // leak into the action matchers.
+        assert!(!is_messages_revert("messages:fork"));
+        assert!(!is_messages_fork("messages:back"));
+        assert!(!is_messages_back("messages:cancel"));
+        assert!(!is_messages_cancel("messages:revert"));
+        assert!(!is_messages_revert("messages:select:0"));
+        assert!(!is_messages_fork("messages:page:1"));
+        assert!(!is_messages_back("messages:revert:0"));
+        assert!(!is_messages_cancel("messages:cancel:"));
+        assert!(!is_messages_revert(""));
+        // The shared prefix routes every messages callback, exact or
+        // positional, to the messages handler.
+        for data in [
+            "messages:select:0",
+            "messages:page:1",
+            "messages:revert",
+            "messages:fork",
+            "messages:back",
+            "messages:cancel",
+        ] {
+            assert!(data.starts_with(MESSAGES_CALLBACK_PREFIX), "{data}");
+        }
+        assert!(!"session:page:1".starts_with(MESSAGES_CALLBACK_PREFIX));
+    }
+
+    #[test]
+    fn message_detail_keyboard_matches_node_layout() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        // Node `buildMessageDetailKeyboard`: `[revert]`, `[fork]`, then
+        // `[back, cancel]` sharing one row.
+        let markup = build_message_detail_keyboard("en");
+        assert_eq!(markup.inline_keyboard.len(), 3);
+        assert_eq!(markup.inline_keyboard[2].len(), 2);
+        let data: Vec<String> = markup
+            .inline_keyboard
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|button| match &button.kind {
+                InlineKeyboardButtonKind::CallbackData(data) => data.clone(),
+                other => panic!("expected callback data, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            data,
+            vec![
+                "messages:revert".to_string(),
+                "messages:fork".to_string(),
+                "messages:back".to_string(),
+                "messages:cancel".to_string(),
+            ]
+        );
+        // Labels come from the `messages.button.*` templates, never blank.
+        for row in &markup.inline_keyboard {
+            for button in row {
+                assert!(!button.text.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn message_detail_target_resolves_from_rendered_text() {
+        let items = vec![
+            crate::commands::UserMessageItem {
+                id: "msg_1".to_string(),
+                text: "fix the login bug".to_string(),
+                created: 3_600_000,
+            },
+            crate::commands::UserMessageItem {
+                id: "msg_2".to_string(),
+                text: "add tests".to_string(),
+                created: 7_200_000,
+            },
+        ];
+        let first = crate::commands::render_message_detail(&items[0]);
+        let second = crate::commands::render_message_detail(&items[1]);
+        assert_eq!(resolve_message_detail_index(&first, &items), Some(0));
+        assert_eq!(resolve_message_detail_index(&second, &items), Some(1));
+        // Edited or foreign text matches nothing, so the caller falls back
+        // to the inactive notice plus the list view.
+        assert_eq!(resolve_message_detail_index("Select a message", &items), None);
+        assert_eq!(
+            resolve_message_detail_index(&format!("{second} (edited)"), &items),
+            None
+        );
+        assert_eq!(resolve_message_detail_index(&first, &[]), None);
+    }
+
+    #[test]
+    fn page_callbacks_round_trip_through_parsers() {
+        // Every pager button's `callback_data` parses back to its page.
+        assert_eq!(parse_session_page_callback("session:page:1"), Some(1));
+        assert_eq!(parse_project_page_callback("projects:page:1"), Some(1));
+        assert_eq!(parse_worktree_page_callback("worktree:page:1"), Some(1));
+        assert_eq!(parse_recent_page_callback("recent:page:1"), Some(1));
+        assert_eq!(parse_message_page_callback("messages:page:1"), Some(1));
+        // And page callbacks never leak into the select parsers.
+        assert_eq!(parse_session_id_callback("session:page:1"), None);
+        assert_eq!(parse_project_id_callback("projects:page:1"), None);
+        assert_eq!(parse_worktree_index_callback("worktree:page:1"), None);
+        assert_eq!(parse_recent_index_callback("recent:page:1"), None);
+        assert_eq!(parse_message_select_callback("messages:page:1"), None);
+    }
+
+    #[test]
+    fn catalog_callbacks_match_node_shapes() {
+        // Commands catalog (`command-catalog-menu.ts` parity).
+        assert_eq!(parse_command_select_callback("commands:select:3"), Some(3));
+        assert_eq!(parse_command_select_callback("commands:select:"), None);
+        assert_eq!(parse_command_select_callback("commands:select:-1"), None);
+        assert_eq!(parse_command_select_callback("commands:page:1"), None);
+        assert_eq!(parse_command_page_callback("commands:page:2"), Some(2));
+        assert_eq!(parse_command_page_callback("commands:select:2"), None);
+        assert!(is_commands_cancel("commands:cancel"));
+        assert!(!is_commands_cancel("commands:execute"));
+        assert!(is_commands_execute("commands:execute"));
+        assert!(!is_commands_execute("commands:cancel"));
+        // Skills catalog (`skills-catalog-menu.ts` parity): same shapes under
+        // the `skills:` prefix.
+        assert_eq!(parse_skill_select_callback("skills:select:0"), Some(0));
+        assert_eq!(parse_skill_select_callback("skills:select:"), None);
+        assert_eq!(parse_skill_select_callback("skills:page:1"), None);
+        assert_eq!(parse_skill_page_callback("skills:page:1"), Some(1));
+        assert_eq!(parse_skill_page_callback("skills:select:1"), None);
+        assert!(is_skills_cancel("skills:cancel"));
+        assert!(is_skills_execute("skills:execute"));
+        assert!(!is_skills_cancel("commands:cancel"));
+        // MCP catalog (`mcp-catalog-menu.ts` parity).
+        assert_eq!(parse_mcp_select_callback("mcps:select:2"), Some(2));
+        assert_eq!(parse_mcp_select_callback("mcps:select:"), None);
+        assert_eq!(parse_mcp_select_callback("mcps:toggle"), None);
+        assert!(is_mcp_toggle("mcps:toggle"));
+        assert!(is_mcp_back("mcps:back"));
+        assert!(is_mcp_cancel("mcps:cancel"));
+        assert!(!is_mcp_toggle("mcps:back"));
+        // Agent / variant (`agent:` / `variant:` parity; empty names yield
+        // `None`).
+        assert_eq!(parse_agent_callback("agent:build"), Some("build"));
+        assert_eq!(parse_agent_callback("agent:"), None);
+        assert_eq!(parse_agent_callback("bogus"), None);
+        assert_eq!(parse_variant_callback("variant:default"), Some("default"));
+        assert_eq!(parse_variant_callback("variant:"), None);
+        assert_eq!(parse_variant_callback("bogus"), None);
+    }
+
+    #[test]
+    fn question_permission_callbacks_match_node_shapes() {
+        // `question:*` (`question-menu.ts` builders + handler dispatch parity).
+        assert_eq!(QUESTION_CALLBACK_PREFIX, "question:");
+        assert_eq!(PERMISSION_CALLBACK_PREFIX, "permission:");
+        assert_eq!(PERMISSION_CALLBACK_ONCE, "permission:once");
+        assert_eq!(PERMISSION_CALLBACK_ALWAYS, "permission:always");
+        assert_eq!(PERMISSION_CALLBACK_REJECT, "permission:reject");
+        assert!(is_question_callback("question:select:0:1"));
+        assert!(is_question_callback("question:cancel:2"));
+        assert!(!is_question_callback("permission:once"));
+        assert!(!is_question_callback("bogus"));
+        let select = parse_question_callback("question:select:0:1").expect("select parses");
+        assert_eq!(
+            (select.question_index, select.option_index),
+            (0, Some(1))
+        );
+        assert!(parse_question_callback("question:select:0").is_none());
+        assert!(parse_question_callback("question:bogus:0").is_none());
+        assert!(parse_question_callback("permission:once").is_none());
+        // `permission:*` (`permission-menu.ts` buttons + handler gate parity).
+        assert!(is_permission_callback("permission:once"));
+        assert!(is_permission_callback("permission:always"));
+        assert!(is_permission_callback("permission:reject"));
+        assert!(!is_permission_callback("question:cancel:0"));
+        assert!(!is_permission_callback("bogus"));
+        assert_eq!(
+            classify_permission_callback("permission:once"),
+            Some(otb_core::question_permission_inline_gates::PermissionReply::Once)
+        );
+        assert_eq!(
+            classify_permission_callback("permission:always"),
+            Some(otb_core::question_permission_inline_gates::PermissionReply::Always)
+        );
+        assert_eq!(
+            classify_permission_callback("permission:reject"),
+            Some(otb_core::question_permission_inline_gates::PermissionReply::Reject)
+        );
+        assert_eq!(classify_permission_callback("permission:bogus"), None);
+        assert_eq!(classify_permission_callback("question:cancel:0"), None);
+    }
+
+    #[test]
+    fn model_callbacks_match_node_shapes() {
+        // `model:list:<kind>:<n>` (`resolveModelListCallback` parity).
+        assert_eq!(
+            parse_model_list_callback("model:list:favorites:2"),
+            Some(("favorites", 2))
+        );
+        assert_eq!(
+            parse_model_list_callback("model:list:recent:0"),
+            Some(("recent", 0))
+        );
+        assert_eq!(parse_model_list_callback("model:list:bogus:0"), None);
+        assert_eq!(parse_model_list_callback("model:list:favorites:"), None);
+        assert_eq!(parse_model_list_callback("model:list:favorites:2:extra"), None);
+        assert_eq!(parse_model_list_callback("model:pick:2"), None);
+        // Providers browser (`model-selection-menu.ts` parity).
+        assert_eq!(parse_model_providers_page_callback("model:providers:1"), Some(1));
+        assert_eq!(parse_model_providers_page_callback("model:provider:0:1"), None);
+        assert_eq!(parse_model_provider_callback("model:provider:2:1"), Some((2, 1)));
+        assert_eq!(parse_model_provider_callback("model:provider:2"), None);
+        assert_eq!(parse_model_provider_callback("model:provider:2:1:3"), None);
+        assert_eq!(parse_model_pick_callback("model:pick:4"), Some(4));
+        assert_eq!(parse_model_pick_callback("model:pick:"), None);
+        // Page callbacks never leak into the sibling parsers.
+        assert_eq!(parse_model_list_callback("model:providers:1"), None);
+        assert_eq!(parse_model_pick_callback("model:provider:0:1"), None);
+    }
+
+    #[test]
+    fn search_callbacks_match_node_exact_shapes() {
+        // Session search (`session-selection-menu.ts` parity).
+        assert_eq!(SESSION_SEARCH_CALLBACK, "session:search");
+        assert_eq!(SESSION_SEARCH_AGAIN_CALLBACK, "session:search:again");
+        assert_eq!(SESSION_SEARCH_CANCEL_CALLBACK, "session:search:cancel");
+        assert_eq!(SESSION_SEARCH_PAGE_PREFIX, "session:search:page:");
+        assert_eq!(SESSION_SEARCH_RESULT_PREFIX, "session:search:result:");
+        assert_eq!(parse_session_search_page_callback("session:search:page:2"), Some(2));
+        assert_eq!(parse_session_search_page_callback("session:search:page:"), None);
+        assert_eq!(parse_session_search_page_callback("session:search:page:-1"), None);
+        assert_eq!(parse_session_search_page_callback("session:search:page:2x"), None);
+        assert_eq!(parse_session_search_page_callback("session:page:2"), None);
+        assert_eq!(parse_session_search_page_callback("session:search"), None);
+        assert_eq!(parse_session_search_result_callback("session:search:result:0"), Some(0));
+        assert_eq!(parse_session_search_result_callback("session:search:result:12"), Some(12));
+        assert_eq!(parse_session_search_result_callback("session:search:result:"), None);
+        assert_eq!(parse_session_search_result_callback("session:search:result:x"), None);
+        assert_eq!(parse_session_search_result_callback("session:search:page:1"), None);
+        // Page/result taps never leak into the select/page parsers.
+        assert_eq!(parse_session_id_callback("session:page:1"), None);
+        assert_eq!(parse_session_page_callback("session:search:page:1"), None);
+        assert_eq!(parse_session_page_callback("session:search:result:1"), None);
+
+        // Project search (`project-selection-menu.ts` parity).
+        assert_eq!(PROJECT_SEARCH_CALLBACK, "projects:search");
+        assert_eq!(PROJECT_SEARCH_AGAIN_CALLBACK, "projects:search:again");
+        assert_eq!(PROJECT_SEARCH_CANCEL_CALLBACK, "projects:search:cancel");
+        assert_eq!(PROJECT_SEARCH_PAGE_PREFIX, "projects:search:page:");
+        assert_eq!(PROJECT_SEARCH_RESULT_PREFIX, "projects:search:result:");
+        assert_eq!(parse_project_search_page_callback("projects:search:page:1"), Some(1));
+        assert_eq!(parse_project_search_page_callback("projects:search:page:"), None);
+        assert_eq!(parse_project_search_page_callback("projects:search:page:1x"), None);
+        assert_eq!(parse_project_search_page_callback("projects:page:1"), None);
+        assert_eq!(parse_project_search_result_callback("projects:search:result:3"), Some(3));
+        assert_eq!(parse_project_search_result_callback("projects:search:result:"), None);
+        assert_eq!(parse_project_search_result_callback("projects:search:result:-1"), None);
+        assert_eq!(parse_project_search_result_callback("projects:search:page:1"), None);
+        assert_eq!(parse_project_page_callback("projects:search:page:1"), None);
+        assert_eq!(parse_project_page_callback("projects:search:result:1"), None);
+
+        // Model search (`model-selection-menu.ts` +
+        // `model-selection-callback-handler.ts` parity): the result prefix is
+        // `model:result:`, never `model:search:result:`.
+        assert_eq!(MODEL_SEARCH_CALLBACK, "model:search");
+        assert_eq!(MODEL_SEARCH_AGAIN_CALLBACK, "model:search:again");
+        assert_eq!(MODEL_SEARCH_CANCEL_CALLBACK, "model:search:cancel");
+        assert_eq!(MODEL_SEARCH_RESULT_CALLBACK_PREFIX, "model:result:");
+        assert_eq!(parse_model_search_result_callback("model:result:4"), Some(4));
+        assert_eq!(parse_model_search_result_callback("model:result:0"), Some(0));
+        assert_eq!(parse_model_search_result_callback("model:result:"), None);
+        assert_eq!(parse_model_search_result_callback("model:result:x"), None);
+        assert_eq!(parse_model_search_result_callback("model:search"), None);
+        assert_eq!(parse_model_search_result_callback("model:search:result:1"), None);
+        assert_eq!(parse_model_search_result_callback("model:pick:4"), None);
+        assert_eq!(parse_model_pick_callback("model:result:4"), None);
+    }
+
+    #[test]
+    fn search_query_matching_filters_like_node() {
+        let session = crate::commands::SessionListItem {
+            id: "ses_abc123".to_string(),
+            title: "Fix login bug".to_string(),
+            directory: "/work/proj".to_string(),
+        };
+        // Title match is case-insensitive; id matches too (Node
+        // `searchSessions` parity).
+        assert!(matches_session_query(&session, "login"));
+        assert!(matches_session_query(&session, "LOGIN"));
+        assert!(matches_session_query(&session, "  fix  "));
+        assert!(matches_session_query(&session, "ses_abc"));
+        assert!(matches_session_query(&session, "SES_ABC123"));
+        assert!(!matches_session_query(&session, "checkout"));
+        // A blank query matches every row.
+        assert!(matches_session_query(&session, ""));
+        assert!(matches_session_query(&session, "   "));
+
+        let project = crate::commands::ProjectListItem {
+            id: "dir_abc".to_string(),
+            worktree: "/work/opencode-telegram-bot".to_string(),
+            name: "opencode-telegram-bot".to_string(),
+            last_updated: 0,
+        };
+        // Folder-name match is case-insensitive (Node
+        // `filterProjectsForSearch` folder-name clause parity).
+        assert!(matches_project_query(&project, "telegram"));
+        assert!(matches_project_query(&project, "TELEGRAM"));
+        assert!(matches_project_query(&project, "  opencode  "));
+        assert!(!matches_project_query(&project, "other"));
+        assert!(matches_project_query(&project, ""));
+    }
+
+    #[test]
+    fn model_search_matching_filters_like_node() {
+        let item = crate::commands::ModelListItem {
+            provider_id: "anthropic".to_string(),
+            model_id: "claude-sonnet-4".to_string(),
+        };
+        // Case-insensitive substring on `provider/model` (Node `searchModels`
+        // parity).
+        assert!(matches_model_query(&item, "claude"));
+        assert!(matches_model_query(&item, "CLAUDE"));
+        assert!(matches_model_query(&item, "anthropic/claude"));
+        assert!(matches_model_query(&item, "  sonnet  "));
+        assert!(!matches_model_query(&item, "openai"));
+        assert!(!matches_model_query(&item, "claude-sonnet-5"));
+        // Blank matches nothing (Node returns `[]` for a blank query),
+        // unlike the session/project matchers where blank matches every row.
+        assert!(!matches_model_query(&item, ""));
+        assert!(!matches_model_query(&item, "   "));
+    }
+
+    #[test]
+    fn legacy_model_pick_callbacks_bypass_index_parsers() {
+        // Self-contained result picks carry the full identity inline, so no
+        // remembered search state is needed to resolve them.
+        let data = model_legacy_callback("anthropic", "claude-sonnet-4");
+        assert_eq!(data, "model:anthropic:claude-sonnet-4");
+        let resolved = otb_core::agent_model_variant_gates::parse_legacy_model_callback(&data)
+            .expect("legacy shape parses");
+        assert_eq!(resolved.provider_id, "anthropic");
+        assert_eq!(resolved.model_id, "claude-sonnet-4");
+        // Model ids containing colons survive the `:`-joined tail.
+        let colon = model_legacy_callback("openai", "gpt:a");
+        let resolved = otb_core::agent_model_variant_gates::parse_legacy_model_callback(&colon)
+            .expect("colon model parses");
+        assert_eq!(resolved.model_id, "gpt:a");
+        // The indexed parsers never claim a legacy pick, so the handler's
+        // legacy branch is the one that resolves it.
+        assert_eq!(parse_model_pick_callback(&data), None);
+        assert_eq!(parse_model_list_callback(&data), None);
+        assert_eq!(parse_model_search_result_callback(&data), None);
+        assert_eq!(parse_model_providers_page_callback(&data), None);
+        assert_eq!(parse_model_provider_callback(&data), None);
+    }
+
+    #[test]
+    fn search_query_truncates_to_sendable_cap() {
+        assert_eq!(SESSION_SEARCH_QUERY_MAX_LENGTH, 100);
+        assert_eq!(truncate_search_query("fix bug"), "fix bug");
+        let long = "é".repeat(SESSION_SEARCH_QUERY_MAX_LENGTH + 10);
+        let truncated = truncate_search_query(&long);
+        assert_eq!(truncated.chars().count(), SESSION_SEARCH_QUERY_MAX_LENGTH);
+    }
+
+    #[test]
+    fn catalog_keyboards_carry_node_callback_data() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        fn callback_data(markup: &InlineKeyboardMarkup) -> Vec<String> {
+            markup
+                .inline_keyboard
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|button| match &button.kind {
+                    InlineKeyboardButtonKind::CallbackData(data) => data.clone(),
+                    other => panic!("expected callback data, got {other:?}"),
+                })
+                .collect()
+        }
+
+        let entries = vec![
+            otb_core::session_pick_catalog_gates::CatalogEntry {
+                name: "review".to_string(),
+                description: Some("Review code".to_string()),
+            },
+            otb_core::session_pick_catalog_gates::CatalogEntry {
+                name: "empty-desc".to_string(),
+                description: None,
+            },
+        ];
+        // List rows carry global indexes; the trailing row is the cancel
+        // button (Node `buildCommandsListKeyboard` parity).
+        let markup = build_catalog_list_keyboard(&entries, 10, CatalogKind::Commands, "en", 0, 1);
+        assert_eq!(markup.inline_keyboard.len(), 3);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "commands:select:10".to_string(),
+                "commands:select:11".to_string(),
+                "commands:cancel".to_string(),
+            ]
+        );
+        let markup = build_catalog_list_keyboard(&entries, 0, CatalogKind::Skills, "en", 0, 1);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "skills:select:0".to_string(),
+                "skills:select:1".to_string(),
+                "skills:cancel".to_string(),
+            ]
+        );
+        // Confirm keyboards share one `[Execute, Cancel]` row (Node
+        // `buildCommandsConfirmKeyboard` / `buildSkillsConfirmKeyboard`
+        // parity).
+        let markup = build_catalog_confirm_keyboard(CatalogKind::Commands, "en");
+        assert_eq!(markup.inline_keyboard.len(), 1);
+        assert_eq!(
+            callback_data(&markup),
+            vec!["commands:execute".to_string(), "commands:cancel".to_string()]
+        );
+        let markup = build_catalog_confirm_keyboard(CatalogKind::Skills, "en");
+        assert_eq!(
+            callback_data(&markup),
+            vec!["skills:execute".to_string(), "skills:cancel".to_string()]
+        );
+        // Labels never produce empty buttons (missing descriptions fall
+        // back to the `no_description` template).
+        for row in &markup.inline_keyboard {
+            for button in row {
+                assert!(!button.text.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn mcp_agent_variant_model_keyboards_carry_node_callback_data() {
+        use otb_core::session_pick_catalog_gates::{McpCatalogServerItem, McpServerStatus, McpStatusName};
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        fn callback_data(markup: &InlineKeyboardMarkup) -> Vec<String> {
+            markup
+                .inline_keyboard
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|button| match &button.kind {
+                    InlineKeyboardButtonKind::CallbackData(data) => data.clone(),
+                    other => panic!("expected callback data, got {other:?}"),
+                })
+                .collect()
+        }
+
+        // MCP list: one `mcps:select:<index>` row per server plus the cancel
+        // row (Node `buildMcpsListKeyboard` parity).
+        let servers = vec![
+            McpCatalogServerItem {
+                name: "gh".to_string(),
+                status: McpServerStatus {
+                    name: McpStatusName::Connected,
+                    error: None,
+                },
+            },
+            McpCatalogServerItem {
+                name: "db".to_string(),
+                status: McpServerStatus {
+                    name: McpStatusName::Disabled,
+                    error: None,
+                },
+            },
+        ];
+        let markup = build_mcps_list_keyboard(&servers, "en");
+        assert_eq!(markup.inline_keyboard.len(), 3);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "mcps:select:0".to_string(),
+                "mcps:select:1".to_string(),
+                "mcps:cancel".to_string(),
+            ]
+        );
+        // MCP detail: toggle row plus `[back, cancel]` sharing one row (Node
+        // `buildMcpsDetailKeyboard` parity); auth-locked servers hide the
+        // toggle row.
+        let markup = build_mcp_detail_keyboard(&servers[0], "en");
+        assert_eq!(markup.inline_keyboard.len(), 2);
+        assert_eq!(markup.inline_keyboard[1].len(), 2);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "mcps:toggle".to_string(),
+                "mcps:back".to_string(),
+                "mcps:cancel".to_string(),
+            ]
+        );
+        let locked = McpCatalogServerItem {
+            name: "auth".to_string(),
+            status: McpServerStatus {
+                name: McpStatusName::NeedsAuth,
+                error: None,
+            },
+        };
+        let markup = build_mcp_detail_keyboard(&locked, "en");
+        assert_eq!(markup.inline_keyboard.len(), 1);
+        assert_eq!(
+            callback_data(&markup),
+            vec!["mcps:back".to_string(), "mcps:cancel".to_string()]
+        );
+        // Agents: one `agent:<name>` row per agent with the active mark (Node
+        // `buildAgentSelectionMenu` parity).
+        let agents = vec![
+            crate::commands::AgentListItem {
+                name: "build".to_string(),
+            },
+            crate::commands::AgentListItem {
+                name: "plan".to_string(),
+            },
+        ];
+        let markup = build_agents_keyboard(&agents, Some("build"));
+        assert_eq!(callback_data(&markup), vec!["agent:build".to_string(), "agent:plan".to_string()]);
+        assert!(markup.inline_keyboard[0][0].text.starts_with("✅ "));
+        assert!(!markup.inline_keyboard[1][0].text.starts_with("✅ "));
+        // Variants: one `variant:<id>` row per variant (Node
+        // `buildVariantSelectionMenu` parity).
+        let markup = build_variants_keyboard(
+            &["default".to_string(), "thinking".to_string()],
+            "thinking",
+        );
+        assert_eq!(
+            callback_data(&markup),
+            vec!["variant:default".to_string(), "variant:thinking".to_string()]
+        );
+        assert!(markup.inline_keyboard[1][0].text.starts_with("✅ "));
+        // Model root: `[Search, Providers]` first row plus one
+        // `model:list:favorites:<index>` row per model (Node
+        // `buildModelSelectionMenu` parity).
+        let models = vec![crate::commands::ModelListItem {
+            provider_id: "meta".to_string(),
+            model_id: "m1".to_string(),
+        }];
+        let markup = build_model_root_keyboard(&models, None, "en");
+        assert_eq!(markup.inline_keyboard.len(), 2);
+        assert_eq!(markup.inline_keyboard[0].len(), 2);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "model:search".to_string(),
+                "model:providers:0".to_string(),
+                "model:list:favorites:0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn git_porcelain_parses_branches_and_detached() {
+        let output = "worktree /work/main\nHEAD abc123\nbranch refs/heads/main\n\nworktree /work/feat\nHEAD def456\ndetached\n\n";
+        let rows = parse_git_worktree_porcelain(output);
+        assert_eq!(
+            rows,
+            vec![
+                ("/work/main".to_string(), Some("main".to_string())),
+                ("/work/feat".to_string(), None),
+            ]
+        );
+        assert!(parse_git_worktree_porcelain("").is_empty());
+        assert!(parse_git_worktree_porcelain("bare\n\n").is_empty());
+    }
+
+    #[test]
+    fn linked_worktree_detection_matches_js_shape() {
+        // Temp dirs only; removed afterwards (never a live path).
+        let base = std::env::temp_dir().join(format!("otb-wt-test-{}", std::process::id()));
+        let main = base.join("main");
+        let linked = base.join("linked");
+        std::fs::create_dir_all(&main).expect("temp dir");
+        std::fs::create_dir_all(&linked).expect("temp dir");
+        // A real `.git` directory means a main checkout, never linked.
+        std::fs::create_dir_all(main.join(".git")).expect("temp dir");
+        assert!(!is_linked_worktree(main.to_str().unwrap()));
+        // A `.git` pointer file into another repo's `worktrees/` dir is linked.
+        std::fs::write(
+            linked.join(".git"),
+            "gitdir: /work/main/.git/worktrees/linked",
+        )
+        .expect("temp file");
+        assert!(is_linked_worktree(linked.to_str().unwrap()));
+        // Not a repo at all: not linked (the `/worktree` view reports
+        // `not_git_repo` instead).
+        assert!(!is_linked_worktree(base.join("missing").to_str().unwrap()));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn session_identity_supports_bare_and_enveloped_shapes() {
+        // Bare session (SDK-style).
+        let (id, title) =
+            session_identity_from_value(&serde_json::json!({ "id": "ses_1", "title": "hi" }));
+        assert_eq!((id.as_str(), title.as_str()), ("ses_1", "hi"));
+
+        // Live V2 envelope from `POST api/session`.
+        let (id, title) = session_identity_from_value(&serde_json::json!({
+            "data": { "id": "ses_abc", "title": "hello" }
+        }));
+        assert_eq!((id.as_str(), title.as_str()), ("ses_abc", "hello"));
+
+        // Missing/blank ids stay empty so `new_reply` keeps its
+        // `new.create_error` path.
+        let (id, _) = session_identity_from_value(&serde_json::json!({ "title": "x" }));
+        assert!(id.is_empty());
+        let (id, _) = session_identity_from_value(&serde_json::json!({ "data": {} }));
+        assert!(id.is_empty());
+    }
+
+    #[test]
+    fn status_snapshot_maps_probe_health_with_placeholders() {
+        let empty = crate::settings_current::SettingsCurrent::default();
+        let healthy = crate::opencode::HealthProbe {
+            ok: true,
+            version: Some("2.0.0".to_string()),
+        };
+        let snapshot = build_status_snapshot_from(&healthy, &empty);
+        assert!(snapshot.healthy);
+        assert_eq!(snapshot.opencode_version.as_deref(), Some("2.0.0"));
+        assert_eq!(snapshot.bot_version, env!("CARGO_PKG_VERSION"));
+        // Model display always carries the JS-parity `🧠` prefix, whatever
+        // the `OPENCODE_MODEL_*` env holds; the rest stays `None` without
+        // a settings file.
+        assert!(snapshot.model_display.starts_with("🧠 "));
+        assert!(snapshot.agent_display.is_none());
+        assert!(snapshot.project_display.is_none());
+        assert!(snapshot.worktree_path.is_none());
+        assert!(snapshot.session_title.is_none());
+
+        let sick = crate::opencode::HealthProbe {
+            ok: false,
+            version: None,
+        };
+        let snapshot = build_status_snapshot_from(&sick, &empty);
+        assert!(!snapshot.healthy);
+        assert!(snapshot.opencode_version.is_none());
+        let rendered = crate::commands::render_status(&snapshot, Some("en"));
+        assert!(rendered.starts_with("🔴 OpenCode Server is unavailable"));
+    }
+
+    #[test]
+    fn status_snapshot_prefers_settings_current() {
+        // Temp-dir settings file: no live paths, removed afterwards.
+        let dir = std::env::temp_dir().join(format!("otb-status-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(
+            dir.join(crate::settings_current::SETTINGS_FILE_NAME),
+            serde_json::json!({
+                "currentAgent": "orchestrator",
+                "currentModel": {
+                    "providerID": "meta",
+                    "modelID": "muse-spark-1.3-contributor",
+                    "variant": "default"
+                },
+                "currentProject": {
+                    "id": "dir_abc123",
+                    "worktree": "/work/opencode-telegram-bot"
+                },
+                "currentSession": {
+                    "id": "ses_1",
+                    "title": "Fix status placeholders",
+                    "directory": "/work/opencode-telegram-bot"
+                }
+            })
+            .to_string(),
+        )
+        .expect("seed settings");
+        let current = crate::settings_current::read_settings_current(&dir);
+        std::fs::remove_dir_all(&dir).ok();
+
+        let snapshot = build_status_snapshot_from(
+            &crate::opencode::HealthProbe {
+                ok: true,
+                version: Some("2.0.0".to_string()),
+            },
+            &current,
+        );
+        // Agent through `getAgentDisplayName` parity (unknown name: 🤖 fallback).
+        assert_eq!(snapshot.agent_display.as_deref(), Some("🤖 Orchestrator"));
+        assert_eq!(
+            snapshot.model_display,
+            "🧠 meta/muse-spark-1.3-contributor (default)"
+        );
+        assert_eq!(
+            snapshot.project_display.as_deref(),
+            Some("/work/opencode-telegram-bot")
+        );
+        assert_eq!(
+            snapshot.session_title.as_deref(),
+            Some("Fix status placeholders")
+        );
+        let rendered = crate::commands::render_status(&snapshot, Some("en"));
+        assert!(rendered.contains("Agent: 🤖 Orchestrator"));
+        assert!(rendered.contains("Model: 🧠 meta/muse-spark-1.3-contributor (default)"));
+        assert!(rendered.contains("Project: /work/opencode-telegram-bot"));
+        assert!(rendered.contains("Current session: Fix status placeholders"));
+    }
+
+    #[test]
+    fn status_model_display_formats_variant() {
+        assert_eq!(
+            format_status_model_display("meta", "m1", None),
+            "🧠 meta/m1"
+        );
+        assert_eq!(
+            format_status_model_display("meta", "m1", Some("default")),
+            "🧠 meta/m1 (default)"
+        );
+        assert_eq!(
+            format_status_model_display("meta", "m1", Some("  ")),
+            "🧠 meta/m1"
+        );
+    }
+
+    #[test]
+    fn status_render_goes_through_send_payload_truncation() {
+        let empty = crate::settings_current::SettingsCurrent::default();
+        let snapshot = build_status_snapshot_from(
+            &crate::opencode::HealthProbe {
+                ok: true,
+                version: None,
+            },
+            &empty,
+        );
+        let text = crate::commands::render_status(&snapshot, Some("en"));
+        let (_, body) = build_send_payload(7, &text);
+        assert_eq!(body, text);
+        assert!(body.starts_with("🟢 OpenCode Server is running"));
+    }
+
+    /// Serializes the App Home override below: the tests run in threads and
+    /// the override is process-global.
+    static ISOLATED_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `body` with `OPENCODE_TELEGRAM_HOME` pointed at a fresh temp dir
+    /// (removed afterwards; the previous value is restored).
+    fn with_isolated_home(body: impl FnOnce(&std::path::Path)) {
+        let _guard = ISOLATED_HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var("OPENCODE_TELEGRAM_HOME").ok();
+        let home = std::env::temp_dir().join(format!(
+            "otb-batch4-views-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&home).expect("temp home");
+        std::env::set_var("OPENCODE_TELEGRAM_HOME", &home);
+        body(&home);
+        match prev_home {
+            Some(value) => std::env::set_var("OPENCODE_TELEGRAM_HOME", value),
+            None => std::env::remove_var("OPENCODE_TELEGRAM_HOME"),
+        }
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn goal_view_follows_js_entry_gates() {
+        with_isolated_home(|home| {
+            let settings = home.join(crate::settings_current::SETTINGS_FILE_NAME);
+            // No settings file: no project.
+            assert_eq!(
+                goal_view("en", ""),
+                "🏗 Project is not selected.\n\nFirst select a project with /projects."
+            );
+            // Project but no session.
+            std::fs::write(
+                &settings,
+                serde_json::json!({
+                    "currentProject": { "id": "dir_1", "worktree": "/work/proj" },
+                })
+                .to_string(),
+            )
+            .expect("seed settings");
+            assert_eq!(
+                goal_view("en", ""),
+                "💬 Session is not selected.\n\nFirst choose a session with /sessions or create one with /new."
+            );
+            // Session in another project.
+            std::fs::write(
+                &settings,
+                serde_json::json!({
+                    "currentProject": { "id": "dir_1", "worktree": "/work/proj" },
+                    "currentSession": { "id": "ses_1", "title": "Old", "directory": "/work/other" },
+                })
+                .to_string(),
+            )
+            .expect("seed settings");
+            assert_eq!(
+                goal_view("en", ""),
+                "⚠️ The selected session does not match the current project. Choose the session again via /sessions."
+            );
+            // Matching session: arguments are rejected, bare input prompts.
+            std::fs::write(
+                &settings,
+                serde_json::json!({
+                    "currentProject": { "id": "dir_1", "worktree": "/work/proj" },
+                    "currentSession": { "id": "ses_1", "title": "Old", "directory": "/work/proj" },
+                })
+                .to_string(),
+            )
+            .expect("seed settings");
+            assert_eq!(
+                goal_view("en", "do things"),
+                "Use /goal without arguments, then follow the prompts or use the goal buttons."
+            );
+            assert_eq!(
+                goal_view("en", ""),
+                "Send the objective for this session in your next text message. Describe the result to achieve."
+            );
+        });
+    }
+
+    #[test]
+    fn task_and_reload_views_read_isolated_settings() {
+        with_isolated_home(|home| {
+            let settings = home.join(crate::settings_current::SETTINGS_FILE_NAME);
+            // No settings file: no project; reload reads defaults (success).
+            assert_eq!(
+                task_view("en", ""),
+                "🏗 Project is not selected.\n\nFirst select a project with /projects."
+            );
+            assert_eq!(reload_view("en"), "✅ OpenCode configuration reloaded");
+            std::fs::write(
+                &settings,
+                serde_json::json!({
+                    "currentProject": { "id": "dir_1", "worktree": "/work/proj" },
+                })
+                .to_string(),
+            )
+            .expect("seed settings");
+            assert!(task_view("en", "").starts_with("⏰ Send the task schedule"));
+            let ack = task_view("en", "every day at 17:00 run tests");
+            assert!(ack.starts_with("⏰ Task noted: every day at 17:00 run tests"));
+            assert_eq!(reload_view("en"), "✅ OpenCode configuration reloaded");
+            // Unparseable settings fail the reload.
+            std::fs::write(&settings, "{not json").expect("seed invalid");
+            assert_eq!(
+                reload_view("en"),
+                "🔴 Failed to reload OpenCode configuration"
+            );
+        });
+    }
+
+    #[test]
+    fn open_ls_callbacks_match_node_shapes() {
+        // `open:*` (`file-browser-menu.ts` parity).
+        assert!(is_open_roots("open:roots"));
+        assert!(!is_open_roots("open:nav:/a"));
+        assert!(!is_open_roots("open:roots:extra"));
+        assert_eq!(parse_open_nav_callback("open:nav:/work/proj"), Some("/work/proj"));
+        assert_eq!(parse_open_nav_callback("open:nav:"), None);
+        assert_eq!(parse_open_nav_callback("open:sel:/a"), None);
+        assert_eq!(
+            parse_open_select_callback("open:sel:/work/proj"),
+            Some("/work/proj")
+        );
+        assert_eq!(parse_open_select_callback("open:sel:"), None);
+        assert_eq!(parse_open_select_callback("open:nav:/a"), None);
+        assert_eq!(
+            parse_open_page_callback("open:pg:/work/proj|2"),
+            Some(("/work/proj".to_string(), 2))
+        );
+        assert_eq!(parse_open_page_callback("open:pg:/work/proj"), None);
+        assert_eq!(parse_open_page_callback("open:pg:|2"), None);
+        assert_eq!(parse_open_page_callback("open:pg:/a|x"), None);
+        assert_eq!(parse_open_page_callback("open:nav:/a"), None);
+        // `ls:*` parity.
+        assert_eq!(parse_ls_nav_callback("ls:nav:/work/proj/src"), Some("/work/proj/src"));
+        assert_eq!(parse_ls_nav_callback("ls:nav:"), None);
+        assert_eq!(parse_ls_nav_callback("ls:pg:/a|0"), None);
+        assert_eq!(
+            parse_ls_attach_callback("ls:attach:/work/proj/note.txt"),
+            Some("/work/proj/note.txt")
+        );
+        assert_eq!(parse_ls_attach_callback("ls:attach:"), None);
+        assert_eq!(
+            parse_ls_download_callback("ls:download:/work/proj/note.txt"),
+            Some("/work/proj/note.txt")
+        );
+        assert_eq!(parse_ls_download_callback("ls:download:"), None);
+        assert_eq!(
+            parse_ls_page_callback("ls:pg:/work/proj|1"),
+            Some(("/work/proj".to_string(), 1))
+        );
+        assert_eq!(parse_ls_page_callback("ls:pg:/work/proj"), None);
+        assert_eq!(
+            parse_ls_file_callback("ls:file:/work/proj/note.txt|1"),
+            Some(("/work/proj/note.txt".to_string(), 1))
+        );
+        assert_eq!(parse_ls_file_callback("ls:file:/a"), None);
+        assert_eq!(
+            parse_ls_back_callback("ls:back:/work/proj|0"),
+            Some(("/work/proj".to_string(), 0))
+        );
+        assert_eq!(parse_ls_back_callback("ls:back:/work/proj"), None);
+        assert_eq!(parse_ls_back_callback("ls:nav:/a"), None);
+        // Page/file/back payloads never leak into the plain nav parsers.
+        assert_eq!(parse_ls_nav_callback("ls:pg:/work/proj|1"), None);
+        assert_eq!(parse_open_nav_callback("open:pg:/work/proj|1"), None);
+        // The shared prefixes route every browser callback to its handler.
+        for data in [
+            "open:nav:/a",
+            "open:sel:/a",
+            "open:pg:/a|0",
+            "open:roots",
+        ] {
+            assert!(data.starts_with(OPEN_CALLBACK_PREFIX), "{data}");
+        }
+        for data in [
+            "ls:nav:/a",
+            "ls:pg:/a|0",
+            "ls:file:/a|0",
+            "ls:download:/a",
+            "ls:attach:/a",
+            "ls:back:/a|0",
+        ] {
+            assert!(data.starts_with(LS_CALLBACK_PREFIX), "{data}");
+        }
+        assert!(!"session:page:1".starts_with(OPEN_CALLBACK_PREFIX));
+        assert!(!"session:page:1".starts_with(LS_CALLBACK_PREFIX));
+    }
+
+    #[test]
+    fn open_ls_keyboards_carry_node_callback_data() {
+        use teloxide_core::types::InlineKeyboardButtonKind;
+
+        fn callback_data(markup: &InlineKeyboardMarkup) -> Vec<String> {
+            markup
+                .inline_keyboard
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|button| match &button.kind {
+                    InlineKeyboardButtonKind::CallbackData(data) => data.clone(),
+                    other => panic!("expected callback data, got {other:?}"),
+                })
+                .collect()
+        }
+
+        // Roots: one `open:nav:<root>` row per root plus the cancel row
+        // (Node `buildOpenRootsKeyboard` parity).
+        let markup = build_open_roots_keyboard(
+            &["/work/a".to_string(), "/work/b".to_string()],
+            "/home/user",
+            "en",
+        );
+        assert_eq!(markup.inline_keyboard.len(), 3);
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "open:nav:/work/a".to_string(),
+                "open:nav:/work/b".to_string(),
+                "inline:cancel:open".to_string(),
+            ]
+        );
+
+        // Browse: one `open:nav:<full>` row per entry, an up+roots row, a
+        // pager row, then select + cancel (Node `buildOpenBrowseKeyboard`
+        // parity).
+        let markup = build_open_browse_keyboard(
+            &["src".to_string()],
+            "/work/proj",
+            1,
+            2,
+            true,
+            false,
+            true,
+            "en",
+        );
+        let data = callback_data(&markup);
+        assert!(data.contains(&"open:nav:/work/proj/src".to_string()));
+        assert!(data.contains(&"open:nav:/work".to_string()));
+        assert!(data.contains(&"open:roots".to_string()));
+        assert!(data.contains(&"open:pg:/work/proj|0".to_string()));
+        assert!(data.contains(&"open:sel:/work/proj".to_string()));
+        assert_eq!(data.last(), Some(&"inline:cancel:open".to_string()));
+
+        // Ls browse: dirs carry `ls:nav:<full>`, files carry
+        // `ls:file:<full>|<page>`, then up / pager / cancel rows (Node
+        // `buildLsBrowseKeyboard` parity).
+        let entries = vec![
+            otb_core::file_browser_service_gates::LsEntry {
+                full_path: "/work/proj/src".to_string(),
+                name: "src".to_string(),
+                is_dir: true,
+            },
+            otb_core::file_browser_service_gates::LsEntry {
+                full_path: "/work/proj/note.txt".to_string(),
+                name: "note.txt".to_string(),
+                is_dir: false,
+            },
+        ];
+        let markup = build_ls_browse_keyboard(&entries, "/work/proj/sub", 0, 2, true, false, "en");
+        let data = callback_data(&markup);
+        assert!(data.contains(&"ls:nav:/work/proj/src".to_string()));
+        assert!(data.contains(&"ls:file:/work/proj/note.txt|0".to_string()));
+        assert!(data.contains(&"ls:nav:/work/proj".to_string()));
+        assert!(data.contains(&"ls:pg:/work/proj/sub|1".to_string()));
+        assert_eq!(data.last(), Some(&"inline:cancel:ls".to_string()));
+
+        // Ls file details: attach, download, back, cancel (Node
+        // `buildLsFileDetailsKeyboard` parity); without attach the row is
+        // hidden rather than erroring.
+        let markup = build_ls_file_keyboard("/work/proj/note.txt", "/work/proj", 3, true, "en");
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "ls:attach:/work/proj/note.txt".to_string(),
+                "ls:download:/work/proj/note.txt".to_string(),
+                "ls:back:/work/proj|3".to_string(),
+                "inline:cancel:ls".to_string(),
+            ]
+        );
+        let markup = build_ls_file_keyboard("/work/proj/note.txt", "/work/proj", 3, false, "en");
+        assert_eq!(
+            callback_data(&markup),
+            vec![
+                "ls:download:/work/proj/note.txt".to_string(),
+                "ls:back:/work/proj|3".to_string(),
+                "inline:cancel:ls".to_string(),
+            ]
+        );
+    }
+}

@@ -1,0 +1,30 @@
+[package]
+name = "otb-bot"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "otb-bot"
+path = "src/main.rs"
+
+[dependencies]
+# Runtime + config
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+# Persistence (later milestones; no DB writes yet)
+rusqlite = { version = "0.32", features = ["bundled"] }
+# HTTP client (OpenCode/Telegram API later)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+# Thin Telegram API client only (no dispatcher/polling yet).
+# teloxide-core is used instead of teloxide to keep the T1 scaffold thin.
+teloxide-core = "0.11"
+thiserror = "2"
+anyhow = "1"
+# Health endpoint (later milestone; not wired yet)
+axum = "0.7"
+otb-core = { path = "../otb-core" }
